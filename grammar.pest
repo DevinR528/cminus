@@ -1,0 +1,132 @@
+program = { SOI ~ "\n"* ~ (decl)* ~ EOI }
+
+decl = { (func_decl | var_decl) }
+
+func_decl = { type_ ~ ident ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
+
+param_list = { param ~ (CM ~ var_name)* }
+
+param = { type_ ~ var_name }
+
+var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
+
+var_name = { ident ~ (LBK ~ integer ~ RBK)? }
+
+type_ = { INT | CHAR | FLOAT | VOID }
+
+stmt = { 
+    assing
+    | call_stmt
+    | if_stmt
+    | while_stmt
+    | io_stmt
+    | ret_stmt
+    | exit_stmt
+    | cpd_stmt
+}
+
+assing = { variable ~ ASSIGN ~ expr ~ SC }
+
+call_stmt = { ident ~ LP ~ arg_list ~ RP ~ SC }
+
+if_stmt = { IF ~ LP ~ expr ~ RP ~ cpd_stmt ~ (ELSE ~ cpd_stmt)? }
+
+while_stmt = { WHILE ~ LP ~ expr ~ RP ~ stmt }
+
+io_stmt = { (READ ~ LP ~ variable ~ RP ~ SC) | (WRITE ~ LP ~ (expr | string) ~ RP ~ SC) }
+
+ret_stmt = { RETURN ~ expr ~ SC }
+
+exit_stmt = { EXIT ~ SC }
+
+cpd_stmt = { LBR ~ (stmt)* ~ RBR }
+
+expr = { term ~ (op ~ term)* }
+
+op = {
+    PLUS
+    | MINUS
+    | TIMES
+    | DIVIDE
+    | EQ
+    | NE
+    | LE
+    | LT
+    | GE
+    | GT
+    | OR
+    | AND
+}
+
+term = {
+    variable ~ !LP
+    | const_
+    | ident ~ LP ~ (arg_list)? ~ RP
+    | NOT ~ expr
+    | LP ~ expr ~ RP
+}
+
+variable = { ident | ident ~ LBK ~ expr ~ RBK }
+
+const_ = { decimal | charstr | integer }
+
+arg_list = { expr ~ (CM ~ expr)*}
+
+integer = @{ ASCII_DIGIT+ }
+
+decimal = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
+
+ident = @{ !keyword ~ (ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")*) }
+
+charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
+
+string = @{ DQ ~ ( DQ ~ DQ | (!DQ ~ ANY) )* ~ DQ }
+
+keyword = {
+    CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | VOID | WHILE | WRITE
+}
+
+CHAR = { "char" }
+ELSE = { "else" }
+EXIT = { "exit" }
+FLOAT = { "float" }
+IF = { "if" }
+INT = { "int" }
+READ = { "read" }
+RETURN = { "return" }
+VOID = { "void" }
+WHILE = { "while" }
+WRITE = { "write" }
+
+AND = { "&&" }
+ASSIGN = { "=" }
+CM = { "," }
+DIVIDE = { "/" }
+DOT = { "." }
+DQ = { "\"" }
+EQ = { "==" }
+GE = { ">=" }
+GT = { ">" }
+LBK = { "[" }
+LBR = { "{" }
+LE = { "<=" }
+LP = { "(" }
+LT = { "<" }
+MINUS = { "-" }
+NE = { "!=" }
+NOT = { "!" }
+OR = { "||" }
+PLUS = { "+" }
+RBK = { "]" }
+RBR = { "}" }
+RP = { ")" }
+SC = { ";" }
+SQ = { "'" }
+TIMES = { "*" }
+
+COMMENT = _{ 
+    "/*" ~ (!"*/" ~ ANY)* ~ "*/"
+    | "//" ~ (!"\n" ~ ANY)*
+}
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }

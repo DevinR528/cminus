@@ -1,0 +1,8 @@
+void main() {
+ int a;
+
+	read(a); write(a);
+	write(1); 
+	write(1+2);
+	exit;
+}
