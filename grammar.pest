@@ -4,7 +4,7 @@ decl = { (func_decl | var_decl) }
 
 func_decl = { type_ ~ ident ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
 
-param_list = { param ~ (CM ~ var_name)* }
+param_list = { param ~ (CM ~ param)* }
 
 param = { type_ ~ var_name }
 
@@ -14,7 +14,7 @@ var_name = { ident ~ (LBK ~ integer ~ RBK)? }
 
 type_ = { INT | CHAR | FLOAT | VOID }
 
-stmt = { 
+stmt = {
     assing
     | call_stmt
     | if_stmt
@@ -124,7 +124,7 @@ SC = { ";" }
 SQ = { "'" }
 TIMES = { "*" }
 
-COMMENT = _{ 
+COMMENT = _{
     "/*" ~ (!"*/" ~ ANY)* ~ "*/"
     | "//" ~ (!"\n" ~ ANY)*
 }
