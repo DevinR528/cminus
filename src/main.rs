@@ -134,8 +134,21 @@ fn parse_expr(mut expr: Pair<Rule>) -> Expr {
     println!("expr = {}", expr.to_json());
 
     let climber = PrecClimber::new(vec![
+        // +, -
         Operator::new(Rule::PLUS, Assoc::Left) | Operator::new(Rule::MINUS, Assoc::Left),
+        // *, /
         Operator::new(Rule::TIMES, Assoc::Left) | Operator::new(Rule::DIVIDE, Assoc::Left),
+        // <, <=, >, >=
+        Operator::new(Rule::GT, Assoc::Left)
+        | Operator::new(Rule::GE, Assoc::Left)
+        | Operator::new(Rule::LT, Assoc::Left)
+        | Operator::new(Rule::LE, Assoc::Left),
+        // ==, !=
+        Operator::new(Rule::EQ, Assoc::Left) | Operator::new(Rule::NE, Assoc::Left),
+        // &&
+        Operator::new(Rule::AND, Assoc::Left),
+        // ||
+        Operator::new(Rule::OR, Assoc::Left),
     ]);
 
     let ans = consume(expr, &climber);
@@ -153,6 +166,10 @@ fn consume(pair: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> (String, i32) {
         Rule::MINUS => (format!("({} - {})", lhs.0, rhs.0), lhs.1 - rhs.1),
         Rule::TIMES => (format!("({} * {})", lhs.0, rhs.0), lhs.1 * rhs.1),
         Rule::DIVIDE => (format!("({} / {})", lhs.0, rhs.0), lhs.1 / rhs.1),
+        Rule::EQ => (format!("({} == {})", lhs.0, rhs.0), (lhs.1 == rhs.1) as i32),
+        Rule::NE => (format!("({} != {})", lhs.0, rhs.0), (lhs.1 != rhs.1) as i32),
+        Rule::AND => (format!("({} && {})", lhs.0, rhs.0), lhs.1 & rhs.1),
+        Rule::OR => (format!("({} || {})", lhs.0, rhs.0), lhs.1 | rhs.1),
         _ => unreachable!(),
     };
 
@@ -169,7 +186,7 @@ fn consume(pair: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> (String, i32) {
 fn main() {
     const VARS: &str = "
 void foo() {
-    y = 1 + 1 * 2;
+    y = 1 + 1 || 1 * 2 == 4;
 }
 ";
 
