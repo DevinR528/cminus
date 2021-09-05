@@ -27,7 +27,7 @@ stmt = {
 
 assing = { variable ~ ASSIGN ~ expr ~ SC }
 
-call_stmt = { ident ~ LP ~ arg_list ~ RP ~ SC }
+call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
 if_stmt = { IF ~ LP ~ expr ~ RP ~ cpd_stmt ~ (ELSE ~ cpd_stmt)? }
 
@@ -43,11 +43,19 @@ cpd_stmt = { LBR ~ (stmt)* ~ RBR }
 
 expr = { term ~ (op ~ term)* }
 
+term = {
+    variable ~ !LP
+    | const_
+    | ident ~ LP ~ (arg_list)? ~ RP
+    | NOT ~ expr
+    | LP ~ expr ~ RP
+}
+
 op = {
     PLUS
-    | MINUS
-    | TIMES
-    | DIVIDE
+    | SUB
+    | MUL
+    | DIV
     | EQ
     | NE
     | LE
@@ -58,15 +66,7 @@ op = {
     | AND
 }
 
-term = {
-    variable ~ !LP
-    | const_
-    | ident ~ LP ~ (arg_list)? ~ RP
-    | NOT ~ expr
-    | LP ~ expr ~ RP
-}
-
-variable = { ident | ident ~ LBK ~ expr ~ RBK }
+variable = { ident ~ LBK ~ expr ~ RBK | ident  }
 
 const_ = { decimal | charstr | integer }
 
@@ -76,7 +76,7 @@ integer = @{ ASCII_DIGIT+ }
 
 decimal = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
 
-ident = @{ !keyword ~ (ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")*) }
+ident = @{ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
 
 charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
 
@@ -86,6 +86,7 @@ keyword = {
     CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | VOID | WHILE | WRITE
 }
 
+// keywords
 CHAR = { "char" }
 ELSE = { "else" }
 EXIT = { "exit" }
@@ -98,31 +99,36 @@ VOID = { "void" }
 WHILE = { "while" }
 WRITE = { "write" }
 
-AND = { "&&" }
+// operations
+PLUS = { "+" }
+SUB = { "-" }
+MUL = { "*" }
+DIV = { "/" }
 ASSIGN = { "=" }
-CM = { "," }
-DIVIDE = { "/" }
-DOT = { "." }
-DQ = { "\"" }
+
+// logical
 EQ = { "==" }
+NE = { "!=" }
 GE = { ">=" }
 GT = { ">" }
-LBK = { "[" }
-LBR = { "{" }
 LE = { "<=" }
-LP = { "(" }
 LT = { "<" }
-MINUS = { "-" }
-NE = { "!=" }
 NOT = { "!" }
+AND = { "&&" }
 OR = { "||" }
-PLUS = { "+" }
+
+
+LBK = { "[" }
 RBK = { "]" }
+LBR = { "{" }
 RBR = { "}" }
+LP = { "(" }
 RP = { ")" }
+CM = { "," }
+DOT = { "." }
 SC = { ";" }
 SQ = { "'" }
-TIMES = { "*" }
+DQ = { "\"" }
 
 COMMENT = _{
     "/*" ~ (!"*/" ~ ANY)* ~ "*/"

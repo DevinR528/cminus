@@ -90,7 +90,6 @@ impl<R: RuleType> PrecClimber<R> {
         G: FnMut(T, Pair<'i, R>, T) -> T,
     {
         while pairs.peek().is_some() {
-            println!("some");
             let rule =
                 pairs.peek().unwrap().clone().into_inner().next().unwrap().as_rule();
             if let Some((op, prec)) = self.ops.get(&rule).and_then(|(prec, _)| {
@@ -106,7 +105,15 @@ impl<R: RuleType> PrecClimber<R> {
                 ));
 
                 while pairs.peek().is_some() {
-                    let rule = pairs.peek().unwrap().as_rule();
+                    let rule = pairs
+                        .peek()
+                        .unwrap()
+                        .clone() // We need the next child
+                        // so this long chain is unavoidable unless the parse tree shape changes
+                        .into_inner()
+                        .next()
+                        .unwrap()
+                        .as_rule();
                     if let Some(&(new_prec, assoc)) = self.ops.get(&rule) {
                         if new_prec > *prec || assoc == Assoc::Right && new_prec == *prec
                         {
