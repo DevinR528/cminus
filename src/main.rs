@@ -1,4 +1,6 @@
+// fun rust features I'm turning on
 #![feature(box_syntax, box_patterns, try_blocks, crate_visibility_modifier)]
+// tell rust not to complain about unused anything
 #![allow(unused)]
 
 use std::{
@@ -27,10 +29,16 @@ struct CMinusParser;
 
 /// Driver function responsible for lexing and parsing input.
 fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // read the file to string
     let prog = fs::read_to_string(path)?;
 
+    // using the generated parser from `grammar.pest` lex/parse the input
     let file = match CMinusParser::parse(Rule::program, &prog) {
-        Ok(mut parsed) => parsed.next().unwrap(), // doesn't fail
+        // parsing passed
+        Ok(mut parsed) => parsed
+            .next()
+            .expect("CMinusParser will always have a parse tree if parsing succeeded"),
+        // parsing has failed prints error like
         Err(err) => return Err(err.to_string().into()),
     };
 
@@ -49,14 +57,32 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Run it!
 fn main() {
+    // Get arguments this is c's argv
     let args = env::args().collect::<Vec<_>>();
-    println!("{:?}", args);
+
     match args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice() {
         [] => panic!("need to specify file to compile"),
-        [a, rest @ ..] => {
-            for f in rest {
-                process_file(f).unwrap();
+        // ignore binary name and process all file names passed
+        [_bin_name, file_names @ ..] => {
+            let mut errors = 0;
+            for f in file_names {
+                match process_file(f) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        errors += 1;
+                        eprintln!("{}", e)
+                    }
+                }
+            }
+            if errors != 0 {
+                eprintln!(
+                    "compilation stopped found {} error{}",
+                    errors,
+                    if errors > 1 { "s" } else { "" }
+                );
+                std::process::exit(1)
             }
         }
     };
@@ -65,7 +91,7 @@ fn main() {
 #[test]
 fn parse_all() {
     let mut dirs =
-        fs::read_dir("./nb/input").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
+        fs::read_dir("./input").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
     dirs.sort_by_key(|a| a.path());
 
     for f in dirs.into_iter() {
