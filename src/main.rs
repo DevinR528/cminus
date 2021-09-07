@@ -46,13 +46,15 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // It does work correctly (see src/precedence.rs and src/ast/parse.rs:99:1 for more
     // details)
     //
-    // for item in file.into_inner() {
-    //     match item.as_rule() {
-    //         Rule::decl => parse_decl(item),
-    //         Rule::EOI => break,
-    //         _ => unreachable!(),
-    //     }
-    // }
+    let mut items = vec![];
+    for item in file.into_inner() {
+        match item.as_rule() {
+            Rule::decl => items.extend(parse_decl(item)),
+            Rule::EOI => break,
+            _ => unreachable!(),
+        }
+    }
+    println!("{:?}", items);
 
     Ok(())
 }

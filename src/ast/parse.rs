@@ -1,19 +1,23 @@
 use pest::iterators::{Pair, Pairs};
 
-use crate::{Rule, precedence::{Assoc, Operator, PrecClimber}, ast::types::{BinOp, Expr, UnOp, Val}};
+use crate::{Rule, precedence::{Assoc, Operator, PrecClimber}, ast::types::{BinOp, Expr, UnOp, Val, Decl, Func, Ty, Var, Stmt, Param, Block}};
 
-crate fn parse_decl(pair: Pair<'_, Rule>) {
-    for decl in pair.into_inner() {
+crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Decl> {
+    pair.into_inner().flat_map(|decl| {
         match decl.as_rule() {
-            Rule::func_decl => parse_func(decl.into_inner()),
-            Rule::var_decl => parse_var(decl.into_inner()),
+            Rule::func_decl => vec![Decl::Func(parse_func(decl.into_inner()))],
+            Rule::var_decl => parse_var(decl.into_inner()).into_iter().map(Decl::Var).collect(),
             _ => unreachable!("malformed declaration"),
         }
-    }
+    }).collect()
+}
+
+fn parse_param(param: Pair<Rule>) -> Param {
+    todo!("{}", param.to_json())
 }
 
 #[rustfmt::skip]
-fn parse_func(func: Pairs<Rule>) {
+fn parse_func(func: Pairs<Rule>) -> Func {
     // println!("func = {}", func.to_json());
     match func.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int foo(int a, int b) { stmts }
@@ -21,28 +25,53 @@ fn parse_func(func: Pairs<Rule>) {
          (Rule::LP, _), (Rule::param_list, params), (Rule::RP, _), (Rule::LBR, _),
          action @ ..,
          (Rule::RBR, _)
-        ] => {}
+        ] => {
+            Func {
+                ret: parse_ty(ty.clone()),
+                ident: ident.as_str().to_string(),
+                params: params.clone().into_inner().map(parse_param).collect(),
+                stmts: action.iter().map(|(r, s)| match r {
+                    Rule::stmt => parse_stmt(s.clone()),
+                    Rule::var_decl => Stmt::VarDecl(parse_var(s.clone().into_inner())),
+                    _ => unreachable!("malformed statement"),
+                }).collect()
+
+            }
+        }
         // int foo() { stmts }
         [(Rule::type_, ty), (Rule::ident, ident),
          (Rule::LP, _), (Rule::RP, _), (Rule::LBR, _),
          action @ ..,
          (Rule::RBR, _)
         ] => {
-            for (r, pair) in action {
-                match r {
-                    Rule::stmt => parse_stmt(pair.clone().into_inner()),
-                    Rule::var_decl => parse_var(pair.clone().into_inner()),
-                    _ => unreachable!("malformed code between braces")
-                }
+            Func {
+                ret: parse_ty(ty.clone()),
+                ident: ident.as_str().to_string(),
+                params: vec![],
+                stmts: action.iter().map(|(r, s)| match r {
+                    Rule::stmt => parse_stmt(s.clone()),
+                    Rule::var_decl => Stmt::VarDecl(parse_var(s.clone().into_inner())),
+                    _ => unreachable!("malformed statement"),
+                }).collect()
+
             }
         }
         _ => unreachable!("malformed function"),
     }
 }
 
-fn parse_stmt(mut stmts: Pairs<Rule>) {
-    // println!("stmt = {}", stmts.to_json());
-    let stmt = stmts.next().expect("statement has one child");
+fn parse_block(var: Pair<Rule>) -> Block {
+    match var.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        // { stmt* }
+        [(Rule::LBR, _), stmts @ .., (Rule::RBR, _)] => {
+            Block { stmts: stmts.iter().map(|(_, s)| parse_stmt(s.clone())).collect() }
+        }
+        _ => unreachable!("malformed function"),
+    }
+}
+
+fn parse_stmt(mut stmt: Pair<Rule>) -> Stmt {
+    let stmt = stmt.into_inner().next().unwrap();
     match stmt.as_rule() {
         #[rustfmt::skip]
         Rule::assing => {
@@ -56,41 +85,104 @@ fn parse_stmt(mut stmts: Pairs<Rule>) {
                 // var = expr;
                 [(Rule::variable, name), (Rule::ASSIGN, _), (Rule::expr, expr), (Rule::SC, _)] =>
                 {
-                    // println!("{} = {}", name.as_str(), expr.as_str());
-                    let expr = parse_expr(expr.clone());
+                    Stmt::Assign { ident: name.as_str().to_string(), expr: parse_expr(expr.clone()) }
                 }
                 _ => unreachable!("malformed assingment"),
             }
         }
-        Rule::call_stmt => {}
-        Rule::if_stmt => {}
-        Rule::while_stmt => {}
-        Rule::io_stmt => {}
-        Rule::ret_stmt => {}
-        Rule::exit_stmt => {}
-        Rule::cpd_stmt => {}
+        Rule::call_stmt => {
+            match stmt
+                .into_inner()
+                .map(|p| (p.as_rule(), p))
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+
+                // foo(x,y);
+                [(Rule::ident, name), (Rule::LP, _), (Rule::arg_list, args), (Rule::RP, _), (Rule::SC, _)] =>
+                {
+                    Stmt::Call { ident: name.as_str().to_string(), args: args.clone().into_inner().filter_map(|arg| {
+                        match arg.as_rule() {
+                            Rule::expr => Some(parse_expr(arg)),
+                            Rule::CM => None,
+                            _ => unreachable!("malformed call statement")
+                        }
+                    }).collect() }
+                }
+                // foo();
+                [(Rule::ident, name), (Rule::LP, _), (Rule::RP, _), (Rule::SC, _)] =>
+                {
+                    Stmt::Call { ident: name.as_str().to_string(), args: vec![] }
+                }
+                _ => unreachable!("malformed assingment"),
+            }
+        },
+        Rule::if_stmt => {
+            match stmt
+                .into_inner()
+                .map(|p| (p.as_rule(), p))
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+
+                // if expr { stmts } [ else { stmts }]
+                [(Rule::IF, _), (Rule::LP, _), (Rule::expr, expr), (Rule::RP, _), (Rule::block_stmt, block), else_blk @ ..] =>
+                {
+                    Stmt::If { cond: parse_expr(expr.clone()), blk: parse_block(block.clone()), els: match else_blk {
+                        [(Rule::ELSE, _), (Rule::block_stmt, blk)] => Some(parse_block(blk.clone())),
+                        [] => None,
+                        _ => unreachable!("malformed if statement")
+                    }}
+                }
+                _ => unreachable!("malformed assingment"),
+            }
+        },
+        Rule::while_stmt => todo!("{}", stmt.to_json()),
+        Rule::io_stmt => todo!("{}", stmt.to_json()),
+        Rule::ret_stmt => {
+            match stmt
+                .into_inner()
+                .map(|p| (p.as_rule(), p))
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+
+                // foo(x,y);
+                [(Rule::RETURN, _), (Rule::expr, expr), (Rule::SC, _)] =>
+                {
+                    Stmt::Ret(parse_expr(expr.clone()))
+                }
+                _ => unreachable!("malformed return statement"),
+            }
+        },
+        Rule::exit_stmt => Stmt::Exit,
+        Rule::block_stmt => todo!("{}", stmt.to_json()),
         _ => unreachable!("malformed statement"),
     }
-    assert!(stmts.next().is_none(), "statement had 2 children");
 }
 
-fn parse_var(var: Pairs<Rule>) {
+fn parse_ty(ty: Pair<Rule>) -> Ty {
+    match ty.into_inner().next().unwrap().as_rule() {
+        // int x,y,z;
+        Rule::CHAR => Ty::Char,
+        Rule::INT => Ty::Int,
+        Rule::FLOAT => Ty::Float,
+        Rule::VOID => Ty::Void,
+        _ => unreachable!("malformed function"),
+    }
+}
+
+fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
     match var.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int x,y,z;
         [(Rule::type_, ty), (Rule::var_name, var_name), names @ .., (Rule::SC, _)] => {
-            println!(
-                "{} named {}{}",
-                ty.as_str(),
-                var_name.as_str(),
-                names
-                    .iter()
-                    .filter_map(|(r, n)| if matches!(r, Rule::var_name) {
-                        Some(format!(", {}", n.as_str()))
-                    } else {
-                        None
-                    })
-                    .collect::<String>()
-            )
+            let ty = parse_ty(ty.clone());
+            vec![Var {ty: ty.clone(), ident: var_name.as_str().to_string() }].into_iter().chain(
+                names.iter().filter_map(|(r, n)| if matches!(r, Rule::var_name) {
+                Some(Var { ty: ty.clone(), ident: n.as_str().to_string() })
+            } else {
+                None
+            })).collect()
         }
         _ => unreachable!("malformed function"),
     }
@@ -119,9 +211,7 @@ fn parse_expr(mut expr: Pair<Rule>) -> Expr {
     ]);
 
     let ans = consume(expr, &climber);
-    panic!("{} {:?}", ans.0, ans.1);
-
-    Expr::Ident("foolio".to_string())
+    ans.1
 }
 
 fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> (String, Expr) {

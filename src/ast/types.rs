@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Val {
     Float(f64),
     Int(isize),
@@ -6,13 +6,13 @@ pub enum Val {
     Str(String),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum UnOp {
     Not,
     Inc,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum BinOp {
     /// The `+` operator
     Add,
@@ -42,7 +42,7 @@ pub enum BinOp {
     Gt,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Expr {
     Ident(String),
     Urnary { op: UnOp, expr: Box<Expr> },
@@ -50,4 +50,55 @@ pub enum Expr {
     Parens(Box<Expr>),
     Call { ident: String, args: Vec<Expr> },
     Value(Val),
+}
+
+#[derive(Clone, Debug)]
+pub enum Ty {
+    Int,
+    Char,
+    Float,
+    Void,
+}
+
+#[derive(Clone, Debug)]
+pub struct Param {
+    pub ty: Ty,
+    pub ident: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+}
+
+#[derive(Clone, Debug)]
+pub enum Stmt {
+    VarDecl(Vec<Var>),
+    Assign { ident: String, expr: Expr },
+    Call { ident: String, args: Vec<Expr> },
+    If { cond: Expr, blk: Block, els: Option<Block> },
+    While(),
+    Ret(Expr),
+    Exit,
+    Cpd(),
+}
+
+#[derive(Clone, Debug)]
+pub struct Func {
+    pub ret: Ty,
+    pub ident: String,
+    pub params: Vec<Param>,
+    pub stmts: Vec<Stmt>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Var {
+    pub ty: Ty,
+    pub ident: String,
+}
+
+#[derive(Clone, Debug)]
+pub enum Decl {
+    Func(Func),
+    Var(Var),
 }

@@ -22,14 +22,14 @@ stmt = {
     | io_stmt
     | ret_stmt
     | exit_stmt
-    | cpd_stmt
+    | block_stmt
 }
 
 assing = { variable ~ ASSIGN ~ expr ~ SC }
 
 call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
-if_stmt = { IF ~ LP ~ expr ~ RP ~ cpd_stmt ~ (ELSE ~ cpd_stmt)? }
+if_stmt = { IF ~ LP ~ expr ~ RP ~ block_stmt ~ (ELSE ~ block_stmt)? }
 
 while_stmt = { WHILE ~ LP ~ expr ~ RP ~ stmt }
 
@@ -39,7 +39,7 @@ ret_stmt = { RETURN ~ expr ~ SC }
 
 exit_stmt = { EXIT ~ SC }
 
-cpd_stmt = { LBR ~ (stmt)* ~ RBR }
+block_stmt = { LBR ~ (stmt)* ~ RBR }
 
 expr = { term ~ (op ~ term)* }
 
