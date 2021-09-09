@@ -1,5 +1,5 @@
 // fun rust features I'm turning on
-#![feature(box_syntax, box_patterns, try_blocks, crate_visibility_modifier)]
+#![feature(box_syntax, box_patterns, try_blocks, crate_visibility_modifier, stmt_expr_attributes)]
 // tell rust not to complain about unused anything
 #![allow(unused)]
 
@@ -29,16 +29,16 @@ struct CMinusParser;
 
 /// Driver function responsible for lexing and parsing input.
 fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // read the file to string
+    // Read the file to string
     let prog = fs::read_to_string(path)?;
 
-    // using the generated parser from `grammar.pest` lex/parse the input
+    // Using the generated parser from `grammar.pest` lex/parse the input
     let file = match CMinusParser::parse(Rule::program, &prog) {
-        // parsing passed
-        Ok(mut parsed) => parsed
-            .next()
-            .expect("CMinusParser will always have a parse tree if parsing succeeded"),
-        // parsing has failed prints error like
+        // Parsing passed
+        Ok(mut parsed) => {
+            parsed.next().expect("CMinusParser will always have a parse tree if parsing succeeded")
+        }
+        // Parsing has failed prints error like
         Err(err) => return Err(err.to_string().into()),
     };
 
@@ -54,6 +54,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             _ => unreachable!(),
         }
     }
+
     println!("{:?}", items);
 
     Ok(())
@@ -92,18 +93,14 @@ fn main() {
 
 #[test]
 fn parse_all() {
-    let mut dirs =
-        fs::read_dir("./input").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
+    let mut dirs = fs::read_dir("./input").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
     dirs.sort_by_key(|a| a.path());
 
     for f in dirs.into_iter() {
         let path = f.path();
         if path.is_file() && path.extension() == Some(Path::new("cm").as_os_str()) {
-            let prog = fs::read_to_string(&path).unwrap();
-            match CMinusParser::parse(Rule::program, &prog) {
-                Ok(_) => {} // doesn't fail
-                Err(err) => panic!("{}\n{:?}\nin file: {}", err, err, path.display()),
-            };
+            println!("{}", path.display());
+            process_file(&path.as_os_str().to_string_lossy()).unwrap();
         }
     }
 }

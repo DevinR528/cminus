@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::Peekable, ops::BitOr};
+use std::{collections::HashMap, fmt::Debug, iter::Peekable, ops::BitOr};
 
 use pest::{iterators::Pair, RuleType};
 
@@ -33,7 +33,7 @@ impl<R: RuleType> BitOr for Operator<R> {
             if let Some(ref mut child) = op.next {
                 assign_next(child, next);
             } else {
-                op.next = Some(Box::new(next));
+                op.next = Some(box next);
             }
         }
         assign_next(&mut self, rhs);
@@ -70,9 +70,7 @@ impl<R: RuleType> PrecClimber<R> {
         F: FnMut(Pair<'i, R>) -> T,
         G: FnMut(T, Pair<'i, R>, T) -> T,
     {
-        let lhs = primary(
-            pairs.next().expect("precedence climbing requires a non-empty Pairs"),
-        );
+        let lhs = primary(pairs.next().expect("precedence climbing requires a non-empty Pairs"));
         self.climb_rec(lhs, 0, &mut pairs.peekable(), &mut primary, &mut infix)
     }
 
@@ -90,8 +88,14 @@ impl<R: RuleType> PrecClimber<R> {
         G: FnMut(T, Pair<'i, R>, T) -> T,
     {
         while pairs.peek().is_some() {
-            let rule =
-                pairs.peek().unwrap().clone().into_inner().next().unwrap().as_rule();
+            let rule = pairs
+                .peek()
+                .unwrap()
+                .clone()
+                .into_inner()
+                .next()
+                .unwrap_or_else(|| panic!("{}", pairs.map(|p| p.to_json()).collect::<String>()))
+                .as_rule();
             if let Some((op, prec)) = self.ops.get(&rule).and_then(|(prec, _)| {
                 if prec >= &min_prec {
                     pairs.next().unwrap().into_inner().next().map(|op| (op, prec))
@@ -115,8 +119,7 @@ impl<R: RuleType> PrecClimber<R> {
                         .unwrap()
                         .as_rule();
                     if let Some(&(new_prec, assoc)) = self.ops.get(&rule) {
-                        if new_prec > *prec || assoc == Assoc::Right && new_prec == *prec
-                        {
+                        if new_prec > *prec || assoc == Assoc::Right && new_prec == *prec {
                             rhs = self.climb_rec(rhs, new_prec, pairs, primary, infix);
                         } else {
                             break;

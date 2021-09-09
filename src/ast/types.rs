@@ -77,10 +77,12 @@ pub enum Stmt {
     Assign { ident: String, expr: Expr },
     Call { ident: String, args: Vec<Expr> },
     If { cond: Expr, blk: Block, els: Option<Block> },
-    While(),
+    While { cond: Expr, stmt: Box<Stmt> },
+    Read(String),
+    Write { expr: Expr },
     Ret(Expr),
     Exit,
-    Cpd(),
+    Block(Block),
 }
 
 #[derive(Clone, Debug)]

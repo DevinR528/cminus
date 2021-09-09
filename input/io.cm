@@ -4,5 +4,6 @@ void main() {
 	read(a); write(a);
 	write(1); 
 	write(1+2);
+	write("hello, world!");
 	exit;
 }
