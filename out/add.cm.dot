@@ -1,0 +1,37 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "func main", shape = ellipse]
+0 -> 1
+2[label = "var i", shape = ellipse]
+1 -> 2
+3[label = "var j", shape = ellipse]
+1 -> 3
+4[label = "var k", shape = ellipse]
+1 -> 4
+5[label = "var l", shape = ellipse]
+1 -> 5
+6[label = "assign i", shape = ellipse]
+1 -> 6
+7[label = "expr val Int(1)", shape = ellipse]
+6 -> 7
+8[label = "assign k", shape = ellipse]
+1 -> 8
+9[label = "expr val Int(3)", shape = ellipse]
+8 -> 9
+10[label = "assign l", shape = ellipse]
+1 -> 10
+11[label = "expr val Int(4)", shape = ellipse]
+10 -> 11
+12[label = "assign j", shape = ellipse]
+1 -> 12
+13[label = "expr binop Add", shape = ellipse]
+12 -> 13
+14[label = "expr binop Add", shape = ellipse]
+13 -> 14
+15[label = "expr ident i", shape = ellipse]
+14 -> 15
+16[label = "expr ident k", shape = ellipse]
+14 -> 16
+17[label = "expr ident l", shape = ellipse]
+13 -> 17
+}

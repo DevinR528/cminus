@@ -17,9 +17,12 @@ use pest_derive::Parser;
 
 mod ast;
 mod precedence;
+mod visit;
 
 use ast::{parse::parse_decl, types::Expr};
 use precedence::{Assoc, Operator, PrecClimber};
+
+use crate::visit::Visit;
 
 /// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
 /// into a struct with a `CMinusParser::parse` method.
@@ -55,7 +58,13 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("{:?}", items);
+    let mut dot = visit::DotWalker::new();
+    dot.visit_prog(&items);
+
+    fs::write(
+        &format!("out/{}.dot", Path::new(path).file_name().unwrap().to_string_lossy()),
+        dot.to_string(),
+    );
 
     Ok(())
 }
