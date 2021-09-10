@@ -1,0 +1,11 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "func main", shape = ellipse]
+0 -> 1
+2[label = "write call", shape = ellipse]
+1 -> 2
+3[label = "value int 1", shape = ellipse]
+2 -> 3
+4[label = "exit", shape = ellipse]
+1 -> 4
+}

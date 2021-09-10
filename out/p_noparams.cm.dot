@@ -1,0 +1,95 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var i", shape = ellipse]
+0 -> 1
+2[label = "var j", shape = ellipse]
+0 -> 2
+3[label = "var k", shape = ellipse]
+0 -> 3
+4[label = "var l", shape = ellipse]
+0 -> 4
+5[label = "func a1", shape = ellipse]
+0 -> 5
+6[label = "write call", shape = ellipse]
+5 -> 6
+7[label = "value int 1", shape = ellipse]
+6 -> 7
+8[label = "return", shape = ellipse]
+5 -> 8
+9[label = "value int 0", shape = ellipse]
+8 -> 9
+10[label = "func a2", shape = ellipse]
+0 -> 10
+11[label = "assign j", shape = ellipse]
+10 -> 11
+12[label = "call a1", shape = ellipse]
+11 -> 12
+13[label = "write call", shape = ellipse]
+10 -> 13
+14[label = "value int 2", shape = ellipse]
+13 -> 14
+15[label = "return", shape = ellipse]
+10 -> 15
+16[label = "value int 0", shape = ellipse]
+15 -> 16
+17[label = "func a3", shape = ellipse]
+0 -> 17
+18[label = "assign i", shape = ellipse]
+17 -> 18
+19[label = "call a1", shape = ellipse]
+18 -> 19
+20[label = "assign j", shape = ellipse]
+17 -> 20
+21[label = "call a2", shape = ellipse]
+20 -> 21
+22[label = "write call", shape = ellipse]
+17 -> 22
+23[label = "value int 3", shape = ellipse]
+22 -> 23
+24[label = "return", shape = ellipse]
+17 -> 24
+25[label = "value int 0", shape = ellipse]
+24 -> 25
+26[label = "func a4", shape = ellipse]
+0 -> 26
+27[label = "assign i", shape = ellipse]
+26 -> 27
+28[label = "call a1", shape = ellipse]
+27 -> 28
+29[label = "assign j", shape = ellipse]
+26 -> 29
+30[label = "call a2", shape = ellipse]
+29 -> 30
+31[label = "assign k", shape = ellipse]
+26 -> 31
+32[label = "call a3", shape = ellipse]
+31 -> 32
+33[label = "write call", shape = ellipse]
+26 -> 33
+34[label = "value int 4", shape = ellipse]
+33 -> 34
+35[label = "return", shape = ellipse]
+26 -> 35
+36[label = "value int 0", shape = ellipse]
+35 -> 36
+37[label = "func main", shape = ellipse]
+0 -> 37
+38[label = "assign i", shape = ellipse]
+37 -> 38
+39[label = "call a1", shape = ellipse]
+38 -> 39
+40[label = "assign j", shape = ellipse]
+37 -> 40
+41[label = "call a2", shape = ellipse]
+40 -> 41
+42[label = "assign k", shape = ellipse]
+37 -> 42
+43[label = "call a3", shape = ellipse]
+42 -> 43
+44[label = "assign l", shape = ellipse]
+37 -> 44
+45[label = "call a4", shape = ellipse]
+44 -> 45
+46[label = "exit", shape = ellipse]
+37 -> 46
+}

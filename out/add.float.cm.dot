@@ -14,21 +14,21 @@ digraph ast {
 1 -> 6
 7[label = "expr BinOp Add", shape = ellipse]
 6 -> 7
-8[label = "value int 10", shape = ellipse]
+8[label = "value float 10", shape = ellipse]
 7 -> 8
-9[label = "value int 20", shape = ellipse]
+9[label = "value float 20", shape = ellipse]
 7 -> 9
 10[label = "assign i", shape = ellipse]
 1 -> 10
-11[label = "value int 1", shape = ellipse]
+11[label = "value float 1.2", shape = ellipse]
 10 -> 11
 12[label = "assign k", shape = ellipse]
 1 -> 12
-13[label = "value int 3", shape = ellipse]
+13[label = "value float 3.3", shape = ellipse]
 12 -> 13
 14[label = "assign l", shape = ellipse]
 1 -> 14
-15[label = "value int 4", shape = ellipse]
+15[label = "value float 4.1", shape = ellipse]
 14 -> 15
 16[label = "assign j", shape = ellipse]
 1 -> 16

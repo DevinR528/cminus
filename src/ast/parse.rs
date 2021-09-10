@@ -98,9 +98,20 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Stmt {
                 [(Rule::variable, name), (Rule::ASSIGN, _),
                     (Rule::expr, expr), (Rule::SC, _)
                 ] => {
-                    Stmt::Assign {
-                        ident: name.as_str().to_string(),
-                        expr: parse_expr(expr.clone()),
+                    match name.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+                        [(Rule::ident, ident)] => {
+                            Stmt::Assign {
+                                ident: name.as_str().to_string(),
+                                expr: parse_expr(expr.clone()),
+                            }
+                        }
+                        [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
+                            Stmt::ArrayAssign {
+                                ident: ident.as_str().to_string(),
+                                expr: parse_expr(expr.clone()), 
+                            }
+                        }
+                        _ => unreachable!("malformed variable name")
                     }
                 }
                 _ => unreachable!("malformed assingment"),
@@ -243,17 +254,45 @@ fn parse_ty(ty: Pair<Rule>) -> Ty {
     }
 }
 
+fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Ty) -> Ty {
+    if let Some(size) = dims.next() {
+        Ty::Array { size, ty: box build_recursive_ty(dims, base_ty) }
+    } else {
+        base_ty
+    }
+}
+
 fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
     match var.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int x,y,z;
         [(Rule::type_, ty), (Rule::var_name, var_name), names @ .., (Rule::SC, _)] => {
             let ty = parse_ty(ty.clone());
-            vec![Var { ty: ty.clone(), ident: var_name.as_str().to_string() }]
+            let parse_var_array = |var: &Pair<Rule>| {
+                if var.clone().into_inner().any(|p| matches!(p.as_rule(), Rule::LBK)) {
+                    let mut id = None;
+                    let mut dim: Vec<usize> = vec![];
+                    for p in var.clone().into_inner() {
+                        match p.as_rule() {
+                            Rule::ident => id = Some(p.as_str().to_string()),
+                            Rule::integer => dim.push(p.as_str().parse().unwrap()),
+                            Rule::LBK | Rule::RBK => {}
+                            _ => unreachable!("malformed array variable declaration {:?}", p),
+                        }
+                    }
+
+                    Var { ty: build_recursive_ty(dim.into_iter(), ty.clone()), ident: id.unwrap() }
+                } else {
+                    Var { ty: ty.clone(), ident: var.as_str().to_string() }
+                }
+            };
+
+            vec![parse_var_array(var_name)]
                 .into_iter()
                 .chain(names.iter().filter_map(|(r, n)| {
                     if matches!(r, Rule::var_name) {
-                        Some(Var { ty: ty.clone(), ident: n.as_str().to_string() })
+                        Some(parse_var_array(n))
                     } else {
+                        println!("{:?}", r);
                         None
                     }
                 }))
@@ -309,7 +348,25 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expr {
         Rule::term => {
             match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
                 // x,y,z
-                [(Rule::variable, var)] => Expr::Ident(var.as_str().to_string()),
+                // TODO: handle array
+                [(Rule::variable, var)] => {
+                    match var
+                        .clone()
+                        .into_inner()
+                        .map(|p| (p.as_rule(), p))
+                        .collect::<Vec<_>>()
+                        .as_slice()
+                    {
+                        [(Rule::ident, ident)] => Expr::Ident(ident.as_str().to_string()),
+                        [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
+                            Expr::Array {
+                                ident: ident.as_str().to_string(),
+                                expr: box parse_expr(expr.clone()),
+                            }
+                        }
+                        _ => unreachable!("malformed variable name"),
+                    }
+                }
                 // 1,true,"a"
                 [(Rule::const_, konst)] => {
                     match konst.clone().into_inner().next().unwrap().as_rule() {

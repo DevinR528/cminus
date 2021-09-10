@@ -1,0 +1,17 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "func x", shape = ellipse]
+0 -> 1
+2[label = "assign y", shape = ellipse]
+1 -> 2
+3[label = "ident y", shape = ellipse]
+2 -> 3
+4[label = "func main", shape = ellipse]
+0 -> 4
+5[label = "write call", shape = ellipse]
+4 -> 5
+6[label = "call x", shape = ellipse]
+5 -> 6
+7[label = "value int 1", shape = ellipse]
+6 -> 7
+}

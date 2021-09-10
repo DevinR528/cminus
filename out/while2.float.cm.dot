@@ -1,0 +1,37 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "func main", shape = ellipse]
+0 -> 1
+2[label = "var a", shape = ellipse]
+1 -> 2
+3[label = "var b", shape = ellipse]
+1 -> 3
+4[label = "assign a", shape = ellipse]
+1 -> 4
+5[label = "value float 1.5", shape = ellipse]
+4 -> 5
+6[label = "while loop", shape = ellipse]
+1 -> 6
+7[label = "ident a", shape = ellipse]
+1 -> 7
+8[label = "block", shape = ellipse]
+1 -> 8
+9[label = "write call", shape = ellipse]
+8 -> 9
+10[label = "ident a", shape = ellipse]
+9 -> 10
+11[label = "assign a", shape = ellipse]
+8 -> 11
+12[label = "expr BinOp Sub", shape = ellipse]
+11 -> 12
+13[label = "ident a", shape = ellipse]
+12 -> 13
+14[label = "value float 0.1", shape = ellipse]
+12 -> 14
+15[label = "write call", shape = ellipse]
+1 -> 15
+16[label = "ident a", shape = ellipse]
+15 -> 16
+17[label = "exit", shape = ellipse]
+1 -> 17
+}

@@ -1,0 +1,85 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var x", shape = ellipse]
+0 -> 1
+2[label = "var y", shape = ellipse]
+0 -> 2
+3[label = "var a", shape = ellipse]
+0 -> 3
+4[label = "func junk", shape = ellipse]
+0 -> 4
+5[label = "assign a", shape = ellipse]
+4 -> 5
+6[label = "ident b", shape = ellipse]
+5 -> 6
+7[label = "if call", shape = ellipse]
+4 -> 7
+8[label = "ident a", shape = ellipse]
+7 -> 8
+9[label = "read(a)", shape = ellipse]
+7 -> 9
+10[label = "while loop", shape = ellipse]
+4 -> 10
+11[label = "ident b", shape = ellipse]
+4 -> 11
+12[label = "write call", shape = ellipse]
+4 -> 12
+13[label = "ident a", shape = ellipse]
+12 -> 13
+14[label = "return", shape = ellipse]
+4 -> 14
+15[label = "ident b", shape = ellipse]
+14 -> 15
+16[label = "func stuff", shape = ellipse]
+0 -> 16
+17[label = "var temp", shape = ellipse]
+16 -> 17
+18[label = "assign temp", shape = ellipse]
+16 -> 18
+19[label = "ident a", shape = ellipse]
+18 -> 19
+20[label = "assign a", shape = ellipse]
+16 -> 20
+21[label = "ident b", shape = ellipse]
+20 -> 21
+22[label = "assign b", shape = ellipse]
+16 -> 22
+23[label = "ident temp", shape = ellipse]
+22 -> 23
+24[label = "func main", shape = ellipse]
+0 -> 24
+25[label = "read(x)", shape = ellipse]
+24 -> 25
+26[label = "write call", shape = ellipse]
+24 -> 26
+27[label = "value string 'HELLO_comp412'", shape = ellipse]
+26 -> 27
+28[label = "block", shape = ellipse]
+24 -> 28
+29[label = "assign y", shape = ellipse]
+28 -> 29
+30[label = "expr BinOp Add", shape = ellipse]
+29 -> 30
+31[label = "expr BinOp Add", shape = ellipse]
+30 -> 31
+32[label = "value int 1", shape = ellipse]
+31 -> 32
+33[label = "value int 2", shape = ellipse]
+31 -> 33
+34[label = "expr BinOp Mul", shape = ellipse]
+30 -> 34
+35[label = "value int 3", shape = ellipse]
+34 -> 35
+36[label = "value int 4", shape = ellipse]
+34 -> 36
+37[label = "call stuff", shape = ellipse]
+24 -> 37
+38[label = "call junk", shape = ellipse]
+37 -> 38
+39[label = "ident x", shape = ellipse]
+38 -> 39
+40[label = "ident y", shape = ellipse]
+38 -> 40
+41[label = "value string ''Q''", shape = ellipse]
+37 -> 41
+}

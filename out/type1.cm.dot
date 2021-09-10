@@ -1,0 +1,509 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var b", shape = ellipse]
+0 -> 1
+2[label = "func B", shape = ellipse]
+0 -> 2
+3[label = "var c ", shape = ellipse]
+2 -> 3
+4[label = "var d ", shape = ellipse]
+2 -> 4
+5[label = "assign a", shape = ellipse]
+2 -> 5
+6[label = "expr BinOp Add", shape = ellipse]
+5 -> 6
+7[label = "ident a", shape = ellipse]
+6 -> 7
+8[label = "expr BinOp Mul", shape = ellipse]
+6 -> 8
+9[label = "parenthesis", shape = ellipse]
+8 -> 9
+10[label = "expr BinOp Mul", shape = ellipse]
+9 -> 10
+11[label = "ident c", shape = ellipse]
+10 -> 11
+12[label = "ident d", shape = ellipse]
+10 -> 12
+13[label = "ident e", shape = ellipse]
+8 -> 13
+14[label = "assign B", shape = ellipse]
+2 -> 14
+15[label = "expr BinOp Add", shape = ellipse]
+14 -> 15
+16[label = "ident c", shape = ellipse]
+15 -> 16
+17[label = "expr BinOp Mul", shape = ellipse]
+15 -> 17
+18[label = "ident c", shape = ellipse]
+17 -> 18
+19[label = "ident d", shape = ellipse]
+17 -> 19
+20[label = "assign e", shape = ellipse]
+2 -> 20
+21[label = "expr BinOp Lt", shape = ellipse]
+20 -> 21
+22[label = "ident c", shape = ellipse]
+21 -> 22
+23[label = "ident d", shape = ellipse]
+21 -> 23
+24[label = "assign c", shape = ellipse]
+2 -> 24
+25[label = "expr UrnOp Not", shape = ellipse]
+24 -> 25
+26[label = "ident d", shape = ellipse]
+25 -> 26
+27[label = "assign c", shape = ellipse]
+2 -> 27
+28[label = "expr UrnOp Not", shape = ellipse]
+27 -> 28
+29[label = "ident e", shape = ellipse]
+28 -> 29
+30[label = "assign c", shape = ellipse]
+2 -> 30
+31[label = "expr BinOp Add", shape = ellipse]
+30 -> 31
+32[label = "ident a", shape = ellipse]
+31 -> 32
+33[label = "ident d", shape = ellipse]
+31 -> 33
+34[label = "assign c", shape = ellipse]
+2 -> 34
+35[label = "expr BinOp Add", shape = ellipse]
+34 -> 35
+36[label = "ident e", shape = ellipse]
+35 -> 36
+37[label = "ident e", shape = ellipse]
+35 -> 37
+38[label = "assign c", shape = ellipse]
+2 -> 38
+39[label = "expr BinOp Lt", shape = ellipse]
+38 -> 39
+40[label = "ident e", shape = ellipse]
+39 -> 40
+41[label = "call B", shape = ellipse]
+39 -> 41
+42[label = "ident a", shape = ellipse]
+41 -> 42
+43[label = "ident e", shape = ellipse]
+41 -> 43
+44[label = "assign c", shape = ellipse]
+2 -> 44
+45[label = "expr BinOp Ne", shape = ellipse]
+44 -> 45
+46[label = "ident c", shape = ellipse]
+45 -> 46
+47[label = "ident d", shape = ellipse]
+45 -> 47
+48[label = "assign c", shape = ellipse]
+2 -> 48
+49[label = "expr BinOp Ge", shape = ellipse]
+48 -> 49
+50[label = "ident c", shape = ellipse]
+49 -> 50
+51[label = "ident e", shape = ellipse]
+49 -> 51
+52[label = "assign c", shape = ellipse]
+2 -> 52
+53[label = "call B", shape = ellipse]
+52 -> 53
+54[label = "ident a", shape = ellipse]
+53 -> 54
+55[label = "ident e", shape = ellipse]
+53 -> 55
+56[label = "assign e", shape = ellipse]
+2 -> 56
+57[label = "expr UrnOp Not", shape = ellipse]
+56 -> 57
+58[label = "ident c", shape = ellipse]
+57 -> 58
+59[label = "assign e", shape = ellipse]
+2 -> 59
+60[label = "expr BinOp Or", shape = ellipse]
+59 -> 60
+61[label = "ident a", shape = ellipse]
+60 -> 61
+62[label = "ident a", shape = ellipse]
+60 -> 62
+63[label = "return", shape = ellipse]
+2 -> 63
+64[label = "ident e", shape = ellipse]
+63 -> 64
+65[label = "func complex", shape = ellipse]
+0 -> 65
+66[label = "var a", shape = ellipse]
+65 -> 66
+67[label = "var b", shape = ellipse]
+65 -> 67
+68[label = "var c", shape = ellipse]
+65 -> 68
+69[label = "var d", shape = ellipse]
+65 -> 69
+70[label = "var e", shape = ellipse]
+65 -> 70
+71[label = "var f", shape = ellipse]
+65 -> 71
+72[label = "var g", shape = ellipse]
+65 -> 72
+73[label = "var i", shape = ellipse]
+65 -> 73
+74[label = "var j", shape = ellipse]
+65 -> 74
+75[label = "var k", shape = ellipse]
+65 -> 75
+76[label = "var l", shape = ellipse]
+65 -> 76
+77[label = "var m", shape = ellipse]
+65 -> 77
+78[label = "var n", shape = ellipse]
+65 -> 78
+79[label = "var w", shape = ellipse]
+65 -> 79
+80[label = "var x", shape = ellipse]
+65 -> 80
+81[label = "var y", shape = ellipse]
+65 -> 81
+82[label = "var z", shape = ellipse]
+65 -> 82
+83[label = "var C1", shape = ellipse]
+65 -> 83
+84[label = "var C2", shape = ellipse]
+65 -> 84
+85[label = "var C3", shape = ellipse]
+65 -> 85
+86[label = "assign a", shape = ellipse]
+65 -> 86
+87[label = "expr BinOp Add", shape = ellipse]
+86 -> 87
+88[label = "expr BinOp Add", shape = ellipse]
+87 -> 88
+89[label = "expr BinOp Add", shape = ellipse]
+88 -> 89
+90[label = "expr BinOp Add", shape = ellipse]
+89 -> 90
+91[label = "ident a", shape = ellipse]
+90 -> 91
+92[label = "ident b", shape = ellipse]
+90 -> 92
+93[label = "ident c", shape = ellipse]
+89 -> 93
+94[label = "ident d", shape = ellipse]
+88 -> 94
+95[label = "ident e", shape = ellipse]
+87 -> 95
+96[label = "assign i", shape = ellipse]
+65 -> 96
+97[label = "expr BinOp Add", shape = ellipse]
+96 -> 97
+98[label = "expr BinOp Mul", shape = ellipse]
+97 -> 98
+99[label = "expr BinOp Mul", shape = ellipse]
+98 -> 99
+100[label = "ident i", shape = ellipse]
+99 -> 100
+101[label = "ident j", shape = ellipse]
+99 -> 101
+102[label = "ident k", shape = ellipse]
+98 -> 102
+103[label = "expr BinOp Mul", shape = ellipse]
+97 -> 103
+104[label = "ident l", shape = ellipse]
+103 -> 104
+105[label = "ident m", shape = ellipse]
+103 -> 105
+106[label = "assign C1", shape = ellipse]
+65 -> 106
+107[label = "call B", shape = ellipse]
+106 -> 107
+108[label = "ident i", shape = ellipse]
+107 -> 108
+109[label = "ident C2", shape = ellipse]
+107 -> 109
+110[label = "assign a", shape = ellipse]
+65 -> 110
+111[label = "expr BinOp Add", shape = ellipse]
+110 -> 111
+112[label = "expr BinOp Add", shape = ellipse]
+111 -> 112
+113[label = "expr BinOp Mul", shape = ellipse]
+112 -> 113
+114[label = "ident a", shape = ellipse]
+113 -> 114
+115[label = "ident i", shape = ellipse]
+113 -> 115
+116[label = "expr BinOp Mul", shape = ellipse]
+112 -> 116
+117[label = "ident b", shape = ellipse]
+116 -> 117
+118[label = "ident j", shape = ellipse]
+116 -> 118
+119[label = "expr BinOp Mul", shape = ellipse]
+111 -> 119
+120[label = "ident c", shape = ellipse]
+119 -> 120
+121[label = "ident k", shape = ellipse]
+119 -> 121
+122[label = "assign i", shape = ellipse]
+65 -> 122
+123[label = "expr BinOp Add", shape = ellipse]
+122 -> 123
+124[label = "expr BinOp Add", shape = ellipse]
+123 -> 124
+125[label = "expr BinOp Mul", shape = ellipse]
+124 -> 125
+126[label = "expr BinOp Mul", shape = ellipse]
+125 -> 126
+127[label = "expr BinOp Mul", shape = ellipse]
+126 -> 127
+128[label = "expr BinOp Mul", shape = ellipse]
+127 -> 128
+129[label = "expr BinOp Mul", shape = ellipse]
+128 -> 129
+130[label = "expr BinOp Mul", shape = ellipse]
+129 -> 130
+131[label = "expr BinOp Mul", shape = ellipse]
+130 -> 131
+132[label = "expr BinOp Mul", shape = ellipse]
+131 -> 132
+133[label = "ident a", shape = ellipse]
+132 -> 133
+134[label = "ident b", shape = ellipse]
+132 -> 134
+135[label = "ident c", shape = ellipse]
+131 -> 135
+136[label = "ident i", shape = ellipse]
+130 -> 136
+137[label = "ident j", shape = ellipse]
+129 -> 137
+138[label = "ident k", shape = ellipse]
+128 -> 138
+139[label = "ident e", shape = ellipse]
+127 -> 139
+140[label = "ident f", shape = ellipse]
+126 -> 140
+141[label = "ident l", shape = ellipse]
+125 -> 141
+142[label = "expr BinOp Mul", shape = ellipse]
+124 -> 142
+143[label = "ident m", shape = ellipse]
+142 -> 143
+144[label = "ident a", shape = ellipse]
+142 -> 144
+145[label = "expr BinOp Mul", shape = ellipse]
+123 -> 145
+146[label = "ident d", shape = ellipse]
+145 -> 146
+147[label = "ident n", shape = ellipse]
+145 -> 147
+148[label = "assign a", shape = ellipse]
+65 -> 148
+149[label = "expr BinOp Ne", shape = ellipse]
+148 -> 149
+150[label = "call B", shape = ellipse]
+149 -> 150
+151[label = "expr BinOp Add", shape = ellipse]
+150 -> 151
+152[label = "expr BinOp Add", shape = ellipse]
+151 -> 152
+153[label = "ident i", shape = ellipse]
+152 -> 153
+154[label = "ident j", shape = ellipse]
+152 -> 154
+155[label = "expr BinOp Mul", shape = ellipse]
+151 -> 155
+156[label = "ident k", shape = ellipse]
+155 -> 156
+157[label = "ident l", shape = ellipse]
+155 -> 157
+158[label = "ident C2", shape = ellipse]
+150 -> 158
+159[label = "ident C3", shape = ellipse]
+149 -> 159
+160[label = "assign a", shape = ellipse]
+65 -> 160
+161[label = "ident w[B(i,C1)>C2]", shape = ellipse]
+160 -> 161
+162[label = "assign a", shape = ellipse]
+65 -> 162
+163[label = "value int 1", shape = ellipse]
+162 -> 163
+164[label = "assign i", shape = ellipse]
+65 -> 164
+165[label = "value float 120000", shape = ellipse]
+164 -> 165
+166[label = "assign C1", shape = ellipse]
+65 -> 166
+167[label = "value string ''Q''", shape = ellipse]
+166 -> 167
+168[label = "assign C2", shape = ellipse]
+65 -> 168
+169[label = "call B", shape = ellipse]
+168 -> 169
+170[label = "ident i", shape = ellipse]
+169 -> 170
+171[label = "call B", shape = ellipse]
+169 -> 171
+172[label = "ident j", shape = ellipse]
+171 -> 172
+173[label = "call B", shape = ellipse]
+171 -> 173
+174[label = "ident k", shape = ellipse]
+173 -> 174
+175[label = "ident C1", shape = ellipse]
+173 -> 175
+176[label = "func complex2", shape = ellipse]
+0 -> 176
+177[label = "var a", shape = ellipse]
+176 -> 177
+178[label = "var b", shape = ellipse]
+176 -> 178
+179[label = "var c", shape = ellipse]
+176 -> 179
+180[label = "var d", shape = ellipse]
+176 -> 180
+181[label = "var e", shape = ellipse]
+176 -> 181
+182[label = "var f", shape = ellipse]
+176 -> 182
+183[label = "var g", shape = ellipse]
+176 -> 183
+184[label = "var i", shape = ellipse]
+176 -> 184
+185[label = "var j", shape = ellipse]
+176 -> 185
+186[label = "var k", shape = ellipse]
+176 -> 186
+187[label = "var l", shape = ellipse]
+176 -> 187
+188[label = "var m", shape = ellipse]
+176 -> 188
+189[label = "var n", shape = ellipse]
+176 -> 189
+190[label = "var w", shape = ellipse]
+176 -> 190
+191[label = "var x", shape = ellipse]
+176 -> 191
+192[label = "var y", shape = ellipse]
+176 -> 192
+193[label = "var z", shape = ellipse]
+176 -> 193
+194[label = "var C1", shape = ellipse]
+176 -> 194
+195[label = "var C2", shape = ellipse]
+176 -> 195
+196[label = "var C3", shape = ellipse]
+176 -> 196
+197[label = "assign C1", shape = ellipse]
+176 -> 197
+198[label = "expr BinOp Add", shape = ellipse]
+197 -> 198
+199[label = "call B", shape = ellipse]
+198 -> 199
+200[label = "expr BinOp Add", shape = ellipse]
+199 -> 200
+201[label = "expr BinOp Add", shape = ellipse]
+200 -> 201
+202[label = "ident i", shape = ellipse]
+201 -> 202
+203[label = "ident j", shape = ellipse]
+201 -> 203
+204[label = "expr BinOp Mul", shape = ellipse]
+200 -> 204
+205[label = "ident k", shape = ellipse]
+204 -> 205
+206[label = "ident l", shape = ellipse]
+204 -> 206
+207[label = "ident C2", shape = ellipse]
+199 -> 207
+208[label = "ident C3", shape = ellipse]
+198 -> 208
+209[label = "assign a", shape = ellipse]
+176 -> 209
+210[label = "expr BinOp Add", shape = ellipse]
+209 -> 210
+211[label = "expr BinOp Add", shape = ellipse]
+210 -> 211
+212[label = "expr BinOp Add", shape = ellipse]
+211 -> 212
+213[label = "expr BinOp Mul", shape = ellipse]
+212 -> 213
+214[label = "ident b", shape = ellipse]
+213 -> 214
+215[label = "ident c", shape = ellipse]
+213 -> 215
+216[label = "expr BinOp Mul", shape = ellipse]
+212 -> 216
+217[label = "ident d", shape = ellipse]
+216 -> 217
+218[label = "ident C1", shape = ellipse]
+216 -> 218
+219[label = "ident e", shape = ellipse]
+211 -> 219
+220[label = "ident f", shape = ellipse]
+210 -> 220
+221[label = "assign C2", shape = ellipse]
+176 -> 221
+222[label = "expr BinOp Add", shape = ellipse]
+221 -> 222
+223[label = "expr BinOp Add", shape = ellipse]
+222 -> 223
+224[label = "expr BinOp Add", shape = ellipse]
+223 -> 224
+225[label = "expr BinOp Mul", shape = ellipse]
+224 -> 225
+226[label = "expr BinOp Mul", shape = ellipse]
+225 -> 226
+227[label = "ident a", shape = ellipse]
+226 -> 227
+228[label = "ident b", shape = ellipse]
+226 -> 228
+229[label = "ident c", shape = ellipse]
+225 -> 229
+230[label = "ident j", shape = ellipse]
+224 -> 230
+231[label = "ident i", shape = ellipse]
+223 -> 231
+232[label = "ident k", shape = ellipse]
+222 -> 232
+233[label = "assign i", shape = ellipse]
+176 -> 233
+234[label = "expr BinOp Add", shape = ellipse]
+233 -> 234
+235[label = "parenthesis", shape = ellipse]
+234 -> 235
+236[label = "expr BinOp Gt", shape = ellipse]
+235 -> 236
+237[label = "call B", shape = ellipse]
+236 -> 237
+238[label = "ident i", shape = ellipse]
+237 -> 238
+239[label = "ident C2", shape = ellipse]
+237 -> 239
+240[label = "call B", shape = ellipse]
+236 -> 240
+241[label = "ident j", shape = ellipse]
+240 -> 241
+242[label = "ident C2", shape = ellipse]
+240 -> 242
+243[label = "parenthesis", shape = ellipse]
+234 -> 243
+244[label = "expr BinOp Gt", shape = ellipse]
+243 -> 244
+245[label = "call B", shape = ellipse]
+244 -> 245
+246[label = "ident l", shape = ellipse]
+245 -> 246
+247[label = "ident C3", shape = ellipse]
+245 -> 247
+248[label = "ident j", shape = ellipse]
+244 -> 248
+249[label = "func main", shape = ellipse]
+0 -> 249
+250[label = "call complex", shape = ellipse]
+249 -> 250
+251[label = "call complex2", shape = ellipse]
+249 -> 251
+252[label = "assign b[1]", shape = ellipse]
+249 -> 252
+253[label = "value int 100", shape = ellipse]
+252 -> 253
+}

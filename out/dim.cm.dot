@@ -1,0 +1,27 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var b", shape = ellipse]
+0 -> 1
+2[label = "var e", shape = ellipse]
+0 -> 2
+3[label = "func B", shape = ellipse]
+0 -> 3
+4[label = "var c", shape = ellipse]
+3 -> 4
+5[label = "assign a[20]", shape = ellipse]
+3 -> 5
+6[label = "ident c[1]", shape = ellipse]
+5 -> 6
+7[label = "return", shape = ellipse]
+3 -> 7
+8[label = "call B", shape = ellipse]
+7 -> 8
+9[label = "ident a", shape = ellipse]
+8 -> 9
+10[label = "func main", shape = ellipse]
+0 -> 10
+11[label = "assign b", shape = ellipse]
+10 -> 11
+12[label = "ident e", shape = ellipse]
+11 -> 12
+}

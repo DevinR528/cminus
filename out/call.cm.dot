@@ -1,0 +1,27 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "func decls", shape = ellipse]
+0 -> 1
+2[label = "return", shape = ellipse]
+1 -> 2
+3[label = "value int 7", shape = ellipse]
+2 -> 3
+4[label = "func foo", shape = ellipse]
+0 -> 4
+5[label = "return", shape = ellipse]
+4 -> 5
+6[label = "value float 7.3", shape = ellipse]
+5 -> 6
+7[label = "func main", shape = ellipse]
+0 -> 7
+8[label = "write call", shape = ellipse]
+7 -> 8
+9[label = "call decls", shape = ellipse]
+8 -> 9
+10[label = "write call", shape = ellipse]
+7 -> 10
+11[label = "call foo", shape = ellipse]
+10 -> 11
+12[label = "exit", shape = ellipse]
+7 -> 12
+}

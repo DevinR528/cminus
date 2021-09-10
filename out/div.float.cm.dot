@@ -12,29 +12,29 @@ digraph ast {
 1 -> 5
 6[label = "write call", shape = ellipse]
 1 -> 6
-7[label = "expr BinOp Add", shape = ellipse]
+7[label = "expr BinOp Div", shape = ellipse]
 6 -> 7
-8[label = "value int 10", shape = ellipse]
+8[label = "value float 51", shape = ellipse]
 7 -> 8
-9[label = "value int 20", shape = ellipse]
+9[label = "value float 17", shape = ellipse]
 7 -> 9
 10[label = "assign i", shape = ellipse]
 1 -> 10
-11[label = "value int 1", shape = ellipse]
+11[label = "value float 100.5", shape = ellipse]
 10 -> 11
 12[label = "assign k", shape = ellipse]
 1 -> 12
-13[label = "value int 3", shape = ellipse]
+13[label = "value float 2.1", shape = ellipse]
 12 -> 13
 14[label = "assign l", shape = ellipse]
 1 -> 14
-15[label = "value int 4", shape = ellipse]
+15[label = "value float 5.1", shape = ellipse]
 14 -> 15
 16[label = "assign j", shape = ellipse]
 1 -> 16
-17[label = "expr BinOp Add", shape = ellipse]
+17[label = "expr BinOp Div", shape = ellipse]
 16 -> 17
-18[label = "expr BinOp Add", shape = ellipse]
+18[label = "expr BinOp Div", shape = ellipse]
 17 -> 18
 19[label = "ident i", shape = ellipse]
 18 -> 19

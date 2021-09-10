@@ -1,0 +1,71 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var a", shape = ellipse]
+0 -> 1
+2[label = "var b", shape = ellipse]
+0 -> 2
+3[label = "var c", shape = ellipse]
+0 -> 3
+4[label = "var d", shape = ellipse]
+0 -> 4
+5[label = "func main", shape = ellipse]
+0 -> 5
+6[label = "if call", shape = ellipse]
+5 -> 6
+7[label = "expr BinOp Eq", shape = ellipse]
+6 -> 7
+8[label = "ident b", shape = ellipse]
+7 -> 8
+9[label = "ident b", shape = ellipse]
+7 -> 9
+10[label = "assign a", shape = ellipse]
+6 -> 10
+11[label = "expr BinOp Add", shape = ellipse]
+10 -> 11
+12[label = "ident a", shape = ellipse]
+11 -> 12
+13[label = "ident a", shape = ellipse]
+11 -> 13
+14[label = "assign c", shape = ellipse]
+6 -> 14
+15[label = "expr BinOp Mul", shape = ellipse]
+14 -> 15
+16[label = "ident c", shape = ellipse]
+15 -> 16
+17[label = "ident a", shape = ellipse]
+15 -> 17
+18[label = "assign c", shape = ellipse]
+6 -> 18
+19[label = "expr BinOp Sub", shape = ellipse]
+18 -> 19
+20[label = "ident a", shape = ellipse]
+19 -> 20
+21[label = "ident c", shape = ellipse]
+19 -> 21
+22[label = "if call", shape = ellipse]
+5 -> 22
+23[label = "expr BinOp Ge", shape = ellipse]
+22 -> 23
+24[label = "ident c", shape = ellipse]
+23 -> 24
+25[label = "ident a", shape = ellipse]
+23 -> 25
+26[label = "assign b", shape = ellipse]
+22 -> 26
+27[label = "expr BinOp Or", shape = ellipse]
+26 -> 27
+28[label = "ident b", shape = ellipse]
+27 -> 28
+29[label = "ident b", shape = ellipse]
+27 -> 29
+30[label = "assign a", shape = ellipse]
+5 -> 30
+31[label = "expr BinOp Add", shape = ellipse]
+30 -> 31
+32[label = "ident a", shape = ellipse]
+31 -> 32
+33[label = "ident c", shape = ellipse]
+31 -> 33
+34[label = "exit", shape = ellipse]
+5 -> 34
+}

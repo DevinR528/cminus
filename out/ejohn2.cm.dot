@@ -1,0 +1,61 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var i ", shape = ellipse]
+0 -> 1
+2[label = "func print", shape = ellipse]
+0 -> 2
+3[label = "write call", shape = ellipse]
+2 -> 3
+4[label = "ident x", shape = ellipse]
+3 -> 4
+5[label = "return", shape = ellipse]
+2 -> 5
+6[label = "value int 0", shape = ellipse]
+5 -> 6
+7[label = "func inc", shape = ellipse]
+0 -> 7
+8[label = "return", shape = ellipse]
+7 -> 8
+9[label = "expr BinOp Add", shape = ellipse]
+8 -> 9
+10[label = "ident x", shape = ellipse]
+9 -> 10
+11[label = "value int 1", shape = ellipse]
+9 -> 11
+12[label = "func sqr", shape = ellipse]
+0 -> 12
+13[label = "return", shape = ellipse]
+12 -> 13
+14[label = "expr BinOp Mul", shape = ellipse]
+13 -> 14
+15[label = "ident x", shape = ellipse]
+14 -> 15
+16[label = "ident x", shape = ellipse]
+14 -> 16
+17[label = "func main", shape = ellipse]
+0 -> 17
+18[label = "read(i)", shape = ellipse]
+17 -> 18
+19[label = "while loop", shape = ellipse]
+17 -> 19
+20[label = "ident i", shape = ellipse]
+17 -> 20
+21[label = "block", shape = ellipse]
+17 -> 21
+22[label = "call print", shape = ellipse]
+21 -> 22
+23[label = "ident i", shape = ellipse]
+22 -> 23
+24[label = "call print", shape = ellipse]
+21 -> 24
+25[label = "call inc", shape = ellipse]
+24 -> 25
+26[label = "call sqr", shape = ellipse]
+25 -> 26
+27[label = "call inc", shape = ellipse]
+26 -> 27
+28[label = "ident i", shape = ellipse]
+27 -> 28
+29[label = "read(i)", shape = ellipse]
+21 -> 29
+}

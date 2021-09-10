@@ -1,0 +1,115 @@
+digraph ast {
+0[label = PGM, shape = ellipse]
+1[label = "var globalCount", shape = ellipse]
+0 -> 1
+2[label = "var input", shape = ellipse]
+0 -> 2
+3[label = "var i", shape = ellipse]
+0 -> 3
+4[label = "var loop ", shape = ellipse]
+0 -> 4
+5[label = "func fib1", shape = ellipse]
+0 -> 5
+6[label = "assign globalCount", shape = ellipse]
+5 -> 6
+7[label = "expr BinOp Add", shape = ellipse]
+6 -> 7
+8[label = "ident globalCount", shape = ellipse]
+7 -> 8
+9[label = "value int 1", shape = ellipse]
+7 -> 9
+10[label = "if call", shape = ellipse]
+5 -> 10
+11[label = "expr BinOp Or", shape = ellipse]
+10 -> 11
+12[label = "parenthesis", shape = ellipse]
+11 -> 12
+13[label = "expr BinOp Eq", shape = ellipse]
+12 -> 13
+14[label = "ident x", shape = ellipse]
+13 -> 14
+15[label = "value int 1", shape = ellipse]
+13 -> 15
+16[label = "parenthesis", shape = ellipse]
+11 -> 16
+17[label = "expr BinOp Eq", shape = ellipse]
+16 -> 17
+18[label = "ident x", shape = ellipse]
+17 -> 18
+19[label = "value int 0", shape = ellipse]
+17 -> 19
+20[label = "call return", shape = ellipse]
+10 -> 20
+21[label = "value int 1", shape = ellipse]
+20 -> 21
+22[label = "func main", shape = ellipse]
+0 -> 22
+23[label = "write call", shape = ellipse]
+22 -> 23
+24[label = "value string 'Enter number of fib numbers to find:'", shape = ellipse]
+23 -> 24
+25[label = "read(i)", shape = ellipse]
+22 -> 25
+26[label = "assign loop", shape = ellipse]
+22 -> 26
+27[label = "value int 1", shape = ellipse]
+26 -> 27
+28[label = "while loop", shape = ellipse]
+22 -> 28
+29[label = "expr BinOp Le", shape = ellipse]
+22 -> 29
+30[label = "ident loop", shape = ellipse]
+29 -> 30
+31[label = "ident i", shape = ellipse]
+29 -> 31
+32[label = "block", shape = ellipse]
+22 -> 32
+33[label = "assign globalCount", shape = ellipse]
+32 -> 33
+34[label = "value int 0", shape = ellipse]
+33 -> 34
+35[label = "write call", shape = ellipse]
+32 -> 35
+36[label = "value string ''", shape = ellipse]
+35 -> 36
+37[label = "write call", shape = ellipse]
+32 -> 37
+38[label = "value string 'Enter fib number to find:'", shape = ellipse]
+37 -> 38
+39[label = "read(input)", shape = ellipse]
+32 -> 39
+40[label = "assign input", shape = ellipse]
+32 -> 40
+41[label = "call fib1", shape = ellipse]
+40 -> 41
+42[label = "ident input", shape = ellipse]
+41 -> 42
+43[label = "write call", shape = ellipse]
+32 -> 43
+44[label = "value string 'Result:'", shape = ellipse]
+43 -> 44
+45[label = "write call", shape = ellipse]
+32 -> 45
+46[label = "ident input", shape = ellipse]
+45 -> 46
+47[label = "write call", shape = ellipse]
+32 -> 47
+48[label = "value string 'Number of fib1s executed:'", shape = ellipse]
+47 -> 48
+49[label = "write call", shape = ellipse]
+32 -> 49
+50[label = "ident globalCount", shape = ellipse]
+49 -> 50
+51[label = "assign loop", shape = ellipse]
+32 -> 51
+52[label = "expr BinOp Add", shape = ellipse]
+51 -> 52
+53[label = "ident loop", shape = ellipse]
+52 -> 53
+54[label = "value int 1", shape = ellipse]
+52 -> 54
+55[label = "write call", shape = ellipse]
+22 -> 55
+56[label = "value string 'Bye'", shape = ellipse]
+55 -> 56
+}

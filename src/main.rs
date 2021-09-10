@@ -58,6 +58,8 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    println!("{:?}", items);
+
     let mut dot = visit::DotWalker::new();
     dot.visit_prog(&items);
 

@@ -10,16 +10,17 @@ param = { type_ ~ var_name }
 
 var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
-var_name = { ident ~ (LBK ~ integer ~ RBK)? }
+// I added multi-dimensional arrays 😈
+var_name = { ident ~ (LBK ~ integer ~ RBK)* }
 
 type_ = { INT | CHAR | FLOAT | VOID }
 
 stmt = {
     assing
+    | io_stmt
     | call_stmt
     | if_stmt
     | while_stmt
-    | io_stmt
     | ret_stmt
     | exit_stmt
     | block_stmt

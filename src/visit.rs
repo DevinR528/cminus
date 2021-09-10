@@ -85,6 +85,10 @@ crate fn walk_stmt<V: Visit>(visit: &mut V, stmt: &Stmt) {
             // visit.visit_ident(ident);
             visit.visit_expr(expr);
         }
+        Stmt::ArrayAssign { ident, expr } => {
+            // visit.visit_ident(ident);
+            visit.visit_expr(expr);
+        }
         Stmt::Call { ident, args } => {
             // visit.visit_ident(ident);
             for expr in args {
@@ -124,6 +128,10 @@ crate fn walk_expr<V: Visit>(visit: &mut V, expr: &Expr) {
     match expr {
         Expr::Ident(id) => {
             // visit.visit_ident(id)
+        }
+        Expr::Array { ident, expr } => {
+            // visit.visit_ident(ident);
+            visit.visit_expr(expr);
         }
         Expr::Urnary { op, expr } => {
             visit.visit_expr(expr);
@@ -192,36 +200,7 @@ impl Visit for DotWalker {
         self.prev_id = self.node_id;
 
         for stmt in &func.stmts {
-            match stmt {
-                Stmt::VarDecl(vars) => {
-                    for var in vars {
-                        self.node_id += 1;
-                        self.visit_var(var);
-                    }
-                }
-                Stmt::Assign { ident, expr } => {
-                    self.node_id += 1;
-                    writeln!(
-                        &mut self.buf,
-                        "{}[label = \"assign {}\", shape = ellipse]",
-                        self.node_id, ident
-                    );
-                    writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
-
-                    let tmp = self.prev_id;
-                    self.prev_id = self.node_id;
-                    self.visit_expr(expr);
-                    self.prev_id = tmp;
-                }
-                Stmt::Call { ident, args } => {}
-                Stmt::If { cond, blk, els } => {}
-                Stmt::While { cond, stmt } => {}
-                Stmt::Read(_) => {}
-                Stmt::Write { expr } => {}
-                Stmt::Ret(_) => {}
-                Stmt::Exit => {}
-                Stmt::Block(_) => {}
-            }
+            self.visit_stmt(stmt);
         }
         self.prev_id = tmp;
     }
@@ -240,7 +219,147 @@ impl Visit for DotWalker {
     }
 
     fn visit_stmt(&mut self, stmt: &Stmt) {
-        walk_stmt(self, stmt)
+        match stmt {
+            Stmt::VarDecl(vars) => {
+                for var in vars {
+                    self.node_id += 1;
+                    self.visit_var(var);
+                }
+            }
+            Stmt::Assign { ident, expr } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"assign {}\", shape = ellipse]",
+                    self.node_id, ident
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
+            Stmt::ArrayAssign { ident, expr } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"array assign {}\", shape = ellipse]",
+                    self.node_id, ident
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
+            Stmt::Call { ident, args } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"call {}\", shape = ellipse]",
+                    self.node_id, ident
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                for expr in args {
+                    self.visit_expr(expr);
+                }
+
+                self.prev_id = tmp;
+            }
+            Stmt::If { cond, blk, els } => {
+                self.node_id += 1;
+                writeln!(&mut self.buf, "{}[label = \"if call\", shape = ellipse]", self.node_id);
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(cond);
+                for stmt in &blk.stmts {
+                    self.visit_stmt(stmt);
+                }
+
+                self.prev_id = tmp;
+            }
+            Stmt::While { cond, stmt } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"while loop\", shape = ellipse]",
+                    self.node_id
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                self.visit_expr(cond);
+                self.visit_stmt(stmt);
+            }
+            Stmt::Read(ident) => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"read({})\", shape = ellipse]",
+                    self.node_id, ident
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+            }
+            Stmt::Write { expr } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"write call\", shape = ellipse]",
+                    self.node_id
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
+            Stmt::Ret(expr) => {
+                self.node_id += 1;
+                writeln!(&mut self.buf, "{}[label = \"return\", shape = ellipse]", self.node_id);
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
+            Stmt::Exit => {
+                self.node_id += 1;
+                writeln!(&mut self.buf, "{}[label = \"exit\", shape = ellipse]", self.node_id);
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+            }
+            Stmt::Block(Block { stmts }) => {
+                self.node_id += 1;
+                writeln!(&mut self.buf, "{}[label = \"block\", shape = ellipse]", self.node_id);
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                for stmt in stmts {
+                    self.visit_stmt(stmt);
+                }
+
+                self.prev_id = tmp;
+            }
+        }
     }
 
     fn visit_expr(&mut self, expr: &Expr) {
@@ -249,17 +368,48 @@ impl Visit for DotWalker {
                 self.node_id += 1;
                 writeln!(
                     &mut self.buf,
-                    "{}[label = \"expr ident {}\", shape = ellipse]",
+                    "{}[label = \"ident {}\", shape = ellipse]",
                     self.node_id, name
                 );
                 writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
             }
-            Expr::Urnary { op, expr } => {}
+            Expr::Array { ident, expr } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"array {}\", shape = ellipse]",
+                    self.node_id, ident
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
+            Expr::Urnary { op, expr } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"expr UrnOp {:?}\", shape = ellipse]",
+                    self.node_id, op
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
             Expr::Binary { op, lhs, rhs } => {
                 self.node_id += 1;
                 writeln!(
                     &mut self.buf,
-                    "{}[label = \"expr binop {:?}\", shape = ellipse]",
+                    "{}[label = \"expr BinOp {:?}\", shape = ellipse]",
                     self.node_id, op
                 );
                 writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
@@ -269,15 +419,48 @@ impl Visit for DotWalker {
 
                 self.visit_expr(lhs);
                 self.visit_expr(rhs);
+
                 self.prev_id = tmp;
             }
-            Expr::Parens(_) => {}
-            Expr::Call { ident, args } => {}
+            Expr::Parens(expr) => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"parenthesis\", shape = ellipse]",
+                    self.node_id
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                self.visit_expr(expr);
+
+                self.prev_id = tmp;
+            }
+            Expr::Call { ident, args } => {
+                self.node_id += 1;
+                writeln!(
+                    &mut self.buf,
+                    "{}[label = \"call {}\", shape = ellipse]",
+                    self.node_id, ident
+                );
+                writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
+
+                let tmp = self.prev_id;
+                self.prev_id = self.node_id;
+
+                for expr in args {
+                    self.visit_expr(expr);
+                }
+
+                self.prev_id = tmp;
+            }
             Expr::Value(val) => {
                 self.node_id += 1;
                 writeln!(
                     &mut self.buf,
-                    "{}[label = \"expr val {:?}\", shape = ellipse]",
+                    "{}[label = \"value {}\", shape = ellipse]",
                     self.node_id, val
                 );
                 writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
