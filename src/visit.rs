@@ -214,6 +214,7 @@ impl Visit for DotWalker {
     }
 
     fn visit_var(&mut self, var: &Var) {
+        self.node_id += 1;
         writeln!(&mut self.buf, "{}[label = \"var {}\", shape = ellipse]", self.node_id, var.ident);
         writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
     }
@@ -230,7 +231,6 @@ impl Visit for DotWalker {
         match stmt {
             Stmt::VarDecl(vars) => {
                 for var in vars {
-                    self.node_id += 1;
                     self.visit_var(var);
                 }
             }

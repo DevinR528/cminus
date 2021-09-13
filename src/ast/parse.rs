@@ -108,7 +108,7 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Stmt {
                         [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
                             Stmt::ArrayAssign {
                                 ident: ident.as_str().to_string(),
-                                expr: parse_expr(expr.clone()), 
+                                expr: parse_expr(expr.clone()),
                             }
                         }
                         _ => unreachable!("malformed variable name")
@@ -292,7 +292,6 @@ fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
                     if matches!(r, Rule::var_name) {
                         Some(parse_var_array(n))
                     } else {
-                        println!("{:?}", r);
                         None
                     }
                 }))
