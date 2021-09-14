@@ -1,13 +1,15 @@
 use std::fmt::{self, Display, Write};
 
-use crate::ast::types::{Block, Decl, Expr, Func, Param, Stmt, Ty, Var};
+use crate::ast::types::{
+    Block, Decl, Declaration, Expr, Expression, Func, Param, Statement, Stmt, Ty, Type, Value, Var,
+};
 
 pub trait Visit<'ast>: Sized {
-    fn visit_prog(&mut self, items: &'ast [Decl]) {
+    fn visit_prog(&mut self, items: &'ast [Declaration]) {
         walk_items(self, items)
     }
 
-    fn visit_decl(&mut self, item: &'ast Decl) {
+    fn visit_decl(&mut self, item: &'ast Declaration) {
         walk_decl(self, item)
     }
 
@@ -23,27 +25,27 @@ pub trait Visit<'ast>: Sized {
         walk_params(self, params)
     }
 
-    fn visit_ty(&mut self, ty: &Ty) {
+    fn visit_ty(&mut self, ty: &Type) {
         // done
     }
 
-    fn visit_stmt(&mut self, stmt: &'ast Stmt) {
+    fn visit_stmt(&mut self, stmt: &'ast Statement) {
         walk_stmt(self, stmt)
     }
 
-    fn visit_expr(&mut self, expr: &'ast Expr) {
+    fn visit_expr(&mut self, expr: &'ast Expression) {
         walk_expr(self, expr)
     }
 }
 
-crate fn walk_items<'ast, V: Visit<'ast>>(visit: &mut V, items: &'ast [Decl]) {
+crate fn walk_items<'ast, V: Visit<'ast>>(visit: &mut V, items: &'ast [Declaration]) {
     for item in items {
         visit.visit_decl(item);
     }
 }
 
-crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Decl) {
-    match item {
+crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration) {
+    match &item.val {
         Decl::Func(func) => {
             visit.visit_func(func);
         }
@@ -54,7 +56,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Decl) {
 }
 
 crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
-    let Func { ident, params, stmts, ret } = func;
+    let Func { ident, params, stmts, ret, span: _ } = func;
     // visit.visit_ident(ident);
     visit.visit_params(params);
     visit.visit_ty(ret);
@@ -69,13 +71,13 @@ crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &Var) {
 }
 
 crate fn walk_params<'ast, V: Visit<'ast>>(visit: &mut V, params: &[Param]) {
-    for Param { ident, ty } in params {
+    for Param { ident, ty, .. } in params {
         visit.visit_ty(ty);
     }
 }
 
-crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
-    match stmt {
+crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
+    match &stmt.val {
         Stmt::VarDecl(vars) => {
             for var in vars {
                 visit.visit_var(var)
@@ -95,12 +97,12 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
                 visit.visit_expr(expr);
             }
         }
-        Stmt::If { cond, blk: Block { stmts }, els } => {
+        Stmt::If { cond, blk: Block { stmts, .. }, els } => {
             visit.visit_expr(cond);
             for stmt in stmts {
                 visit.visit_stmt(stmt);
             }
-            if let Some(Block { stmts }) = els {
+            if let Some(Block { stmts, .. }) = els {
                 for stmt in stmts {
                     visit.visit_stmt(stmt);
                 }
@@ -116,7 +118,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
         Stmt::Write { expr } => visit.visit_expr(expr),
         Stmt::Ret(expr) => visit.visit_expr(expr),
         Stmt::Exit => {}
-        Stmt::Block(Block { stmts }) => {
+        Stmt::Block(Block { stmts, .. }) => {
             for stmt in stmts {
                 visit.visit_stmt(stmt);
             }
@@ -124,8 +126,8 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
     }
 }
 
-crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expr) {
-    match expr {
+crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) {
+    match &expr.val {
         Expr::Ident(id) => {
             // visit.visit_ident(id)
         }
@@ -181,10 +183,10 @@ impl Display for DotWalker {
 }
 
 impl<'ast> Visit<'ast> for DotWalker {
-    fn visit_prog(&mut self, items: &[Decl]) {
+    fn visit_prog(&mut self, items: &[Declaration]) {
         writeln!(&mut self.buf, "{}[label = PGM, shape = ellipse]", self.node_id);
         for item in items {
-            match item {
+            match &item.val {
                 Decl::Func(func) => {
                     self.visit_func(func);
                 }
@@ -223,12 +225,12 @@ impl<'ast> Visit<'ast> for DotWalker {
         walk_params(self, params);
     }
 
-    fn visit_ty(&mut self, ty: &Ty) {
+    fn visit_ty(&mut self, ty: &Type) {
         // done
     }
 
-    fn visit_stmt(&mut self, stmt: &Stmt) {
-        match stmt {
+    fn visit_stmt(&mut self, stmt: &Statement) {
+        match &stmt.val {
             Stmt::VarDecl(vars) => {
                 for var in vars {
                     self.visit_var(var);
@@ -292,7 +294,7 @@ impl<'ast> Visit<'ast> for DotWalker {
                         for stmt in &blk.stmts {
                             this.visit_stmt(stmt);
                         }
-                        if let Some(Block { stmts }) = els {
+                        if let Some(Block { stmts, .. }) = els {
                             for stmt in stmts {
                                 this.visit_stmt(stmt);
                             }
@@ -356,7 +358,7 @@ impl<'ast> Visit<'ast> for DotWalker {
                 writeln!(&mut self.buf, "{}[label = \"exit\", shape = ellipse]", self.node_id);
                 writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
             }
-            Stmt::Block(Block { stmts }) => {
+            Stmt::Block(Block { stmts, .. }) => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
@@ -376,8 +378,8 @@ impl<'ast> Visit<'ast> for DotWalker {
         }
     }
 
-    fn visit_expr(&mut self, expr: &Expr) {
-        match expr {
+    fn visit_expr(&mut self, expr: &Expression) {
+        match &expr.val {
             Expr::Ident(name) => {
                 self.node_id += 1;
                 writeln!(
