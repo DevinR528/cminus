@@ -2,16 +2,16 @@ use std::fmt::{self, Display, Write};
 
 use crate::ast::types::{Block, Decl, Expr, Func, Param, Stmt, Ty, Var};
 
-pub trait Visit: Sized {
-    fn visit_prog(&mut self, items: &[Decl]) {
+pub trait Visit<'ast>: Sized {
+    fn visit_prog(&mut self, items: &'ast [Decl]) {
         walk_items(self, items)
     }
 
-    fn visit_decl(&mut self, item: &Decl) {
+    fn visit_decl(&mut self, item: &'ast Decl) {
         walk_decl(self, item)
     }
 
-    fn visit_func(&mut self, func: &Func) {
+    fn visit_func(&mut self, func: &'ast Func) {
         walk_func(self, func)
     }
 
@@ -27,22 +27,22 @@ pub trait Visit: Sized {
         // done
     }
 
-    fn visit_stmt(&mut self, stmt: &Stmt) {
+    fn visit_stmt(&mut self, stmt: &'ast Stmt) {
         walk_stmt(self, stmt)
     }
 
-    fn visit_expr(&mut self, expr: &Expr) {
+    fn visit_expr(&mut self, expr: &'ast Expr) {
         walk_expr(self, expr)
     }
 }
 
-crate fn walk_items<V: Visit>(visit: &mut V, items: &[Decl]) {
+crate fn walk_items<'ast, V: Visit<'ast>>(visit: &mut V, items: &'ast [Decl]) {
     for item in items {
         visit.visit_decl(item);
     }
 }
 
-crate fn walk_decl<V: Visit>(visit: &mut V, item: &Decl) {
+crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Decl) {
     match item {
         Decl::Func(func) => {
             visit.visit_func(func);
@@ -53,7 +53,7 @@ crate fn walk_decl<V: Visit>(visit: &mut V, item: &Decl) {
     }
 }
 
-crate fn walk_func<V: Visit>(visit: &mut V, func: &Func) {
+crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
     let Func { ident, params, stmts, ret } = func;
     // visit.visit_ident(ident);
     visit.visit_params(params);
@@ -63,18 +63,18 @@ crate fn walk_func<V: Visit>(visit: &mut V, func: &Func) {
     }
 }
 
-crate fn walk_var<V: Visit>(visit: &mut V, var: &Var) {
+crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &Var) {
     // visit.visit_ident(&var.ident);
     visit.visit_ty(&var.ty);
 }
 
-crate fn walk_params<V: Visit>(visit: &mut V, params: &[Param]) {
+crate fn walk_params<'ast, V: Visit<'ast>>(visit: &mut V, params: &[Param]) {
     for Param { ident, ty } in params {
         visit.visit_ty(ty);
     }
 }
 
-crate fn walk_stmt<V: Visit>(visit: &mut V, stmt: &Stmt) {
+crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
     match stmt {
         Stmt::VarDecl(vars) => {
             for var in vars {
@@ -124,7 +124,7 @@ crate fn walk_stmt<V: Visit>(visit: &mut V, stmt: &Stmt) {
     }
 }
 
-crate fn walk_expr<V: Visit>(visit: &mut V, expr: &Expr) {
+crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expr) {
     match expr {
         Expr::Ident(id) => {
             // visit.visit_ident(id)
@@ -180,7 +180,7 @@ impl Display for DotWalker {
     }
 }
 
-impl Visit for DotWalker {
+impl<'ast> Visit<'ast> for DotWalker {
     fn visit_prog(&mut self, items: &[Decl]) {
         writeln!(&mut self.buf, "{}[label = PGM, shape = ellipse]", self.node_id);
         for item in items {

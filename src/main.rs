@@ -17,6 +17,7 @@ use pest_derive::Parser;
 
 mod ast;
 mod precedence;
+mod typeck;
 mod visit;
 
 use ast::{parse::parse_decl, types::Expr};
@@ -60,18 +61,10 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // println!("{:?}", items);
 
-    let mut dot = visit::DotWalker::new();
-    dot.visit_prog(&items);
+    let mut tyck = typeck::TyCheckRes::default();
+    tyck.visit_prog(&items);
 
-    let input_path = Path::new(path);
-    let dot_path = format!("{}.dot", input_path.file_name().unwrap().to_string_lossy());
-    let pdf_path = format!("{}.pdf", dot_path);
-    fs::write(&dot_path, dot.to_string());
-
-    std::process::Command::new("dot")
-        .args(["-Tpdf", &format!("-o{}", pdf_path), &dot_path])
-        .status()
-        .expect("failed to execute `dot -Tpdf ...`");
+    println!("{:?}", tyck);
 
     Ok(())
 }

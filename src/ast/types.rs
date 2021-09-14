@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, hash};
 
 #[derive(Clone, Debug)]
 pub enum Val {
@@ -7,6 +7,34 @@ pub enum Val {
     Char(char),
     Str(String),
 }
+
+impl hash::Hash for Val {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        match self {
+            Val::Float(f) => format!("float{}", f).hash(state),
+            Val::Int(i) => format!("int{}", i).hash(state),
+            Val::Char(c) => format!("char{}", c).hash(state),
+            Val::Str(s) => format!("str{}", s).hash(state),
+        }
+    }
+}
+
+impl PartialEq for Val {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Val::Float(a), Val::Float(b)) => a.to_string().eq(&b.to_string()),
+            (Val::Float(_), _) => false,
+            (Val::Int(a), Val::Int(b)) => a.eq(b),
+            (Val::Int(_), _) => false,
+            (Val::Char(a), Val::Char(b)) => a.eq(b),
+            (Val::Char(_), _) => false,
+            (Val::Str(a), Val::Str(b)) => a.eq(b),
+            (Val::Str(_), _) => false,
+        }
+    }
+}
+
+impl Eq for Val {}
 
 impl fmt::Display for Val {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -19,13 +47,13 @@ impl fmt::Display for Val {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnOp {
     Not,
     Inc,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BinOp {
     /// The `+` operator
     Add,
@@ -55,7 +83,7 @@ pub enum BinOp {
     Gt,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     /// Access a named variable `a`.
     Ident(String),
@@ -73,12 +101,14 @@ pub enum Expr {
     Value(Val),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ty {
     Int,
     Char,
+    String,
     Float,
     Array { size: usize, ty: Box<Ty> },
+    Bool,
     Void,
 }
 
