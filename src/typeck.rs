@@ -4,8 +4,8 @@ use pest::prec_climber::Operator;
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Expr, Expression, Func, Param, Statement, Stmt, Ty, Type, Val, Value,
-        Var, DUMMY,
+        BinOp, Block, Decl, Expr, Expression, Func, Param, Statement, Stmt, Ty, Type, UnOp, Val,
+        Value, Var, DUMMY,
     },
     visit::Visit,
 };
@@ -19,6 +19,7 @@ crate struct TyCheckRes<'ast> {
     func_ret: HashMap<String, Ty>,
     func_params: HashMap<String, Vec<(String, Ty)>>,
     expr_ty: HashMap<&'ast Expression, Ty>,
+    stmt_func: HashMap<&'ast Stmt, String>,
 }
 
 impl TyCheckRes<'_> {
@@ -127,7 +128,14 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     panic!("no type found for array expr")
                 }
             }
-            Expr::Urnary { op, expr } => {}
+            Expr::Urnary { op, expr } => {
+                self.visit_expr(expr);
+                let ty = self.expr_ty.get(&**expr);
+                match op {
+                    UnOp::Not => todo!(),
+                    UnOp::Inc => todo!(),
+                }
+            }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
                 self.visit_expr(rhs);
@@ -169,7 +177,7 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                 }
             }
         }
-        // We do NOT call walk_expr here since we recursivly walk the exprs
+        // We do NOT call walk_expr here since we recursively walk the exprs
         // when ever found so we have folded the expr types depth first
     }
 }
