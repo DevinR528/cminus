@@ -176,6 +176,9 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     panic!("duplicate value expr {:?}\n{:?}", self.expr_ty, expr)
                 }
             }
+            Expr::StructInit(init) => {
+                // TODO: find declaration to check fields
+            }
         }
         // We do NOT call walk_expr here since we recursively walk the exprs
         // when ever found so we have folded the expr types depth first
@@ -246,6 +249,8 @@ fn fold_ty(lhs: Option<&Ty>, rhs: Option<&Ty>, op: &BinOp) -> Option<Ty> {
             _ => panic!("illegal boolean operation"),
         },
         (Ty::Bool, _) => None,
+        // TODO: deal with structs expr will need field access
+        (Ty::Adt(_), _) => todo!(""),
     }
 }
 

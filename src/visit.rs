@@ -1,7 +1,8 @@
 use std::fmt::{self, Display, Write};
 
 use crate::ast::types::{
-    Block, Decl, Declaration, Expr, Expression, Func, Param, Statement, Stmt, Ty, Type, Value, Var,
+    Block, Decl, Declaration, Expr, Expression, Field, FieldInit, Func, Param, Statement, Stmt,
+    Struct, Ty, Type, Value, Var,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -15,6 +16,10 @@ pub trait Visit<'ast>: Sized {
 
     fn visit_func(&mut self, func: &'ast Func) {
         walk_func(self, func)
+    }
+
+    fn visit_adt(&mut self, struc: &'ast Struct) {
+        walk_adt(self, struc)
     }
 
     fn visit_var(&mut self, var: &Var) {
@@ -52,6 +57,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
         Decl::Var(var) => {
             visit.visit_var(var);
         }
+        Decl::Adt(struc) => visit.visit_adt(struc),
     }
 }
 
@@ -62,6 +68,14 @@ crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
     visit.visit_ty(ret);
     for stmt in stmts {
         visit.visit_stmt(stmt);
+    }
+}
+
+crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, struc: &'ast Struct) {
+    let Struct { ident, fields, span: _ } = struc;
+    // visit.visit_ident(ident);
+    for Field { ident, ty, span: _ } in fields {
+        visit.visit_ty(ty);
     }
 }
 
@@ -143,6 +157,11 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
             visit.visit_expr(rhs)
         }
         Expr::Parens(expr) => visit.visit_expr(expr),
+        Expr::StructInit(init) => {
+            for FieldInit { ident, init, span: _ } in init {
+                visit.visit_expr(init);
+            }
+        }
         Expr::Call { ident, args } => {
             for expr in args {
                 visit.visit_expr(expr);
@@ -192,6 +211,9 @@ impl<'ast> Visit<'ast> for DotWalker {
                 }
                 Decl::Var(var) => {
                     self.visit_var(var);
+                }
+                Decl::Adt(struc) => {
+                    self.visit_adt(struc);
                 }
             }
         }
@@ -442,6 +464,23 @@ impl<'ast> Visit<'ast> for DotWalker {
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
                     |this| this.visit_expr(expr),
+                );
+            }
+            Expr::StructInit(init) => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"struct initializer\", shape = ellipse]",
+                            this.node_id,
+                        );
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    },
+                    |this| {
+                        for FieldInit { ident, init, span } in init {
+                            this.visit_expr(init);
+                        }
+                    },
                 );
             }
             Expr::Call { ident, args } => {

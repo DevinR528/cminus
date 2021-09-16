@@ -90,6 +90,13 @@ pub enum BinOp {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FieldInit {
+    pub ident: String,
+    pub init: Expression,
+    pub span: Range<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     /// Access a named variable `a`.
     Ident(String),
@@ -103,6 +110,8 @@ pub enum Expr {
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
     Call { ident: String, args: Vec<Expression> },
+    /// An ADT is initialized with field values.
+    StructInit(Vec<FieldInit>),
     /// A literal value `1, "hello", true`
     Value(Value),
 }
@@ -120,6 +129,7 @@ pub enum Ty {
     String,
     Float,
     Array { size: usize, ty: Box<Type> },
+    Adt(String),
     Bool,
     Void,
 }
@@ -165,6 +175,20 @@ impl Stmt {
 }
 
 #[derive(Clone, Debug)]
+pub struct Field {
+    pub ident: String,
+    pub ty: Type,
+    pub span: Range<usize>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Struct {
+    pub ident: String,
+    pub fields: Vec<Field>,
+    pub span: Range<usize>,
+}
+
+#[derive(Clone, Debug)]
 pub struct Func {
     pub ret: Type,
     pub ident: String,
@@ -182,6 +206,7 @@ pub struct Var {
 
 #[derive(Clone, Debug)]
 pub enum Decl {
+    Adt(Struct),
     Func(Func),
     Var(Var),
 }

@@ -4,8 +4,8 @@ use pest::iterators::{Pair, Pairs};
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Declaration, Expr, Expression, Func, Param, Statement, Stmt, Ty, Type,
-        UnOp, Val, Value, Var,
+        BinOp, Block, Decl, Declaration, Expr, Expression, Field, FieldInit, Func, Param,
+        Statement, Stmt, Struct, Ty, Type, UnOp, Val, Value, Var,
     },
     precedence::{Assoc, Operator, PrecClimber},
     Rule,
@@ -17,16 +17,58 @@ crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
             let span = to_span(&decl);
             match decl.as_rule() {
                 Rule::func_decl => {
-                    vec![Declaration { val: Decl::Func(parse_func(decl.into_inner())), span }]
+                    vec![Decl::Func(parse_func(decl.into_inner())).into_spanned(span)]
                 }
                 Rule::var_decl => parse_var(decl.into_inner())
                     .into_iter()
-                    .map(|var| Declaration { val: Decl::Var(var), span: span.clone() })
+                    .map(|var| Decl::Var(var).into_spanned(span.clone()))
                     .collect(),
+                Rule::adt_decl => {
+                    vec![Decl::Adt(parse_struct(decl.into_inner(), span.clone())).into_spanned(span)]
+                }
                 _ => unreachable!("malformed declaration"),
             }
         })
         .collect()
+}
+
+fn parse_struct(struct_: Pairs<Rule>, span: Range<usize>) -> Struct {
+    match struct_.map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::STRUCT, _), (Rule::ident, ident), (Rule::LBR, _), fields @ .., (Rule::RBR, _), (Rule::SC, _)] => {
+            Struct {
+                ident: ident.as_str().to_string(),
+                fields: fields
+                    .iter()
+                    .map(|(_, p)| {
+                        match p
+                            .clone()
+                            .into_inner()
+                            .map(|p| (p.as_rule(), p))
+                            .collect::<Vec<_>>()
+                            .as_slice()
+                        {
+                            [(Rule::param, param), (Rule::SC, _)] => {
+                                parse_struct_field_decl(param.clone())
+                            }
+                            _ => unreachable!("malformed struct fields"),
+                        }
+                    })
+                    .collect(),
+                span,
+            }
+        }
+        _ => unreachable!("malformed function parameter"),
+    }
+}
+
+fn parse_struct_field_decl(param: Pair<Rule>) -> Field {
+    match param.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::type_, ty), (Rule::var_name, var)] => {
+            let span = to_span(var);
+            Field { ident: var.as_str().to_string(), ty: parse_ty(ty.clone()), span }
+        }
+        _ => unreachable!("malformed function parameter"),
+    }
 }
 
 fn parse_param(param: Pair<Rule>) -> Param {
@@ -128,6 +170,20 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
                         [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
                             Stmt::ArrayAssign {
                                 ident: ident.as_str().to_string(),
+                                expr: parse_expr(expr.clone()),
+                            }.into_spanned(span)
+                        }
+                        _ => unreachable!("malformed variable name")
+                    }
+                }
+                // var = { field: expr, optional: expr };
+                [(Rule::variable, name), (Rule::ASSIGN, _),
+                    (Rule::struct_assign, expr), (Rule::SC, _)
+                ] => {
+                    match name.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+                        [(Rule::ident, ident)] => {
+                            Stmt::Assign {
+                                ident: name.as_str().to_string(),
                                 expr: parse_expr(expr.clone()),
                             }.into_spanned(span)
                         }
@@ -269,16 +325,17 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
 }
 
 fn parse_ty(ty: Pair<Rule>) -> Type {
-    let next = ty.into_inner().next().unwrap();
-    match next.as_rule() {
+    let span = to_span(&ty);
+    match ty.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int x,y,z;
-        Rule::CHAR => Ty::Char,
-        Rule::INT => Ty::Int,
-        Rule::FLOAT => Ty::Float,
-        Rule::VOID => Ty::Void,
+        [(Rule::CHAR, _)] => Ty::Char,
+        [(Rule::INT, _)] => Ty::Int,
+        [(Rule::FLOAT, _)] => Ty::Float,
+        [(Rule::VOID, _)] => Ty::Void,
+        [(Rule::STRUCT, _), (Rule::ident, ident)] => Ty::Adt(ident.as_str().to_string()),
         _ => unreachable!("malformed function"),
     }
-    .into_spanned(to_span(&next))
+    .into_spanned(span)
 }
 
 fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> Type {
@@ -458,7 +515,37 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                 _ => unreachable!("malformed expression"),
             }
         }
-        _ => unreachable!(),
+        Rule::struct_assign => {
+            let span = to_span(&expr);
+            match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
+                [(Rule::LBR, _), fields @ .., (Rule::RBR, _)] => Expr::StructInit(
+                    fields
+                        .iter()
+                        .filter_map(|(r, p)| {
+                            if matches!(r, Rule::field_expr) {
+                                Some(parse_field_init(p.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                )
+                .into_spanned(span),
+                _ => unreachable!("malformed struct assignment"),
+            }
+        }
+        err => unreachable!("{:?}", err),
+    }
+}
+
+fn parse_field_init(field: Pair<Rule>) -> FieldInit {
+    match field.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::ident, ident), (Rule::COLON, _), (Rule::expr, expr)] => FieldInit {
+            ident: ident.as_str().to_string(),
+            init: parse_expr(expr.clone()),
+            span: ident.as_span().start()..expr.as_span().end(),
+        },
+        _ => unreachable!("malformed struct fields"),
     }
 }
 

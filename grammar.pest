@@ -1,6 +1,6 @@
 program = { SOI ~ "\n"* ~ (decl)* ~ EOI }
 
-decl = { (func_decl | var_decl) }
+decl = { (func_decl | var_decl | adt_decl) }
 
 func_decl = { type_ ~ ident ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
 
@@ -10,10 +10,14 @@ param = { type_ ~ var_name }
 
 var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
+adt_decl = { STRUCT ~ ident ~ LBR ~ (field)+ ~ RBR ~ SC }
+
+field = { param ~ SC }
+
 // I added multi-dimensional arrays 😈
 var_name = { ident ~ (LBK ~ integer ~ RBK)* }
 
-type_ = { INT | CHAR | FLOAT | VOID }
+type_ = { INT | CHAR | FLOAT | VOID | STRUCT ~ ident }
 
 stmt = {
     assing
@@ -26,7 +30,7 @@ stmt = {
     | block_stmt
 }
 
-assing = { variable ~ ASSIGN ~ expr ~ SC }
+assing = { variable ~ ASSIGN ~ (struct_assign | expr) ~ SC }
 
 call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
@@ -41,6 +45,10 @@ ret_stmt = { RETURN ~ expr ~ SC }
 exit_stmt = { EXIT ~ SC }
 
 block_stmt = { LBR ~ (stmt)* ~ RBR }
+
+struct_assign = { LBR ~ field_expr ~ (CM ~ field_expr)* ~ RBR }
+
+field_expr = { ident ~ COLON ~ expr }
 
 expr = { term ~ (op ~ term)* }
 
@@ -75,7 +83,7 @@ arg_list = { expr ~ (CM ~ expr)*}
 
 integer = @{ ASCII_DIGIT+ }
 
-decimal = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
+decimal = @{ ASCII_DIGIT+ ~ DOT ~ ASCII_DIGIT* }
 
 ident = @{ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -96,6 +104,7 @@ IF = { "if" }
 INT = { "int" }
 READ = { "read" }
 RETURN = { "return" }
+STRUCT = { "struct" }
 VOID = { "void" }
 WHILE = { "while" }
 WRITE = { "write" }
@@ -128,6 +137,7 @@ RP = { ")" }
 CM = { "," }
 DOT = { "." }
 SC = { ";" }
+COLON = { ":" }
 SQ = { "'" }
 DQ = { "\"" }
 

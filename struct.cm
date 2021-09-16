@@ -1,0 +1,9 @@
+struct name {
+    int field;
+    char field_two;
+};
+
+void main() {
+    struct name x;
+    x = { field: 0, field_two: 'a' };
+}

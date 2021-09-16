@@ -43,9 +43,13 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             parsed.next().expect("CMinusParser will always have a parse tree if parsing succeeded")
         }
         // Parsing has failed prints error like
-        Err(err) => return Err(err.to_string().into()),
+        Err(err) => {
+            println!("{:?}", err);
+            return Err(err.to_string().into());
+        }
     };
 
+    println!("{}", file.to_json());
     // This is AST construction which is where operator precedence happens.
     // It does work correctly (see src/precedence.rs and src/ast/parse.rs:99:1 for more
     // details)
