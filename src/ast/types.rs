@@ -100,6 +100,8 @@ pub struct FieldInit {
 pub enum Expr {
     /// Access a named variable `a`.
     Ident(String),
+    /// Access the address of the given variable.
+    Deref { indir: usize, expr: Box<Expression> },
     /// Access an array by index `[expr]`.
     Array { ident: String, expr: Box<Expression> },
     /// A urnary operation `!expr`.
@@ -110,8 +112,10 @@ pub enum Expr {
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
     Call { ident: String, args: Vec<Expression> },
+    /// Access the fields of a struct `expr.expr.expr;`.
+    FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
     /// An ADT is initialized with field values.
-    StructInit(Vec<FieldInit>),
+    StructInit { name: String, fields: Vec<FieldInit> },
     /// A literal value `1, "hello", true`
     Value(Value),
 }
@@ -124,12 +128,13 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ty {
-    Int,
-    Char,
-    String,
-    Float,
     Array { size: usize, ty: Box<Type> },
     Adt(String),
+    AddrOf(Box<Type>),
+    String,
+    Int,
+    Char,
+    Float,
     Bool,
     Void,
 }
@@ -137,6 +142,23 @@ pub enum Ty {
 impl Ty {
     crate fn into_spanned(self, span: Range<usize>) -> Type {
         Spanned { val: self, span }
+    }
+
+    crate fn dereference(&self, mut deref: usize) -> Option<Self> {
+        let mut indirection = Some(self);
+        let mut stop = false;
+        while !stop {
+            match indirection {
+                Some(Ty::AddrOf(next)) if deref > 0 => {
+                    deref -= 1;
+                    indirection = Some(&next.val);
+                }
+                _ => {
+                    stop = true;
+                }
+            }
+        }
+        indirection.cloned()
     }
 }
 
@@ -156,8 +178,8 @@ pub struct Block {
 #[derive(Clone, Debug)]
 pub enum Stmt {
     VarDecl(Vec<Var>),
-    Assign { ident: String, expr: Expression },
-    ArrayAssign { ident: String, expr: Expression },
+    Assign { deref: usize, ident: String, expr: Expression },
+    ArrayAssign { addr_of: usize, ident: String, expr: Expression },
     Call { ident: String, args: Vec<Expression> },
     If { cond: Expression, blk: Block, els: Option<Block> },
     While { cond: Expression, stmt: Box<Statement> },

@@ -1,0 +1,10 @@
+struct name {
+    int[2][1] field;
+};
+
+void main() {
+    int a[1][2];
+    struct name x;
+    x = name { field: {{0}, {1}} };
+    x.field[0][0] = a[0][1];
+}

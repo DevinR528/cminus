@@ -12,12 +12,12 @@ var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
 adt_decl = { STRUCT ~ ident ~ LBR ~ (field)+ ~ RBR ~ SC }
 
-field = { param ~ SC }
+field = { type_ ~ (LBK ~ integer ~ RBK)* ~ ident ~ SC }
 
 // I added multi-dimensional arrays 😈
 var_name = { ident ~ (LBK ~ integer ~ RBK)* }
 
-type_ = { INT | CHAR | FLOAT | VOID | STRUCT ~ ident }
+type_ = { (INT | CHAR | FLOAT | VOID | STRUCT ~ ident) ~ addrof? }
 
 stmt = {
     assing
@@ -30,7 +30,7 @@ stmt = {
     | block_stmt
 }
 
-assing = { variable ~ ASSIGN ~ (struct_assign | expr) ~ SC }
+assing = { variable ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
 
 call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
@@ -46,9 +46,9 @@ exit_stmt = { EXIT ~ SC }
 
 block_stmt = { LBR ~ (stmt)* ~ RBR }
 
-struct_assign = { LBR ~ field_expr ~ (CM ~ field_expr)* ~ RBR }
+struct_assign = { ident ~ LBR ~ field_expr ~ (CM ~ field_expr)* ~ RBR }
 
-field_expr = { ident ~ COLON ~ expr }
+field_expr = { ident ~ COLON ~ (arr_init | expr) }
 
 expr = { term ~ (op ~ term)* }
 
@@ -60,8 +60,21 @@ term = {
     | LP ~ expr ~ RP
 }
 
+arr_init = { (LBR ~ expr ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ RBR }
+
+arg_list = { expr ~ (CM ~ expr)*}
+
+variable = { ident ~ (LBK ~ expr ~ RBK)+ | field_access | deref? ~ ident  }
+
+rest_field_access = { ident ~ (LBK ~ expr ~ RBK)+ | field_access | ident  }
+
+field_access = { deref? ~ ident ~ DOT ~ (rest_field_access)+ }
+
+const_ = { decimal | charstr | integer }
+
 op = {
-    PLUS
+    DOT
+    | PLUS
     | SUB
     | MUL
     | DIV
@@ -75,11 +88,9 @@ op = {
     | AND
 }
 
-variable = { ident ~ LBK ~ expr ~ RBK | ident  }
+deref = { (MUL)* }
 
-const_ = { decimal | charstr | integer }
-
-arg_list = { expr ~ (CM ~ expr)*}
+addrof = { (MUL)* }
 
 integer = @{ ASCII_DIGIT+ }
 

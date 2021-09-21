@@ -83,7 +83,7 @@ fn parse_param(param: Pair<Rule>) -> Param {
 
 #[rustfmt::skip]
 fn parse_func(func: Pairs<Rule>) -> Func {
-    // println!("func = {}", func.to_json());
+    println!("func = {}", func.to_json());
     match func.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int foo(int a, int b) { stmts }
         [(Rule::type_, ty), (Rule::ident, ident),
@@ -150,25 +150,27 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
     #[rustfmt::skip]
     match stmt.as_rule() {
         Rule::assing => {
-            match stmt
+            match stmt.clone()
                 .into_inner()
                 .map(|p| (p.as_rule(), p))
                 .collect::<Vec<_>>()
                 .as_slice()
             {
-                // var = expr;
+                // [*]var = [*]expr;
                 [(Rule::variable, name), (Rule::ASSIGN, _),
                     (Rule::expr, expr), (Rule::SC, _)
                 ] => {
                     match name.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-                        [(Rule::ident, ident)] => {
+                        [(Rule::deref, deref), (Rule::ident, ident)] => {
                             Stmt::Assign {
-                                ident: name.as_str().to_string(),
+                                deref: deref.as_str().matches('*').count(),
+                                ident: ident.as_str().to_string(),
                                 expr: parse_expr(expr.clone()),
                             }.into_spanned(span)
                         }
-                        [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
+                        [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
                             Stmt::ArrayAssign {
+                                addr_of: deref.as_str().matches('*').count(),
                                 ident: ident.as_str().to_string(),
                                 expr: parse_expr(expr.clone()),
                             }.into_spanned(span)
@@ -181,8 +183,9 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
                     (Rule::struct_assign, expr), (Rule::SC, _)
                 ] => {
                     match name.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-                        [(Rule::ident, ident)] => {
+                        [(Rule::deref, deref), (Rule::ident, ident)] => {
                             Stmt::Assign {
+                                deref: deref.as_str().matches('*').count(),
                                 ident: name.as_str().to_string(),
                                 expr: parse_expr(expr.clone()),
                             }.into_spanned(span)
@@ -190,7 +193,7 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
                         _ => unreachable!("malformed variable name")
                     }
                 }
-                _ => unreachable!("malformed assingment"),
+                _ => unreachable!("malformed assingment {}", stmt.to_json()),
             }
         }
         Rule::call_stmt => {
@@ -326,14 +329,37 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
 
 fn parse_ty(ty: Pair<Rule>) -> Type {
     let span = to_span(&ty);
-    match ty.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+    match ty.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int x,y,z;
-        [(Rule::CHAR, _)] => Ty::Char,
-        [(Rule::INT, _)] => Ty::Int,
-        [(Rule::FLOAT, _)] => Ty::Float,
-        [(Rule::VOID, _)] => Ty::Void,
-        [(Rule::STRUCT, _), (Rule::ident, ident)] => Ty::Adt(ident.as_str().to_string()),
-        _ => unreachable!("malformed function"),
+        [(rule, ty), (Rule::addrof, addr)] => {
+            let indirection = addr.as_str().matches('*').count();
+            let t = match rule {
+                Rule::INT => Ty::Int,
+                Rule::FLOAT => Ty::Float,
+                Rule::CHAR => Ty::Char,
+                Rule::VOID if addr.as_str().is_empty() => Ty::Void,
+                _ => unreachable!("malformed addrof type {}", ty.to_json()),
+            }
+            .into_spanned(to_span(ty));
+            if indirection > 0 {
+                Ty::AddrOf(box t)
+            } else {
+                t.val
+            }
+        }
+        [(Rule::VOID, _), (Rule::addrof, addr)] if addr.as_str().is_empty() => Ty::Void,
+        [(Rule::STRUCT, s), (Rule::ident, ident), (Rule::addrof, addr)] => {
+            let indirection = addr.as_str().matches('*').count();
+            if indirection > 0 {
+                Ty::AddrOf(
+                    box Ty::Adt(ident.as_str().to_string())
+                        .into_spanned(s.as_span().start()..ident.as_span().end()),
+                )
+            } else {
+                Ty::Adt(ident.as_str().to_string())
+            }
+        }
+        _ => unreachable!("malformed type {}", ty.to_json()),
     }
     .into_spanned(span)
 }
@@ -392,6 +418,7 @@ fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
 }
 
 fn parse_expr(mut expr: Pair<Rule>) -> Expression {
+    println!("{}", expr.to_json());
     let climber = PrecClimber::new(vec![
         // &&
         Operator::new(Rule::AND, Assoc::Left),
@@ -408,6 +435,8 @@ fn parse_expr(mut expr: Pair<Rule>) -> Expression {
         Operator::new(Rule::PLUS, Assoc::Left) | Operator::new(Rule::SUB, Assoc::Left),
         // *, /
         Operator::new(Rule::MUL, Assoc::Left) | Operator::new(Rule::DIV, Assoc::Left),
+        // .
+        Operator::new(Rule::DOT, Assoc::Left),
     ]);
 
     consume(expr, &climber)
@@ -418,6 +447,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
     let infix = |lhs: Expression, op: Pair<Rule>, rhs: Expression| {
         let span = lhs.span.start..rhs.span.end;
         let expr = match op.as_rule() {
+            Rule::DOT => Expr::FieldAccess { lhs: box lhs, rhs: box rhs },
             Rule::PLUS => Expr::Binary { op: BinOp::Add, lhs: box lhs, rhs: box rhs },
             Rule::SUB => Expr::Binary { op: BinOp::Sub, lhs: box lhs, rhs: box rhs },
             Rule::MUL => Expr::Binary { op: BinOp::Mul, lhs: box lhs, rhs: box rhs },
@@ -451,7 +481,18 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                         .collect::<Vec<_>>()
                         .as_slice()
                     {
-                        [(Rule::ident, ident)] => Expr::Ident(ident.as_str().to_string()),
+                        [(Rule::deref, deref), (Rule::ident, ident)] => {
+                            let indirection = deref.as_str().matches('*').count();
+                            if indirection > 0 {
+                                Expr::Deref {
+                                    indir: indirection,
+                                    expr: box Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident))
+                                }
+                            } else {
+                                Expr::Ident(ident.as_str().to_string())
+                            }
+                        },
+                        // TODO: deref?
                         [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
                             Expr::Array {
                                 ident: ident.as_str().to_string(),
@@ -518,19 +559,22 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
         Rule::struct_assign => {
             let span = to_span(&expr);
             match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
-                [(Rule::LBR, _), fields @ .., (Rule::RBR, _)] => Expr::StructInit(
-                    fields
-                        .iter()
-                        .filter_map(|(r, p)| {
-                            if matches!(r, Rule::field_expr) {
-                                Some(parse_field_init(p.clone()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                )
-                .into_spanned(span),
+                [(Rule::ident, name), (Rule::LBR, _), fields @ .., (Rule::RBR, _)] => {
+                    Expr::StructInit {
+                        name: name.as_str().to_string(),
+                        fields: fields
+                            .iter()
+                            .filter_map(|(r, p)| {
+                                if matches!(r, Rule::field_expr) {
+                                    Some(parse_field_init(p.clone()))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect(),
+                    }
+                    .into_spanned(span)
+                }
                 _ => unreachable!("malformed struct assignment"),
             }
         }

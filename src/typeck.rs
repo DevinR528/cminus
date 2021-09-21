@@ -4,22 +4,33 @@ use pest::prec_climber::Operator;
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Expr, Expression, Func, Param, Statement, Stmt, Ty, Type, UnOp, Val,
-        Value, Var, DUMMY,
+        BinOp, Block, Decl, Expr, Expression, Field, Func, Param, Statement, Stmt, Struct, Ty,
+        Type, UnOp, Val, Value, Var, DUMMY,
     },
     visit::Visit,
 };
 
 #[derive(Debug, Default)]
 crate struct TyCheckRes<'ast> {
+    /// Global variables declared outside of functions.
     global: HashMap<String, Ty>,
+    /// The name of the function currently in or `None` if global.
     curr_fn: Option<String>,
+    /// The variables in functions, mapped fn name -> variables.
     func_refs: HashMap<String, HashMap<String, Ty>>,
+    /// A backwards mapping of variable name -> function name.
     var_func: HashMap<String, String>,
+    /// Function name to return type.
     func_ret: HashMap<String, Ty>,
+    /// The parameters of a function, fn name -> parameters.
     func_params: HashMap<String, Vec<(String, Ty)>>,
+    /// A mapping of expression -> type, this is the main inference table.
     expr_ty: HashMap<&'ast Expression, Ty>,
+    /// A mapping of statement to the function it is contained in.
+    /// This will check the return value.
     stmt_func: HashMap<&'ast Stmt, String>,
+    /// A mapping of struct name to the fields of that struct.
+    struct_fields: HashMap<String, Vec<Field>>,
 }
 
 impl TyCheckRes<'_> {
@@ -47,6 +58,12 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
 
         // We have left this functions scope
         self.curr_fn.take();
+    }
+
+    fn visit_adt(&mut self, struc: &'ast Struct) {
+        if self.struct_fields.insert(struc.ident.clone(), struc.fields.clone()).is_some() {
+            unreachable!("duplicate struct names")
+        }
     }
 
     fn visit_var(&mut self, var: &Var) {
@@ -136,20 +153,39 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     UnOp::Inc => todo!(),
                 }
             }
+            Expr::Deref { indir, expr: inner_expr } => {
+                self.visit_expr(inner_expr);
+
+                let ty = self.expr_ty.get(&**inner_expr).expect("type for address of");
+                let ty = ty.dereference(*indir).expect("a dereferencable type");
+                self.expr_ty.insert(expr, ty);
+            }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
                 self.visit_expr(rhs);
+
                 let lhs_ty = self.expr_ty.get(&**lhs);
                 let rhs_ty = self.expr_ty.get(&**rhs);
+
                 if let Some(ty) = fold_ty(lhs_ty, rhs_ty, op) {
+                    // TODO: duplicate expression, should be impossible??
                     if self.expr_ty.insert(expr, ty).is_some() {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("no type found for array expr {:?} != {:?}", lhs_ty, rhs_ty)
+                    panic!("no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty)
                 }
             }
-            Expr::Parens(_) => {}
+            Expr::Parens(inner_expr) => {
+                self.visit_expr(inner_expr);
+                if let Some(ty) = self.expr_ty.get(&**inner_expr).cloned() {
+                    if self.expr_ty.insert(expr, ty).is_some() {
+                        unimplemented!("NOT SURE TODO")
+                    }
+                } else {
+                    panic!("no type found for paren expr")
+                }
+            }
             Expr::Call { ident, args } => {
                 if let Some(ret) = self.func_ret.get(ident) {
                     if self.expr_ty.insert(expr, ret.clone()).is_some() {
@@ -176,8 +212,36 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     panic!("duplicate value expr {:?}\n{:?}", self.expr_ty, expr)
                 }
             }
-            Expr::StructInit(init) => {
-                // TODO: find declaration to check fields
+            Expr::StructInit { name, fields } => {
+                // TODO: check fields and                         addr of
+                if self.expr_ty.insert(expr, Ty::Adt(name.clone())).is_some() {
+                    unimplemented!("No duplicates")
+                }
+            }
+            Expr::FieldAccess { lhs, rhs } => {
+                self.visit_expr(lhs);
+                let lhs_ty = self.expr_ty.get(&**lhs);
+
+                let (name, fields) = if let Some(Ty::Adt(name)) = lhs_ty {
+                    (name, self.struct_fields.get(name).expect("no struct definition found"))
+                } else {
+                    unreachable!("left hand side must be struct")
+                };
+
+                let field_ty = match &rhs.val {
+                    Expr::Ident(ident) | Expr::Array { ident, .. } => fields
+                        .iter()
+                        .find(|f| &f.ident == ident)
+                        .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name)),
+                    // TODO: see below
+                    Expr::FieldAccess { lhs, rhs } => todo!("this is special"),
+                    _ => unreachable!("access struct with non ident"),
+                };
+
+                // TODO: duplicate expression, should be impossible??
+                if self.expr_ty.insert(expr, field_ty.ty.val.clone()).is_some() {
+                    unimplemented!("NOT SURE TODO")
+                }
             }
         }
         // We do NOT call walk_expr here since we recursively walk the exprs
@@ -193,7 +257,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
     fn visit_stmt(&mut self, stmt: &Statement) {
         match &stmt.val {
             Stmt::VarDecl(_) => {}
-            Stmt::Assign { ident, expr } => {
+            Stmt::Assign { deref, ident, expr } => {
                 if let Some(global_ty) = self.tyck.global.get(ident) {
                     if self.tyck.expr_ty.get(expr) != Some(global_ty) {
                         panic!("global type mismatch")
@@ -203,14 +267,15 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                         self.tyck.func_refs.get(name).and_then(|vars| vars.get(ident))
                     })
                 {
-                    if self.tyck.expr_ty.get(expr) != Some(var_ty) {
-                        panic!("variable type mismatch")
+                    if self.tyck.expr_ty.get(expr) != var_ty.dereference(*deref).as_ref() {
+                        println!("{:?}", self.tyck.expr_ty.get(expr));
+                        panic!("variable type mismatch {:?}", var_ty);
                     }
                 } else {
                     panic!("assign to undeclared variable")
                 }
             }
-            Stmt::ArrayAssign { ident, expr } => {}
+            Stmt::ArrayAssign { addr_of, ident, expr } => {}
             Stmt::Call { ident, args } => {}
             Stmt::If { cond, blk, els } => {}
             Stmt::While { cond, stmt } => {}
@@ -251,6 +316,7 @@ fn fold_ty(lhs: Option<&Ty>, rhs: Option<&Ty>, op: &BinOp) -> Option<Ty> {
         (Ty::Bool, _) => None,
         // TODO: deal with structs expr will need field access
         (Ty::Adt(_), _) => todo!(""),
+        (Ty::AddrOf(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
     }
 }
 

@@ -49,7 +49,8 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    println!("{}", file.to_json());
+    // println!("{}", file.to_json());
+
     // This is AST construction which is where operator precedence happens.
     // It does work correctly (see src/precedence.rs and src/ast/parse.rs:99:1 for more
     // details)
@@ -63,12 +64,12 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // println!("{:?}", items);
+    println!("{:?}", items);
 
     let mut tyck = typeck::TyCheckRes::default();
     tyck.visit_prog(&items);
 
-    println!("{:?}", tyck);
+    // println!("{:?}", tyck);
 
     Ok(())
 }

@@ -4,6 +4,8 @@ struct name {
 };
 
 void main() {
+    int a;
     struct name x;
-    x = { field: 0, field_two: 'a' };
+    x = name { field: 0, field_two: 'a' };
+    a = x.field + 1;
 }

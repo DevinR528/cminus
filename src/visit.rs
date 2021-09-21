@@ -97,11 +97,11 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
                 visit.visit_var(var)
             }
         }
-        Stmt::Assign { ident, expr } => {
+        Stmt::Assign { ident, expr, .. } => {
             // visit.visit_ident(ident);
             visit.visit_expr(expr);
         }
-        Stmt::ArrayAssign { ident, expr } => {
+        Stmt::ArrayAssign { ident, expr, .. } => {
             // visit.visit_ident(ident);
             visit.visit_expr(expr);
         }
@@ -152,15 +152,22 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
         Expr::Urnary { op, expr } => {
             visit.visit_expr(expr);
         }
+        Expr::Deref { indir, expr } => {
+            visit.visit_expr(expr);
+        }
         Expr::Binary { op, lhs, rhs } => {
             visit.visit_expr(lhs);
             visit.visit_expr(rhs)
         }
         Expr::Parens(expr) => visit.visit_expr(expr),
-        Expr::StructInit(init) => {
-            for FieldInit { ident, init, span: _ } in init {
+        Expr::StructInit { name, fields } => {
+            for FieldInit { ident, init, span: _ } in fields {
                 visit.visit_expr(init);
             }
+        }
+        Expr::FieldAccess { lhs, rhs } => {
+            visit.visit_expr(lhs);
+            visit.visit_expr(rhs)
         }
         Expr::Call { ident, args } => {
             for expr in args {
@@ -258,26 +265,30 @@ impl<'ast> Visit<'ast> for DotWalker {
                     self.visit_var(var);
                 }
             }
-            Stmt::Assign { ident, expr } => {
+            Stmt::Assign { ident, expr, deref: addr_of } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
-                            "{}[label = \"assign {}\", shape = ellipse]",
-                            this.node_id, ident
+                            "{}[label = \"assign {}{}\", shape = ellipse]",
+                            this.node_id,
+                            "*".repeat(*addr_of),
+                            ident
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
                     |this| this.visit_expr(expr),
                 );
             }
-            Stmt::ArrayAssign { ident, expr } => {
+            Stmt::ArrayAssign { ident, expr, addr_of } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
-                            "{}[label = \"array assign {}\", shape = ellipse]",
-                            this.node_id, ident
+                            "{}[label = \"array assign {}{}\", shape = ellipse]",
+                            this.node_id,
+                            "*".repeat(*addr_of),
+                            ident
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
@@ -437,6 +448,19 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| this.visit_expr(expr),
                 );
             }
+            Expr::Deref { indir, expr } => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"expr address of {} times\", shape = ellipse]",
+                            this.node_id, indir,
+                        );
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    },
+                    |this| this.visit_expr(expr),
+                );
+            }
             Expr::Binary { op, lhs, rhs } => {
                 self.walk_deeper(
                     |this| {
@@ -466,20 +490,36 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| this.visit_expr(expr),
                 );
             }
-            Expr::StructInit(init) => {
+            Expr::StructInit { name, fields } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
-                            "{}[label = \"struct initializer\", shape = ellipse]",
-                            this.node_id,
+                            "{}[label = \"struct initializer {}\", shape = ellipse]",
+                            this.node_id, name,
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
                     |this| {
-                        for FieldInit { ident, init, span } in init {
+                        for FieldInit { ident, init, span } in fields {
                             this.visit_expr(init);
                         }
+                    },
+                );
+            }
+            Expr::FieldAccess { lhs, rhs } => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"expr field access\", shape = ellipse]",
+                            this.node_id
+                        );
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    },
+                    |this| {
+                        this.visit_expr(lhs);
+                        this.visit_expr(rhs);
                     },
                 );
             }
