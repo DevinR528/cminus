@@ -8,4 +8,5 @@ void main() {
     struct name x;
     x = name { field: 0, field_two: 'a' };
     a = x.field + 1;
+    x.field = 10;
 }

@@ -1,5 +1,5 @@
 struct name {
-    int[2][1] field;
+    int field[2][1];
 };
 
 void main() {

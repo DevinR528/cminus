@@ -105,6 +105,9 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
             // visit.visit_ident(ident);
             visit.visit_expr(expr);
         }
+        Stmt::FieldAssign { expr, .. } => {
+            visit.visit_expr(expr);
+        }
         Stmt::Call { ident, args } => {
             // visit.visit_ident(ident);
             for expr in args {
@@ -163,6 +166,11 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
         Expr::StructInit { name, fields } => {
             for FieldInit { ident, init, span: _ } in fields {
                 visit.visit_expr(init);
+            }
+        }
+        Expr::ArrayInit { items } => {
+            for expr in items {
+                visit.visit_expr(expr);
             }
         }
         Expr::FieldAccess { lhs, rhs } => {
@@ -289,6 +297,20 @@ impl<'ast> Visit<'ast> for DotWalker {
                             this.node_id,
                             "*".repeat(*deref),
                             ident
+                        );
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    },
+                    |this| this.visit_expr(expr),
+                );
+            }
+            Stmt::FieldAssign { deref, access, expr } => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"struct field assign deref'ed {} times\", shape = ellipse]",
+                            this.node_id,
+                            deref,
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
@@ -503,6 +525,23 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| {
                         for FieldInit { ident, init, span } in fields {
                             this.visit_expr(init);
+                        }
+                    },
+                );
+            }
+            Expr::ArrayInit { items } => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"array initializer\", shape = ellipse]",
+                            this.node_id,
+                        );
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    },
+                    |this| {
+                        for expr in items {
+                            this.visit_expr(expr);
                         }
                     },
                 );

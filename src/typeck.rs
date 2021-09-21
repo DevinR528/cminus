@@ -213,10 +213,13 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                 }
             }
             Expr::StructInit { name, fields } => {
-                // TODO: check fields and                         addr of
+                // TODO: check fields and
                 if self.expr_ty.insert(expr, Ty::Adt(name.clone())).is_some() {
                     unimplemented!("No duplicates")
                 }
+            }
+            Expr::ArrayInit { items } => {
+                // TODO: fold array type sort of then add whole type to expr_ty
             }
             Expr::FieldAccess { lhs, rhs } => {
                 self.visit_expr(lhs);
@@ -276,6 +279,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                 }
             }
             Stmt::ArrayAssign { deref, ident, expr } => {}
+            Stmt::FieldAssign { deref, access, expr } => {}
             Stmt::Call { ident, args } => {}
             Stmt::If { cond, blk, els } => {}
             Stmt::While { cond, stmt } => {}

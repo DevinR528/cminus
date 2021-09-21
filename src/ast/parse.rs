@@ -175,6 +175,14 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
                                 expr: parse_expr(expr.clone()),
                             }.into_spanned(span)
                         }
+                        [(Rule::field_access, fields)] => {
+                            let access = parse_field_access(fields.clone());
+                            Stmt::FieldAssign {
+                                deref: access.deref_count(),
+                                access: access.into_spanned(to_span(fields)),
+                                expr: parse_expr(expr.clone()),
+                            }.into_spanned(span)
+                        }
                         _ => unreachable!("malformed variable name")
                     }
                 }
@@ -471,7 +479,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
         Rule::term => {
             let span = to_span(&expr);
             match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
-                // x,y,z
+                // x,y[],z.z
                 [(Rule::variable, var)] => {
                     let span = to_span(var);
                     match var
@@ -499,7 +507,10 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                                 expr: box parse_expr(expr.clone()),
                             }
                         }
-                        _ => unreachable!("malformed variable name"),
+                        [(Rule::field_access, access)] => {
+                            parse_field_access(access.clone())
+                        }
+                        _ => unreachable!("malformed variable name {}", var.to_json()),
                     }.into_spanned(span)
                 }
                 // 1,true,"a"
@@ -578,18 +589,118 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                 _ => unreachable!("malformed struct assignment"),
             }
         }
+        Rule::arr_init => {
+            let span = to_span(&expr);
+            match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
+                [(Rule::LBR, _), fields @ .., (Rule::RBR, _)] => Expr::ArrayInit {
+                    items: fields
+                        .iter()
+                        .filter_map(|(r, p)| {
+                            if matches!(r, Rule::field_expr) {
+                                Some(parse_array_init(p.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                }
+                .into_spanned(span),
+                _ => unreachable!("malformed struct assignment"),
+            }
+        }
         err => unreachable!("{:?}", err),
     }
 }
 
+fn parse_rest_access(rest: Pair<Rule>) -> Expr {
+    let span = to_span(&rest);
+    match rest.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::ident, ident)] => Expr::Ident(ident.as_str().to_string()),
+        // TODO: deref?
+        [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
+            Expr::Array { ident: ident.as_str().to_string(), expr: box parse_expr(expr.clone()) }
+        }
+        [(Rule::field_access, access)] => {
+            let ac_span = to_span(access);
+            match access
+                .clone()
+                .into_inner()
+                .map(|p| (p.as_rule(), p))
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+                [(Rule::deref, deref), (Rule::ident, id), (Rule::DOT, _), (Rule::rest_field_access, rest)] =>
+                {
+                    let access = Expr::FieldAccess {
+                        lhs: box Expr::Ident(id.as_str().to_string()).into_spanned(to_span(id)),
+                        rhs: box parse_rest_access(rest.clone()).into_spanned(to_span(rest)),
+                    };
+
+                    let indirection = deref.as_str().matches('*').count();
+                    if indirection > 0 {
+                        Expr::Deref { indir: indirection, expr: box access.into_spanned(ac_span) }
+                    } else {
+                        access
+                    }
+                }
+                _ => unreachable!("malformed field access"),
+            }
+        }
+        _ => unreachable!("malformed variable name {}", rest.to_json()),
+    }
+}
+
+fn parse_field_access(access: Pair<Rule>) -> Expr {
+    let ac_span = to_span(&access);
+    match access.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::deref, deref), (Rule::ident, id), (Rule::DOT, _), (Rule::rest_field_access, rest)] =>
+        {
+            let field_access = Expr::FieldAccess {
+                lhs: box Expr::Ident(id.as_str().to_string()).into_spanned(to_span(id)),
+                rhs: box parse_rest_access(rest.clone()).into_spanned(to_span(rest)),
+            };
+
+            let indirection = deref.as_str().matches('*').count();
+            if indirection > 0 {
+                Expr::Deref { indir: indirection, expr: box field_access.into_spanned(ac_span) }
+            } else {
+                field_access
+            }
+        } // _ => unreachable!("malformed field access"),
+    }
+}
+
 fn parse_field_init(field: Pair<Rule>) -> FieldInit {
-    match field.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+    match field.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         [(Rule::ident, ident), (Rule::COLON, _), (Rule::expr, expr)] => FieldInit {
             ident: ident.as_str().to_string(),
             init: parse_expr(expr.clone()),
             span: ident.as_span().start()..expr.as_span().end(),
         },
-        _ => unreachable!("malformed struct fields"),
+        [(Rule::ident, ident), (Rule::COLON, _), (Rule::arr_init, expr)] => FieldInit {
+            ident: ident.as_str().to_string(),
+            init: parse_expr(expr.clone()),
+            span: ident.as_span().start()..expr.as_span().end(),
+        },
+        _ => unreachable!("malformed struct fields {}", field.to_json()),
+    }
+}
+
+fn parse_array_init(field: Pair<Rule>) -> Expression {
+    match field.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::LBR, _), (Rule::expr, expr), (Rule::RBR, _)] => parse_expr(expr.clone()),
+        [(Rule::LBR, _), (Rule::arr_init, expr), rest @ .., (Rule::RBR, _)] => Expr::ArrayInit {
+            items: vec![parse_array_init(expr.clone())]
+                .into_iter()
+                .chain(rest.iter().filter_map(|(r, p)| match r {
+                    Rule::arr_init => Some(parse_array_init(p.clone())),
+                    Rule::CM => None,
+                    _ => unreachable!("malformed array init list"),
+                }))
+                .collect(),
+        }
+        .into_spanned(to_span(&field)),
+        _ => unreachable!("malformed struct fields {}", field.to_json()),
     }
 }
 

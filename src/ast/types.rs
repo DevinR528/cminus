@@ -116,6 +116,8 @@ pub enum Expr {
     FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
     /// An ADT is initialized with field values.
     StructInit { name: String, fields: Vec<FieldInit> },
+    /// An array initializer `{0, 1, 2}`
+    ArrayInit { items: Vec<Expression> },
     /// A literal value `1, "hello", true`
     Value(Value),
 }
@@ -123,6 +125,14 @@ pub enum Expr {
 impl Expr {
     crate fn into_spanned(self, span: Range<usize>) -> Expression {
         Spanned { val: self, span }
+    }
+
+    crate fn deref_count(&self) -> usize {
+        if let Self::Deref { indir, .. } = self {
+            *indir
+        } else {
+            0
+        }
     }
 }
 
@@ -177,16 +187,31 @@ pub struct Block {
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    /// Variable declaration `int x;`
     VarDecl(Vec<Var>),
+    /// Assignment `x = 0;`
     Assign { deref: usize, ident: String, expr: Expression },
+    /// Assignment of a struct field `x.y = 0;`
+    FieldAssign { deref: usize, access: Expression, expr: Expression },
+    /// Assingment to an array index `a[0] = 0;`
     ArrayAssign { deref: usize, ident: String, expr: Expression },
+    /// A call statement `call(arg1, arg2)`
     Call { ident: String, args: Vec<Expression> },
+    /// If statement `if (expr) { stmts }`
     If { cond: Expression, blk: Block, els: Option<Block> },
+    /// While loop `while (expr) { stmts }`
     While { cond: Expression, stmt: Box<Statement> },
+    /// Read statment `read(ident | "string")`
     Read(String),
+    /// Write statement `write(expr)`
     Write { expr: Expression },
+    /// Return statement `return expr`
     Ret(Expression),
+    /// Exit statement `exit`.
+    ///
+    /// A void return.
     Exit,
+    /// A block of statements `{ stmts }`
     Block(Block),
 }
 

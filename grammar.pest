@@ -12,7 +12,7 @@ var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
 adt_decl = { STRUCT ~ ident ~ LBR ~ (field)+ ~ RBR ~ SC }
 
-field = { type_ ~ (LBK ~ integer ~ RBK)* ~ ident ~ SC }
+field = { param ~ SC }
 
 // I added multi-dimensional arrays 😈
 var_name = { ident ~ (LBK ~ integer ~ RBK)* }
@@ -66,9 +66,9 @@ arg_list = { expr ~ (CM ~ expr)*}
 
 variable = { ident ~ (LBK ~ expr ~ RBK)+ | field_access | deref? ~ ident  }
 
-rest_field_access = { ident ~ (LBK ~ expr ~ RBK)+ | field_access | ident  }
-
 field_access = { deref? ~ ident ~ DOT ~ (rest_field_access)+ }
+
+rest_field_access = { ident ~ (LBK ~ expr ~ RBK)+ | field_access | ident  }
 
 const_ = { decimal | charstr | integer }
 
