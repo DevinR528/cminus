@@ -179,7 +179,7 @@ pub struct Block {
 pub enum Stmt {
     VarDecl(Vec<Var>),
     Assign { deref: usize, ident: String, expr: Expression },
-    ArrayAssign { addr_of: usize, ident: String, expr: Expression },
+    ArrayAssign { deref: usize, ident: String, expr: Expression },
     Call { ident: String, args: Vec<Expression> },
     If { cond: Expression, blk: Block, els: Option<Block> },
     While { cond: Expression, stmt: Box<Statement> },

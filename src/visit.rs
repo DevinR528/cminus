@@ -265,14 +265,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                     self.visit_var(var);
                 }
             }
-            Stmt::Assign { ident, expr, deref: addr_of } => {
+            Stmt::Assign { ident, expr, deref } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
                             "{}[label = \"assign {}{}\", shape = ellipse]",
                             this.node_id,
-                            "*".repeat(*addr_of),
+                            "*".repeat(*deref),
                             ident
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
@@ -280,14 +280,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| this.visit_expr(expr),
                 );
             }
-            Stmt::ArrayAssign { ident, expr, addr_of } => {
+            Stmt::ArrayAssign { ident, expr, deref } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
                             "{}[label = \"array assign {}{}\", shape = ellipse]",
                             this.node_id,
-                            "*".repeat(*addr_of),
+                            "*".repeat(*deref),
                             ident
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);

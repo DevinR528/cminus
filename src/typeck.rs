@@ -275,7 +275,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                     panic!("assign to undeclared variable")
                 }
             }
-            Stmt::ArrayAssign { addr_of, ident, expr } => {}
+            Stmt::ArrayAssign { deref, ident, expr } => {}
             Stmt::Call { ident, args } => {}
             Stmt::If { cond, blk, els } => {}
             Stmt::While { cond, stmt } => {}
@@ -316,6 +316,7 @@ fn fold_ty(lhs: Option<&Ty>, rhs: Option<&Ty>, op: &BinOp) -> Option<Ty> {
         (Ty::Bool, _) => None,
         // TODO: deal with structs expr will need field access
         (Ty::Adt(_), _) => todo!(""),
+        // TODO: we should NOT get here (I think...)??
         (Ty::AddrOf(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
     }
 }

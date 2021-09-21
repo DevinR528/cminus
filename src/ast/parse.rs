@@ -170,7 +170,7 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
                         }
                         [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _)] => {
                             Stmt::ArrayAssign {
-                                addr_of: deref.as_str().matches('*').count(),
+                                deref: deref.as_str().matches('*').count(),
                                 ident: ident.as_str().to_string(),
                                 expr: parse_expr(expr.clone()),
                             }.into_spanned(span)
