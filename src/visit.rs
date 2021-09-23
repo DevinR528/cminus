@@ -101,9 +101,11 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
             // visit.visit_ident(ident);
             visit.visit_expr(expr);
         }
-        Stmt::ArrayAssign { ident, expr, .. } => {
+        Stmt::ArrayAssign { ident, exprs, .. } => {
             // visit.visit_ident(ident);
-            visit.visit_expr(expr);
+            for expr in exprs {
+                visit.visit_expr(expr)
+            }
         }
         Stmt::FieldAssign { expr, .. } => {
             visit.visit_expr(expr);
@@ -148,9 +150,11 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
         Expr::Ident(id) => {
             // visit.visit_ident(id)
         }
-        Expr::Array { ident, expr } => {
+        Expr::Array { ident, exprs } => {
             // visit.visit_ident(ident);
-            visit.visit_expr(expr);
+            for expr in exprs {
+                visit.visit_expr(expr)
+            }
         }
         Expr::Urnary { op, expr } => {
             visit.visit_expr(expr);
@@ -288,19 +292,24 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| this.visit_expr(expr),
                 );
             }
-            Stmt::ArrayAssign { ident, expr, deref } => {
+            Stmt::ArrayAssign { ident, exprs, deref } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
-                            "{}[label = \"array assign {}{}\", shape = ellipse]",
+                            "{}[label = \"array assign {}{}{}\", shape = ellipse]",
                             this.node_id,
                             "*".repeat(*deref),
-                            ident
+                            ident,
+                            "[]".repeat(exprs.len()),
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        for expr in exprs {
+                            this.visit_expr(expr);
+                        }
+                    },
                 );
             }
             Stmt::FieldAssign { deref, access, expr } => {
@@ -444,17 +453,23 @@ impl<'ast> Visit<'ast> for DotWalker {
                 );
                 writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
             }
-            Expr::Array { ident, expr } => {
+            Expr::Array { ident, exprs } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(
                             &mut this.buf,
-                            "{}[label = \"array {}\", shape = ellipse]",
-                            this.node_id, ident
+                            "{}[label = \"array {}{}\", shape = ellipse]",
+                            this.node_id,
+                            ident,
+                            "[]".repeat(exprs.len())
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        for expr in exprs {
+                            this.visit_expr(expr);
+                        }
+                    },
                 );
             }
             Expr::Urnary { op, expr } => {

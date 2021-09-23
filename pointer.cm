@@ -1,4 +1,6 @@
 void add(int* x) {
-    *x = *x * 1;
+    *x = *x * x;
     **x = *x + 1;
+    int y;
+    y = *x * *x;
 }

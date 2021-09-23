@@ -6,5 +6,6 @@ void main() {
     int a[1][2];
     struct name x;
     x = name { field: {{0}, {1}} };
+    a[0][1] = 2;
     x.field[0][0] = a[0][1];
 }

@@ -136,7 +136,7 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     panic!("no type found for ident expr")
                 }
             }
-            Expr::Array { ident, expr } => {
+            Expr::Array { ident, exprs } => {
                 if let Some(ty) = self.type_of_ident(ident) {
                     if self.expr_ty.insert(expr, ty).is_some() {
                         unimplemented!("NOT SURE TODO")
@@ -278,7 +278,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                     panic!("assign to undeclared variable")
                 }
             }
-            Stmt::ArrayAssign { deref, ident, expr } => {}
+            Stmt::ArrayAssign { deref, ident, exprs } => {}
             Stmt::FieldAssign { deref, access, expr } => {}
             Stmt::Call { ident, args } => {}
             Stmt::If { cond, blk, els } => {}

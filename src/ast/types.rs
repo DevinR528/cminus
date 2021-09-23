@@ -102,8 +102,10 @@ pub enum Expr {
     Ident(String),
     /// Access the address of the given variable.
     Deref { indir: usize, expr: Box<Expression> },
-    /// Access an array by index `[expr]`.
-    Array { ident: String, expr: Box<Expression> },
+    /// Access an array by index `[expr][expr]`.
+    ///
+    /// Each `exprs` represents an access of a dimension of the array.
+    Array { ident: String, exprs: Vec<Expression> },
     /// A urnary operation `!expr`.
     Urnary { op: UnOp, expr: Box<Expression> },
     /// A binary operation `1 + 1`.
@@ -194,7 +196,9 @@ pub enum Stmt {
     /// Assignment of a struct field `x.y = 0;`
     FieldAssign { deref: usize, access: Expression, expr: Expression },
     /// Assingment to an array index `a[0] = 0;`
-    ArrayAssign { deref: usize, ident: String, expr: Expression },
+    ///
+    /// Each `exprs` represents an access to a multi dimensional array.
+    ArrayAssign { deref: usize, ident: String, exprs: Vec<Expression> },
     /// A call statement `call(arg1, arg2)`
     Call { ident: String, args: Vec<Expression> },
     /// If statement `if (expr) { stmts }`
