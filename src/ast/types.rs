@@ -100,8 +100,10 @@ pub struct FieldInit {
 pub enum Expr {
     /// Access a named variable `a`.
     Ident(String),
-    /// Access the address of the given variable.
+    /// Remove indirection, follow a pointer to it's pointee.
     Deref { indir: usize, expr: Box<Expression> },
+    /// Add indirection, refer to a variable by it's memory address (pointer).
+    AddrOf(Box<Expression>),
     /// Access an array by index `[expr][expr]`.
     ///
     /// Each `exprs` represents an access of a dimension of the array.

@@ -359,6 +359,7 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
                 _ => unreachable!("malformed addrof type {}", ty.to_json()),
             }
             .into_spanned(to_span(ty));
+            // TODO: amount of indir
             if indirection > 0 {
                 Ty::AddrOf(box t)
             } else {
@@ -398,25 +399,44 @@ fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
             let ty = parse_ty(ty.clone());
             let parse_var_array = |var: &Pair<Rule>| {
                 let span = to_span(var);
-                if var.clone().into_inner().any(|p| matches!(p.as_rule(), Rule::LBK)) {
-                    let mut id = None;
-                    let mut dim: Vec<usize> = vec![];
-                    for p in var.clone().into_inner() {
-                        match p.as_rule() {
-                            Rule::ident => id = Some(p.as_str().to_string()),
-                            Rule::integer => dim.push(p.as_str().parse().unwrap()),
-                            Rule::LBK | Rule::RBK => {}
-                            _ => unreachable!("malformed array variable declaration {:?}", p),
+                match var
+                    .clone()
+                    .into_inner()
+                    .map(|p| (p.as_rule(), p))
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
+                    [(Rule::addrof, addr), (Rule::ident, id), array_parts @ ..] => {
+                        let inner_span = addr.as_span().start()..id.as_span().end();
+                        let ty = {
+                            let indirection = addr.as_str().matches('*').count();
+                            if indirection > 0 {
+                                // TODO: amount of indir
+                                Ty::AddrOf(box ty.clone()).into_spanned(inner_span.clone())
+                            } else {
+                                ty.clone()
+                            }
+                        };
+                        if !array_parts.is_empty() {
+                            Var {
+                                ty: build_recursive_ty(
+                                    array_parts.iter().filter_map(|(r, p)| match r {
+                                        Rule::integer => {
+                                            Some(p.as_str().parse().expect("invalid integer"))
+                                        }
+                                        Rule::LBK | Rule::RBK => None,
+                                        _ => unreachable!("malformed array access"),
+                                    }),
+                                    ty,
+                                ),
+                                ident: id.as_str().to_string(),
+                                span,
+                            }
+                        } else {
+                            Var { ty, ident: id.as_str().to_string(), span: inner_span }
                         }
                     }
-
-                    Var {
-                        ty: build_recursive_ty(dim.into_iter(), ty.clone()),
-                        ident: id.unwrap(),
-                        span,
-                    }
-                } else {
-                    Var { ty: ty.clone(), ident: var.as_str().to_string(), span }
+                    _ => unreachable!("malformed variable"),
                 }
             };
 
@@ -455,6 +475,8 @@ fn parse_expr(mut expr: Pair<Rule>) -> Expression {
         Operator::new(Rule::MUL, Assoc::Left) | Operator::new(Rule::DIV, Assoc::Left),
         // .
         Operator::new(Rule::DOT, Assoc::Left),
+        // ->
+        Operator::new(Rule::ARROW, Assoc::Left),
     ]);
 
     consume(expr, &climber)
@@ -466,6 +488,10 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
         let span = lhs.span.start..rhs.span.end;
         let expr = match op.as_rule() {
             Rule::DOT => Expr::FieldAccess { lhs: box lhs, rhs: box rhs },
+            Rule::ARROW => Expr::FieldAccess {
+                lhs: box Expr::AddrOf(box lhs).into_spanned(span.start..rhs.span.start),
+                rhs: box rhs,
+            },
             Rule::PLUS => Expr::Binary { op: BinOp::Add, lhs: box lhs, rhs: box rhs },
             Rule::SUB => Expr::Binary { op: BinOp::Sub, lhs: box lhs, rhs: box rhs },
             Rule::MUL => Expr::Binary { op: BinOp::Mul, lhs: box lhs, rhs: box rhs },
@@ -536,9 +562,6 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                             } else {
                                 arr
                             }
-                        }
-                        [(Rule::field_access, access)] => {
-                            parse_field_access(access.clone())
                         }
                         _ => unreachable!("malformed variable name {}", var.to_json()),
                     }.into_spanned(span)
@@ -642,62 +665,84 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
     }
 }
 
-fn parse_rest_access(rest: Pair<Rule>) -> Expr {
-    let span = to_span(&rest);
-    match rest.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::ident, ident)] => Expr::Ident(ident.as_str().to_string()),
-        [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] => {
-            Expr::Array {
-                ident: ident.as_str().to_string(),
-                exprs: vec![parse_expr(expr.clone())]
-                    .into_iter()
-                    .chain(rest.iter().filter_map(|(r, p)| match r {
-                        Rule::LBK | Rule::RBK => None,
-                        Rule::expr => Some(parse_expr(p.clone())),
-                        _ => unreachable!("malformed multi-dim array"),
-                    }))
-                    .collect(),
-            }
-        }
-        [(Rule::field_access, access)] => {
-            let ac_span = to_span(access);
-            match access
-                .clone()
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // No deref here since you can't in the middle of field access `x.y.*z` is illegal
-                [(Rule::ident, id), (Rule::DOT, _), (Rule::rest_field_access, rest)] => {
-                    Expr::FieldAccess {
-                        lhs: box Expr::Ident(id.as_str().to_string()).into_spanned(to_span(id)),
-                        rhs: box parse_rest_access(rest.clone()).into_spanned(to_span(rest)),
-                    }
-                }
-                _ => unreachable!("malformed field access"),
-            }
-        }
-        _ => unreachable!("malformed field access {}", rest.to_json()),
-    }
-}
+// fn parse_rest_access(rest: Pair<Rule>) -> Expr {
+//     let span = to_span(&rest);
+//     match rest.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+//         [(Rule::ident, ident)] => Expr::Ident(ident.as_str().to_string()),
+//         [(Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] =>
+// {             Expr::Array {
+//                 ident: ident.as_str().to_string(),
+//                 exprs: vec![parse_expr(expr.clone())]
+//                     .into_iter()
+//                     .chain(rest.iter().filter_map(|(r, p)| match r {
+//                         Rule::LBK | Rule::RBK => None,
+//                         Rule::expr => Some(parse_expr(p.clone())),
+//                         _ => unreachable!("malformed multi-dim array"),
+//                     }))
+//                     .collect(),
+//             }
+//         }
+//         [(Rule::field_access, access)] => {
+//             let ac_span = to_span(access);
+//             match access
+//                 .clone()
+//                 .into_inner()
+//                 .map(|p| (p.as_rule(), p))
+//                 .collect::<Vec<_>>()
+//                 .as_slice()
+//             {
+//                 // No deref here since you can't in the middle of field access `x.y.*z` is
+// illegal                 [(Rule::ident, id), (Rule::DOT, _), (Rule::rest_field_access, rest)] => {
+//                     Expr::FieldAccess {
+//                         lhs: box Expr::Ident(id.as_str().to_string()).into_spanned(to_span(id)),
+//                         rhs: box parse_rest_access(rest.clone()).into_spanned(to_span(rest)),
+//                     }
+//                 }
+//                 _ => unreachable!("malformed field access"),
+//             }
+//         }
+//         _ => unreachable!("malformed field access {}", rest.to_json()),
+//     }
+// }
 
 fn parse_field_access(access: Pair<Rule>) -> Expr {
     let ac_span = to_span(&access);
     match access.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::deref, deref), (Rule::ident, id), (Rule::DOT, _), (Rule::rest_field_access, rest)] =>
-        {
-            let field_access = Expr::FieldAccess {
-                lhs: box Expr::Ident(id.as_str().to_string()).into_spanned(to_span(id)),
-                rhs: box parse_rest_access(rest.clone()).into_spanned(to_span(rest)),
-            };
+        [(Rule::expr, expr)] => {
+            let ex = parse_expr(expr.clone());
 
-            let indirection = deref.as_str().matches('*').count();
-            if indirection > 0 {
-                Expr::Deref { indir: indirection, expr: box field_access.into_spanned(ac_span) }
-            } else {
-                field_access
+            let mut stack = vec![];
+            if let Expr::FieldAccess { lhs, rhs } = ex.val {
+                stack.push(&lhs.val);
+                stack.push(&rhs.val);
             }
+
+            // validate lValue
+            loop {
+                let val = if let Some(v) = stack.pop() {
+                    v
+                } else {
+                    break;
+                };
+                match val {
+                    Expr::Parens(..)
+                    | Expr::Ident(..)
+                    | Expr::Deref { .. }
+                    | Expr::AddrOf(..)
+                    | Expr::Call { .. }
+                    | Expr::Array { .. } => {}
+                    Expr::FieldAccess { lhs, rhs } => {
+                        stack.push(&lhs.val);
+                        stack.push(&rhs.val);
+                    }
+                    Expr::Urnary { op, expr } => unreachable!("no urnary expression"),
+                    Expr::Binary { op, lhs, rhs } => unreachable!("no binary expression"),
+                    Expr::StructInit { name, fields } => unreachable!("no struct init"),
+                    Expr::ArrayInit { items } => unreachable!("no struct init"),
+                    Expr::Value(_) => unreachable!("no values"),
+                }
+            }
+            ex.val
         }
         _ => unreachable!("malformed field access"),
     }

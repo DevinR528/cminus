@@ -160,6 +160,12 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                 let ty = ty.dereference(*indir).expect("a dereferencable type");
                 self.expr_ty.insert(expr, ty);
             }
+            Expr::AddrOf(inner_expr) => {
+                self.visit_expr(inner_expr);
+
+                let ty = self.expr_ty.get(&**inner_expr).expect("type for address of").clone();
+                self.expr_ty.insert(expr, Ty::AddrOf(box ty.into_spanned(DUMMY)));
+            }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
                 self.visit_expr(rhs);

@@ -7,6 +7,7 @@ void main() {
     int a;
     struct name x;
     x = name { field: 0, field_two: 'a' };
+    a = x.y[1]->c;
     a = x.field + 1;
     x.field = 10;
 }

@@ -14,7 +14,7 @@ adt_decl = { STRUCT ~ ident ~ LBR ~ (field)+ ~ RBR ~ SC }
 
 field = { param ~ SC }
 
-var_name = { ident ~ (LBK ~ integer ~ RBK)* }
+var_name = { addrof? ~ ident ~ (LBK ~ integer ~ RBK)* }
 
 type_ = { (INT | CHAR | FLOAT | VOID | STRUCT ~ ident) ~ addrof? }
 
@@ -29,7 +29,7 @@ stmt = {
     | block_stmt
 }
 
-assing = { variable ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
+assing = { expr ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
 
 call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
@@ -68,22 +68,14 @@ arg_list = { expr ~ (CM ~ expr)*}
 
 variable = {
     deref? ~ ident ~ (LBK ~ expr ~ RBK)+
-    | field_access
-    | deref? ~ ident 
-}
-
-field_access = { deref? ~ ident ~ DOT ~ (rest_field_access)+ }
-
-rest_field_access = {
-    ident ~ (LBK ~ expr ~ RBK)+
-    | field_access
-    | ident
+    | deref? ~ ident
 }
 
 const_ = { decimal | charstr | integer }
 
 op = {
-    DOT
+    ARROW
+    |DOT
     | PLUS
     | SUB
     | MUL
@@ -98,7 +90,7 @@ op = {
     | AND
 }
 
-deref = { (MUL)* }
+deref = { AMP | (MUL)* }
 
 addrof = { (MUL)* }
 
@@ -147,6 +139,10 @@ LT = { "<" }
 NOT = { "!" }
 AND = { "&&" }
 OR = { "||" }
+
+// misc
+AMP = { "&" }
+ARROW = { "->" }
 
 
 LBK = { "[" }

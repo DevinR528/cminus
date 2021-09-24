@@ -1,6 +1,10 @@
+void foo(int* x) {}
+
 void add(int* x) {
-    *x = *x * x;
     **x = *x + 1;
     int y;
     y = *x * *x;
+    foo(&y);
+    int a, *b;
+    a = &y;
 }

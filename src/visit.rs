@@ -162,6 +162,9 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
         Expr::Deref { indir, expr } => {
             visit.visit_expr(expr);
         }
+        Expr::AddrOf(expr) => {
+            visit.visit_expr(expr);
+        }
         Expr::Binary { op, lhs, rhs } => {
             visit.visit_expr(lhs);
             visit.visit_expr(rhs)
@@ -490,8 +493,21 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| {
                         writeln!(
                             &mut this.buf,
-                            "{}[label = \"expr address of {} times\", shape = ellipse]",
+                            "{}[label = \"expr deref of {} times\", shape = ellipse]",
                             this.node_id, indir,
+                        );
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    },
+                    |this| this.visit_expr(expr),
+                );
+            }
+            Expr::AddrOf(expr) => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"expr address of\", shape = ellipse]",
+                            this.node_id,
                         );
                         writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
                     },
