@@ -10,4 +10,5 @@ void main() {
     a = x.y[1]->c;
     a = x.field + 1;
     x.field = 10;
+    x->field = 10;
 }

@@ -48,7 +48,7 @@ exit_stmt = { EXIT ~ SC }
 
 block_stmt = { LBR ~ (stmt)* ~ RBR }
 
-struct_assign = { ident ~ LBR ~ field_expr ~ (CM ~ field_expr)* ~ RBR }
+struct_assign = { ident ~ LBR ~ field_expr ~ (CM ~ field_expr)* ~ CM? ~ RBR }
 
 field_expr = { ident ~ COLON ~ (arr_init | expr) }
 
@@ -62,7 +62,7 @@ term = {
     | LP ~ expr ~ RP
 }
 
-arr_init = { (LBR ~ expr ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ RBR }
+arr_init = { (LBR ~ expr ~ (CM ~ expr)* ~ CM? ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ CM? ~ RBR }
 
 arg_list = { expr ~ (CM ~ expr)*}
 

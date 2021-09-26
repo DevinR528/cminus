@@ -277,6 +277,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                     })
                 {
                     if self.tyck.expr_ty.get(expr) != var_ty.dereference(*deref).as_ref() {
+                        println!("{:?}", expr);
                         println!("{:?}", self.tyck.expr_ty.get(expr));
                         panic!("variable type mismatch {:?}", var_ty);
                     }

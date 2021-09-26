@@ -52,7 +52,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // println!("{}", file.to_json());
 
     // This is AST construction which is where operator precedence happens.
-    // It does work correctly (see src/precedence.rs and src/ast/parse.rs:99:1 for more
+    // It does work correctly (see src/precedence.rs and src/ast/parse.rs (parse_expr) for more
     // details)
     //
     let mut items = vec![];

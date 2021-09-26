@@ -19,7 +19,7 @@ crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
                 Rule::func_decl => {
                     vec![Decl::Func(parse_func(decl.into_inner())).into_spanned(span)]
                 }
-                Rule::var_decl => parse_var(decl.into_inner())
+                Rule::var_decl => parse_var_decl(decl.into_inner())
                     .into_iter()
                     .map(|var| Decl::Var(var).into_spanned(span.clone()))
                     .collect(),
@@ -64,8 +64,42 @@ fn parse_struct(struct_: Pairs<Rule>, span: Range<usize>) -> Struct {
 fn parse_struct_field_decl(param: Pair<Rule>) -> Field {
     match param.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         [(Rule::type_, ty), (Rule::var_name, var)] => {
+            let ty = parse_ty(ty.clone());
             let span = to_span(var);
-            Field { ident: var.as_str().to_string(), ty: parse_ty(ty.clone()), span }
+            match var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
+            {
+                [(Rule::addrof, addr), (Rule::ident, id), array_parts @ ..] => {
+                    let inner_span = addr.as_span().start()..id.as_span().end();
+                    let ty = {
+                        let indirection = addr.as_str().matches('*').count();
+                        if indirection > 0 {
+                            // TODO: amount of indir
+                            Ty::AddrOf(box ty.clone()).into_spanned(inner_span.clone())
+                        } else {
+                            ty
+                        }
+                    };
+                    if !array_parts.is_empty() {
+                        Field {
+                            ty: build_recursive_ty(
+                                array_parts.iter().filter_map(|(r, p)| match r {
+                                    Rule::integer => {
+                                        Some(p.as_str().parse().expect("invalid integer"))
+                                    }
+                                    Rule::LBK | Rule::RBK => None,
+                                    _ => unreachable!("malformed array access"),
+                                }),
+                                ty,
+                            ),
+                            ident: id.as_str().to_string(),
+                            span,
+                        }
+                    } else {
+                        Field { ty, ident: id.as_str().to_string(), span: inner_span }
+                    }
+                }
+                _ => unreachable!("malformed variable"),
+            }
         }
         _ => unreachable!("malformed function parameter"),
     }
@@ -83,7 +117,7 @@ fn parse_param(param: Pair<Rule>) -> Param {
 
 #[rustfmt::skip]
 fn parse_func(func: Pairs<Rule>) -> Func {
-    println!("func = {}", func.to_json());
+    // println!("func = {}", func.to_json());
     match func.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int foo(int a, int b) { stmts }
         [(Rule::type_, ty), (Rule::ident, ident),
@@ -102,7 +136,7 @@ fn parse_func(func: Pairs<Rule>) -> Func {
                 stmts: action.iter().map(|(r, s)| match r {
                     Rule::stmt => parse_stmt(s.clone()),
                     Rule::var_decl => Stmt::VarDecl(
-                        parse_var(s.clone().into_inner())).into_spanned(to_span(s)
+                        parse_var_decl(s.clone().into_inner())).into_spanned(to_span(s)
                     ),
                     _ => unreachable!("malformed statement"),
                 }).collect(),
@@ -122,7 +156,7 @@ fn parse_func(func: Pairs<Rule>) -> Func {
                 stmts: action.iter().map(|(r, s)| match r {
                     Rule::stmt => parse_stmt(s.clone()),
                     Rule::var_decl => Stmt::VarDecl(
-                        parse_var(s.clone().into_inner())
+                        parse_var_decl(s.clone().into_inner())
                     ).into_spanned(to_span(s)),
                     _ => unreachable!("malformed statement"),
                 }).collect(),
@@ -130,60 +164,6 @@ fn parse_func(func: Pairs<Rule>) -> Func {
             }
         }
         _ => unreachable!("malformed function"),
-    }
-}
-
-fn parse_block(blk: Pair<Rule>) -> Block {
-    let span = to_span(&blk);
-    match blk.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        // { stmt* }
-        [(Rule::LBR, _), stmts @ .., (Rule::RBR, _)] => {
-            Block { stmts: stmts.iter().map(|(_, s)| parse_stmt(s.clone())).collect(), span }
-        }
-        _ => unreachable!("malformed function"),
-    }
-}
-
-fn parse_variable(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range<usize>) -> Statement {
-    if let [(Rule::term, _), (Rule::op, _), ..] =
-        var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
-    {
-        let access = parse_field_access(var.clone());
-        return Stmt::FieldAssign {
-            deref: access.deref_count(),
-            access: access.into_spanned(to_span(&var)),
-            expr: parse_expr(expr.clone()),
-        }
-        .into_spanned(span);
-    }
-
-    let term = var.clone().into_inner().next().unwrap().into_inner().next().unwrap();
-    match term.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::deref, deref), (Rule::ident, ident)] => Stmt::Assign {
-            deref: deref.as_str().matches('*').count(),
-            ident: ident.as_str().to_string(),
-            expr: parse_expr(expr.clone()),
-        }
-        .into_spanned(span),
-        [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] => {
-            Stmt::ArrayAssign {
-                deref: deref.as_str().matches('*').count(),
-                ident: ident.as_str().to_string(),
-                exprs: vec![parse_expr(expr.clone())]
-                    .into_iter()
-                    .chain(rest.iter().filter_map(|(r, p)| match r {
-                        Rule::LBK | Rule::RBK => None,
-                        Rule::expr => Some(parse_expr(p.clone())),
-                        _ => unreachable!("malformed multi-dim array"),
-                    }))
-                    .collect(),
-            }
-            .into_spanned(span)
-        }
-        x => unreachable!(
-            "malformed variable name {:?}",
-            x.iter().map(|(r, _)| r).collect::<Vec<_>>()
-        ),
     }
 }
 
@@ -203,13 +183,19 @@ fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
                 [(Rule::expr, var), (Rule::ASSIGN, _),
                     (Rule::expr, expr), (Rule::SC, _)
                 ] => {
-                    parse_variable(var.clone(), expr.clone(), span)
+                    parse_lvalue(var.clone(), expr.clone(), span)
                 }
                 // var = { field: expr, optional: expr };
                 [(Rule::expr, var), (Rule::ASSIGN, _),
                     (Rule::struct_assign, expr), (Rule::SC, _)
                 ] => {
-                    parse_variable(var.clone(), expr.clone(), span)
+                    parse_lvalue(var.clone(), expr.clone(), span)
+                }
+                // var = { 1, 2, };
+                [(Rule::expr, var), (Rule::ASSIGN, _),
+                    (Rule::arr_init, expr), (Rule::SC, _)
+                ] => {
+                    parse_lvalue(var.clone(), expr.clone(), span)
                 }
                 _ => unreachable!("malformed assingment {}", stmt.to_json()),
             }
@@ -383,6 +369,76 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
     .into_spanned(span)
 }
 
+fn parse_block(blk: Pair<Rule>) -> Block {
+    let span = to_span(&blk);
+    match blk.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        // { stmt* }
+        [(Rule::LBR, _), stmts @ .., (Rule::RBR, _)] => {
+            Block { stmts: stmts.iter().map(|(_, s)| parse_stmt(s.clone())).collect(), span }
+        }
+        _ => unreachable!("malformed function"),
+    }
+}
+
+fn parse_lvalue(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range<usize>) -> Statement {
+    // If we encounter a `field->access.y.z`
+    if let [(Rule::term, _), (Rule::op, _), ..] =
+        var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
+    {
+        let access = parse_field_access(var.clone());
+        return Stmt::FieldAssign {
+            deref: access.deref_count(),
+            access: access.into_spanned(to_span(&var)),
+            expr: parse_expr(expr.clone()),
+        }
+        .into_spanned(span);
+    }
+
+    // TODO:
+    // If we encounter a `call()`
+    if let [(Rule::term, _)] =
+        var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
+    {
+        // let access = parse_field_access(var.clone());
+        // return Stmt::CallAssign {
+        //     deref: access.deref_count(),
+        //     access: access.into_spanned(to_span(&var)),
+        //     expr: parse_expr(expr.clone()),
+        // }
+        // .into_spanned(span);
+    }
+
+    let term = var.clone().into_inner().next().unwrap().into_inner().next().unwrap();
+    match term.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::deref, deref), (Rule::ident, ident)] => Stmt::Assign {
+            deref: deref.as_str().matches('*').count(),
+            ident: ident.as_str().to_string(),
+            expr: parse_expr(expr.clone()),
+        }
+        .into_spanned(span),
+        [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] => {
+            Stmt::ArrayAssign {
+                deref: deref.as_str().matches('*').count(),
+                ident: ident.as_str().to_string(),
+                exprs: vec![parse_expr(expr.clone())]
+                    .into_iter()
+                    .chain(rest.iter().filter_map(|(r, p)| match r {
+                        Rule::LBK | Rule::RBK => None,
+                        Rule::expr => Some(parse_expr(p.clone())),
+                        _ => unreachable!("malformed multi-dim array"),
+                    }))
+                    .collect(),
+            }
+            .into_spanned(span)
+        }
+        x => unreachable!(
+            "malformed variable name {:?}",
+            // x.iter().map(|(r, _)| r).collect::<Vec<_>>()
+            var
+        ),
+    }
+}
+
 fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> Type {
     if let Some(size) = dims.next() {
         let span = base_ty.span.clone();
@@ -392,8 +448,8 @@ fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> 
     }
 }
 
-fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
-    match var.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+fn parse_var_decl(var: Pairs<Rule>) -> Vec<Var> {
+    match var.clone().into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int x,y,z;
         [(Rule::type_, ty), (Rule::var_name, var_name), names @ .., (Rule::SC, _)] => {
             let ty = parse_ty(ty.clone());
@@ -443,6 +499,7 @@ fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
             vec![parse_var_array(var_name)]
                 .into_iter()
                 .chain(names.iter().filter_map(|(r, n)| {
+                    // TODO: this is an error
                     if matches!(r, Rule::var_name) {
                         Some(parse_var_array(n))
                     } else {
@@ -451,12 +508,12 @@ fn parse_var(var: Pairs<Rule>) -> Vec<Var> {
                 }))
                 .collect()
         }
-        _ => unreachable!("malformed function"),
+        _ => unreachable!("malformed function {:?}", var.map(|p| p.as_rule()).collect::<Vec<_>>()),
     }
 }
 
 fn parse_expr(mut expr: Pair<Rule>) -> Expression {
-    println!("{}", expr.to_json());
+    // println!("{}", expr.to_json());
     let climber = PrecClimber::new(vec![
         // &&
         Operator::new(Rule::AND, Assoc::Left),
@@ -489,7 +546,8 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
         let expr = match op.as_rule() {
             Rule::DOT => Expr::FieldAccess { lhs: box lhs, rhs: box rhs },
             Rule::ARROW => Expr::FieldAccess {
-                lhs: box Expr::AddrOf(box lhs).into_spanned(span.start..rhs.span.start),
+                lhs: box Expr::Deref { indir: 1, expr: box lhs }
+                    .into_spanned(span.start..rhs.span.start),
                 rhs: box rhs,
             },
             Rule::PLUS => Expr::Binary { op: BinOp::Add, lhs: box lhs, rhs: box rhs },
@@ -526,21 +584,26 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                         .as_slice()
                     {
                         [(Rule::deref, deref), (Rule::ident, ident)] => {
-                            let indirection = deref.as_str().matches('*').count();
-                            if indirection > 0 {
-                                Expr::Deref {
-                                    indir: indirection,
-                                    expr: box Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident))
-                                }
+                            let indir = deref.as_str();
+                            if indir == "&" {
+                                Expr::AddrOf(box Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident)))
                             } else {
-                                Expr::Ident(ident.as_str().to_string())
+                                let indirection = indir.matches('*').count();
+                                if indirection > 0 {
+                                    Expr::Deref {
+                                        indir: indirection,
+                                        expr: box Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident))
+                                    }
+                                } else {
+                                    Expr::Ident(ident.as_str().to_string())
+                                }
                             }
                         },
                         [(Rule::deref, deref), (Rule::ident, ident),
                             (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _),
                             rest @ ..
                         ] => {
-                            let indirection = deref.as_str().matches('*').count();
+                            let indir = deref.as_str();
 
                             let arr = Expr::Array {
                                 ident: ident.as_str().to_string(),
@@ -553,15 +616,21 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                                     }))
                                     .collect(),
                             };
-
-                            if indirection > 0 {
-                                Expr::Deref {
-                                    indir: indirection,
-                                    expr: box arr.into_spanned(ident.as_span().start()..span.end),
-                                }
+                            if indir == "&" {
+                                Expr::AddrOf(box arr.into_spanned(ident.as_span().start()..span.end))
                             } else {
-                                arr
+                                let indirection = indir.matches('*').count();
+                                if indirection > 0 {
+                                    Expr::Deref {
+                                        indir: indirection,
+                                        expr: box arr.into_spanned(ident.as_span().start()..span.end),
+                                    }
+                                } else {
+                                    arr
+                                }
                             }
+
+
                         }
                         _ => unreachable!("malformed variable name {}", var.to_json()),
                     }.into_spanned(span)
@@ -629,6 +698,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                         fields: fields
                             .iter()
                             .filter_map(|(r, p)| {
+                                // TODO: this is an error
                                 if matches!(r, Rule::field_expr) {
                                     Some(parse_field_init(p.clone()))
                                 } else {
@@ -648,12 +718,10 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                 [(Rule::LBR, _), fields @ .., (Rule::RBR, _)] => Expr::ArrayInit {
                     items: fields
                         .iter()
-                        .filter_map(|(r, p)| {
-                            if matches!(r, Rule::field_expr) {
-                                Some(parse_array_init(p.clone()))
-                            } else {
-                                None
-                            }
+                        .filter_map(|(r, p)| match r {
+                            Rule::arr_init | Rule::expr => Some(parse_expr(p.clone())),
+                            Rule::CM => None,
+                            _ => unreachable!("malformed array initializer"),
                         })
                         .collect(),
                 }
@@ -717,24 +785,6 @@ fn parse_field_init(field: Pair<Rule>) -> FieldInit {
             init: parse_expr(expr.clone()),
             span: ident.as_span().start()..expr.as_span().end(),
         },
-        _ => unreachable!("malformed struct fields {}", field.to_json()),
-    }
-}
-
-fn parse_array_init(field: Pair<Rule>) -> Expression {
-    match field.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::LBR, _), (Rule::expr, expr), (Rule::RBR, _)] => parse_expr(expr.clone()),
-        [(Rule::LBR, _), (Rule::arr_init, expr), rest @ .., (Rule::RBR, _)] => Expr::ArrayInit {
-            items: vec![parse_array_init(expr.clone())]
-                .into_iter()
-                .chain(rest.iter().filter_map(|(r, p)| match r {
-                    Rule::arr_init => Some(parse_array_init(p.clone())),
-                    Rule::CM => None,
-                    _ => unreachable!("malformed array init list"),
-                }))
-                .collect(),
-        }
-        .into_spanned(to_span(&field)),
         _ => unreachable!("malformed struct fields {}", field.to_json()),
     }
 }
