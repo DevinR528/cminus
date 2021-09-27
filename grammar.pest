@@ -1,6 +1,6 @@
 program = { SOI ~ "\n"* ~ (decl)* ~ EOI }
 
-decl = { (func_decl | var_decl) }
+decl = { (func_decl | var_decl | adt_decl) }
 
 func_decl = { type_ ~ ident ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
 
@@ -10,10 +10,13 @@ param = { type_ ~ var_name }
 
 var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
-// I added multi-dimensional arrays 😈
-var_name = { ident ~ (LBK ~ integer ~ RBK)* }
+adt_decl = { STRUCT ~ ident ~ LBR ~ (field)+ ~ RBR ~ SC }
 
-type_ = { INT | CHAR | FLOAT | VOID }
+field = { param ~ SC }
+
+var_name = { addrof? ~ ident ~ (LBK ~ integer ~ RBK)* }
+
+type_ = { (INT | CHAR | FLOAT | VOID | STRUCT ~ ident) ~ addrof? }
 
 stmt = {
     assing
@@ -26,7 +29,7 @@ stmt = {
     | block_stmt
 }
 
-assing = { variable ~ ASSIGN ~ expr ~ SC }
+assing = { expr ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
 
 call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
@@ -34,13 +37,20 @@ if_stmt = { IF ~ LP ~ expr ~ RP ~ block_stmt ~ (ELSE ~ block_stmt)? }
 
 while_stmt = { WHILE ~ LP ~ expr ~ RP ~ stmt }
 
-io_stmt = { (READ ~ LP ~ variable ~ RP ~ SC) | (WRITE ~ LP ~ (expr | string) ~ RP ~ SC) }
+io_stmt = {
+    (READ ~ LP ~ variable ~ RP ~ SC)
+    | (WRITE ~ LP ~ (expr | string) ~ RP ~ SC)
+}
 
 ret_stmt = { RETURN ~ expr ~ SC }
 
 exit_stmt = { EXIT ~ SC }
 
 block_stmt = { LBR ~ (stmt)* ~ RBR }
+
+struct_assign = { ident ~ LBR ~ field_expr ~ (CM ~ field_expr)* ~ CM? ~ RBR }
+
+field_expr = { ident ~ COLON ~ (arr_init | expr) }
 
 expr = { term ~ (op ~ term)* }
 
@@ -52,8 +62,21 @@ term = {
     | LP ~ expr ~ RP
 }
 
+arr_init = { (LBR ~ expr ~ (CM ~ expr)* ~ CM? ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ CM? ~ RBR }
+
+arg_list = { expr ~ (CM ~ expr)*}
+
+variable = {
+    deref? ~ ident ~ (LBK ~ expr ~ RBK)+
+    | deref? ~ ident
+}
+
+const_ = { decimal | charstr | integer }
+
 op = {
-    PLUS
+    ARROW
+    |DOT
+    | PLUS
     | SUB
     | MUL
     | DIV
@@ -67,15 +90,13 @@ op = {
     | AND
 }
 
-variable = { ident ~ LBK ~ expr ~ RBK | ident  }
+deref = { AMP | (MUL)* }
 
-const_ = { decimal | charstr | integer }
-
-arg_list = { expr ~ (CM ~ expr)*}
+addrof = { (MUL)* }
 
 integer = @{ ASCII_DIGIT+ }
 
-decimal = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT* }
+decimal = @{ ASCII_DIGIT+ ~ DOT ~ ASCII_DIGIT* }
 
 ident = @{ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
 
@@ -96,6 +117,7 @@ IF = { "if" }
 INT = { "int" }
 READ = { "read" }
 RETURN = { "return" }
+STRUCT = { "struct" }
 VOID = { "void" }
 WHILE = { "while" }
 WRITE = { "write" }
@@ -118,6 +140,10 @@ NOT = { "!" }
 AND = { "&&" }
 OR = { "||" }
 
+// misc
+AMP = { "&" }
+ARROW = { "->" }
+
 
 LBK = { "[" }
 RBK = { "]" }
@@ -128,6 +154,7 @@ RP = { ")" }
 CM = { "," }
 DOT = { "." }
 SC = { ";" }
+COLON = { ":" }
 SQ = { "'" }
 DQ = { "\"" }
 
