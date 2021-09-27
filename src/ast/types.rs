@@ -208,7 +208,7 @@ impl Ty {
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Ty::Array { size, ty } => write!(f, "{}{}", ty.val, "[]".repeat(*size)),
+            Ty::Array { size, ty } => write!(f, "{}[{}]", ty.val, size),
             Ty::Adt(n) => write!(f, "struct {}", n),
             Ty::AddrOf(t) => write!(f, "&{}", t.val),
             Ty::String => write!(f, "string"),

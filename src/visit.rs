@@ -349,13 +349,37 @@ impl<'ast> Visit<'ast> for DotWalker {
                     },
                     |this| {
                         this.visit_expr(cond);
-                        for stmt in &blk.stmts {
-                            this.visit_stmt(stmt);
-                        }
+                        this.walk_deeper(
+                            |me| {
+                                writeln!(
+                                    &mut me.buf,
+                                    "{}[label = \"block\", shape = ellipse]",
+                                    me.node_id
+                                );
+                                writeln!(&mut me.buf, "{} -> {}", me.prev_id, me.node_id);
+                            },
+                            |me| {
+                                for stmt in &blk.stmts {
+                                    me.visit_stmt(stmt);
+                                }
+                            },
+                        );
                         if let Some(Block { stmts, .. }) = els {
-                            for stmt in stmts {
-                                this.visit_stmt(stmt);
-                            }
+                            this.walk_deeper(
+                                |me| {
+                                    writeln!(
+                                        &mut me.buf,
+                                        "{}[label = \"else block\", shape = ellipse]",
+                                        me.node_id
+                                    );
+                                    writeln!(&mut me.buf, "{} -> {}", me.prev_id, me.node_id);
+                                },
+                                |me| {
+                                    for stmt in stmts {
+                                        me.visit_stmt(stmt);
+                                    }
+                                },
+                            );
                         }
                     },
                 );

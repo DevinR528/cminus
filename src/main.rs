@@ -64,24 +64,25 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // println!("{:?}", items);
+    println!("{:?}", items);
 
-    // let mut tyck = typeck::TyCheckRes::default();
-    // tyck.visit_prog(&items);
-    // println!("{:?}", tyck);
+    let mut tyck = typeck::TyCheckRes::default();
+    tyck.visit_prog(&items);
 
-    let mut dot = visit::DotWalker::new();
-    dot.visit_prog(&items);
+    println!("{:?}", tyck);
 
-    let input_path = Path::new(path);
-    let dot_path = format!("{}.dot", input_path.file_name().unwrap().to_string_lossy());
-    let pdf_path = format!("{}.pdf", dot_path);
-    fs::write(&dot_path, dot.to_string());
+    // let mut dot = visit::DotWalker::new();
+    // dot.visit_prog(&items);
 
-    std::process::Command::new("dot")
-        .args(["-Tpdf", &format!("-o{}", pdf_path), &dot_path])
-        .status()
-        .expect("failed to execute `dot -Tpdf ...`");
+    // let input_path = Path::new(path);
+    // let dot_path = format!("{}.dot", input_path.file_name().unwrap().to_string_lossy());
+    // let pdf_path = format!("{}.pdf", dot_path);
+    // fs::write(&dot_path, dot.to_string());
+
+    // std::process::Command::new("dot")
+    //     .args(["-Tpdf", &format!("-o{}", pdf_path), &dot_path])
+    //     .status()
+    //     .expect("failed to execute `dot -Tpdf ...`");
 
     Ok(())
 }
@@ -118,6 +119,7 @@ fn main() {
 }
 
 #[test]
+#[ignore = "file_system"]
 fn parse_all() {
     let mut dirs = fs::read_dir("./input").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
     dirs.sort_by_key(|a| a.path());
@@ -127,6 +129,24 @@ fn parse_all() {
         if path.is_file() && path.extension() == Some(Path::new("cm").as_os_str()) {
             println!("{}", path.display());
             process_file(&path.as_os_str().to_string_lossy()).unwrap();
+        }
+    }
+}
+
+#[test]
+#[ignore = "file_system"]
+fn open_all() {
+    let mut dirs = fs::read_dir(".").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
+    dirs.sort_by_key(|a| a.path());
+
+    for f in dirs.into_iter() {
+        let path = f.path();
+        if path.is_file() && path.extension() == Some(Path::new("pdf").as_os_str()) {
+            println!("{}", path.display());
+            std::process::Command::new("firefox")
+                .arg(path.as_os_str())
+                .status()
+                .expect("failed to execute `dot -Tpdf ...`");
         }
     }
 }
