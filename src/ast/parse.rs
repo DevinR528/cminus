@@ -381,62 +381,8 @@ fn parse_block(blk: Pair<Rule>) -> Block {
 }
 
 fn parse_lvalue(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range<usize>) -> Statement {
-    // If we encounter a `field->access.y.z`
-    if let [(Rule::term, _), (Rule::op, _), ..] =
-        var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
-    {
-        let access = parse_field_access(var.clone());
-        return Stmt::FieldAssign {
-            deref: access.deref_count(),
-            access: access.into_spanned(to_span(&var)),
-            expr: parse_expr(expr.clone()),
-        }
-        .into_spanned(span);
-    }
-
-    // TODO:
-    // If we encounter a `call()`
-    if let [(Rule::term, _)] =
-        var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
-    {
-        // let access = parse_field_access(var.clone());
-        // return Stmt::CallAssign {
-        //     deref: access.deref_count(),
-        //     access: access.into_spanned(to_span(&var)),
-        //     expr: parse_expr(expr.clone()),
-        // }
-        // .into_spanned(span);
-    }
-
-    let term = var.clone().into_inner().next().unwrap().into_inner().next().unwrap();
-    match term.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::deref, deref), (Rule::ident, ident)] => Stmt::Assign {
-            deref: deref.as_str().matches('*').count(),
-            ident: ident.as_str().to_string(),
-            expr: parse_expr(expr.clone()),
-        }
-        .into_spanned(span),
-        [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] => {
-            Stmt::ArrayAssign {
-                deref: deref.as_str().matches('*').count(),
-                ident: ident.as_str().to_string(),
-                exprs: vec![parse_expr(expr.clone())]
-                    .into_iter()
-                    .chain(rest.iter().filter_map(|(r, p)| match r {
-                        Rule::LBK | Rule::RBK => None,
-                        Rule::expr => Some(parse_expr(p.clone())),
-                        _ => unreachable!("malformed multi-dim array"),
-                    }))
-                    .collect(),
-            }
-            .into_spanned(span)
-        }
-        x => unreachable!(
-            "malformed variable name {:?}",
-            // x.iter().map(|(r, _)| r).collect::<Vec<_>>()
-            var
-        ),
-    }
+    let deref = var.as_str().matches('*').count();
+    Stmt::Assign { deref, lval: parse_expr(var), rval: parse_expr(expr.clone()) }.into_spanned(span)
 }
 
 fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> Type {

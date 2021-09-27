@@ -138,6 +138,35 @@ impl Expr {
             0
         }
     }
+
+    crate fn as_ident_string(&self) -> String {
+        match self {
+            Expr::Ident(id) => id.to_string(),
+            Expr::Deref { indir, expr } => "*".repeat(*indir) + &expr.val.as_ident_string(),
+            Expr::AddrOf(expr) => "&".to_owned() + &expr.val.as_ident_string(),
+            Expr::Array { ident, exprs } => ident.to_string() + &"[]".repeat(exprs.len()),
+            // TODO: hmm
+            Expr::Call { ident, args } => ident.to_string(),
+            // TODO: hmm
+            Expr::FieldAccess { lhs, rhs } => {
+                let lhs = lhs.val.as_ident_string();
+                let start = if lhs.starts_with('*') {
+                    let mut x = lhs.replace("*", "");
+                    x.push_str("->");
+                    x
+                } else {
+                    format!("{}.", lhs)
+                };
+                format!("{}{}", start, rhs.val.as_ident_string())
+            }
+            Expr::StructInit { .. }
+            | Expr::Urnary { .. }
+            | Expr::Binary { .. }
+            | Expr::Parens(..)
+            | Expr::ArrayInit { .. }
+            | Expr::Value(..) => todo!(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -176,6 +205,22 @@ impl Ty {
     }
 }
 
+impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Ty::Array { size, ty } => write!(f, "{}{}", ty.val, "[]".repeat(*size)),
+            Ty::Adt(n) => write!(f, "struct {}", n),
+            Ty::AddrOf(t) => write!(f, "&{}", t.val),
+            Ty::String => write!(f, "string"),
+            Ty::Int => write!(f, "int"),
+            Ty::Char => write!(f, "char"),
+            Ty::Float => write!(f, "float"),
+            Ty::Bool => write!(f, "bool"),
+            Ty::Void => write!(f, "void"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Param {
     pub ty: Type,
@@ -194,13 +239,7 @@ pub enum Stmt {
     /// Variable declaration `int x;`
     VarDecl(Vec<Var>),
     /// Assignment `x = 0;`
-    Assign { deref: usize, ident: String, expr: Expression },
-    /// Assignment of a struct field `x.y = 0;`
-    FieldAssign { deref: usize, access: Expression, expr: Expression },
-    /// Assingment to an array index `a[0] = 0;`
-    ///
-    /// Each `exprs` represents an access to a multi dimensional array.
-    ArrayAssign { deref: usize, ident: String, exprs: Vec<Expression> },
+    Assign { deref: usize, lval: Expression, rval: Expression },
     /// A call statement `call(arg1, arg2)`
     Call { ident: String, args: Vec<Expression> },
     /// If statement `if (expr) { stmts }`

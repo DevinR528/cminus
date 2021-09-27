@@ -266,9 +266,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
     fn visit_stmt(&mut self, stmt: &Statement) {
         match &stmt.val {
             Stmt::VarDecl(_) => {}
-            Stmt::Assign { deref, ident, expr } => {
+            Stmt::Assign { deref, lval, rval } => {
+                let ident = &lval.val.as_ident_string();
                 if let Some(global_ty) = self.tyck.global.get(ident) {
-                    if self.tyck.expr_ty.get(expr) != Some(global_ty) {
+                    if self.tyck.expr_ty.get(rval) != Some(global_ty) {
                         panic!("global type mismatch")
                     }
                 } else if let Some(var_ty) =
@@ -276,17 +277,15 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                         self.tyck.func_refs.get(name).and_then(|vars| vars.get(ident))
                     })
                 {
-                    if self.tyck.expr_ty.get(expr) != var_ty.dereference(*deref).as_ref() {
-                        println!("{:?}", expr);
-                        println!("{:?}", self.tyck.expr_ty.get(expr));
+                    if self.tyck.expr_ty.get(rval) != var_ty.dereference(*deref).as_ref() {
+                        println!("{:?}", rval);
+                        println!("{:?}", self.tyck.expr_ty.get(rval));
                         panic!("variable type mismatch {:?}", var_ty);
                     }
                 } else {
                     panic!("assign to undeclared variable")
                 }
             }
-            Stmt::ArrayAssign { deref, ident, exprs } => {}
-            Stmt::FieldAssign { deref, access, expr } => {}
             Stmt::Call { ident, args } => {}
             Stmt::If { cond, blk, els } => {}
             Stmt::While { cond, stmt } => {}
