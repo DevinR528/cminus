@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    fmt,
+};
 
 use pest::prec_climber::Operator;
 
@@ -7,15 +10,9 @@ use crate::{
         BinOp, Block, Decl, Expr, Expression, Field, Func, Param, Range, Statement, Stmt, Struct,
         Ty, Type, UnOp, Val, Value, Var, DUMMY,
     },
+    error::Error,
     visit::Visit,
 };
-
-#[derive(Debug)]
-crate struct Error {
-    span: Range,
-    msg: String,
-    help: String,
-}
 
 #[derive(Debug, Default)]
 crate struct VarInFunction {
@@ -38,8 +35,12 @@ impl VarInFunction {
     }
 }
 
-#[derive(Debug, Default)]
-crate struct TyCheckRes<'ast> {
+#[derive(Default)]
+crate struct TyCheckRes<'ast, 'input> {
+    /// The name of the file being checked.
+    crate name: &'input str,
+    /// The content of the file as a string.
+    crate input: &'input str,
     /// Global variables declared outside of functions.
     global: HashMap<String, Ty>,
     /// The name of the function currently in or `None` if global.
@@ -60,10 +61,40 @@ crate struct TyCheckRes<'ast> {
     /// A mapping of struct name to the fields of that struct.
     struct_fields: HashMap<String, Vec<Field>>,
     /// Errors collected during parsing and type checking.
-    errors: Vec<Error>,
+    errors: Vec<Error<'input>>,
+    /// Unrecoverable error.
+    bail: Option<Error<'input>>,
 }
 
-impl TyCheckRes<'_> {
+impl fmt::Debug for TyCheckRes<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TyCheckResult")
+            .field("global", &self.global)
+            .field("curr_fn", &self.curr_fn)
+            .field("func_refs", &self.func_refs)
+            .field("func_params", &self.func_params)
+            .field("expr_ty", &self.expr_ty)
+            .field("stmt_func", &self.stmt_func)
+            .field("struct_fields", &self.struct_fields)
+            .finish()
+    }
+}
+
+impl<'input> TyCheckRes<'_, 'input> {
+    crate fn new(input: &'input str, name: &'input str) -> Self {
+        Self { name, input, ..Self::default() }
+    }
+
+    crate fn report_errors(&self) -> Result<(), ()> {
+        if !self.errors.is_empty() {
+            for e in &self.errors {
+                eprintln!("{}", e)
+            }
+            return Err(());
+        }
+        Ok(())
+    }
+
     fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
         self.var_func
             .get(span)
@@ -73,18 +104,29 @@ impl TyCheckRes<'_> {
     }
 }
 
-impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
+impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
             self.curr_fn = Some(func.ident.clone());
             if self.var_func.insert(func.span, func.ident.clone()).is_some() {
-                panic!("function takes up same span as other function")
+                self.errors.push(Error::error_with_span(
+                    self,
+                    func.span,
+                    "function takes up same span as other function",
+                ));
             }
             if self.func_ret.insert(func.ident.clone(), func.ret.val.clone()).is_some() {
-                panic!("multiple function return types")
+                self.errors.push(Error::error_with_span(
+                    self,
+                    func.span,
+                    "multiple function return types",
+                ));
             }
         } else {
-            panic!("fn in fn error")
+            panic!(
+                "{}",
+                Error::error_with_span(self, func.span, "function defined within function")
+            )
         }
 
         crate::visit::walk_func(self, func);
@@ -95,7 +137,7 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
 
     fn visit_adt(&mut self, struc: &'ast Struct) {
         if self.struct_fields.insert(struc.ident.clone(), struc.fields.clone()).is_some() {
-            unreachable!("duplicate struct names")
+            self.errors.push(Error::error_with_span(self, struc.span, "duplicate struct names"));
         }
     }
 
@@ -108,17 +150,21 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                 .insert(var.ident.clone(), var.ty.val.clone())
                 .is_some()
             {
-                panic!("function with variable name error")
+                self.errors.push(Error::error_with_span(
+                    self,
+                    var.span,
+                    "function with variable name error",
+                ));
             }
         } else if self.global.insert(var.ident.clone(), var.ty.val.clone()).is_some() {
-            panic!("global variable name error")
+            self.errors.push(Error::error_with_span(self, var.span, "global variable name error"));
         }
 
         crate::visit::walk_var(self, var)
     }
 
     fn visit_params(&mut self, params: &[Param]) {
-        for Param { ident, ty, .. } in params {
+        for Param { ident, ty, span } in params {
             if let Some(fn_id) = self.curr_fn.clone() {
                 if self
                     .func_refs
@@ -127,7 +173,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     .insert(ident.clone(), ty.val.clone())
                     .is_some()
                 {
-                    panic!("function with variable name error")
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        *span,
+                        "function with variable name error",
+                    ));
                 }
 
                 // Add and check function parameters
@@ -137,7 +187,7 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     .push((ident.clone(), ty.val.clone()));
 
                 if self.func_params.get(&fn_id).map_or(0, |p| p.len()) > params.len() {
-                    panic!("function with param error")
+                    unreachable!("to many parameters parsed ICE");
                 }
             }
         }
@@ -147,7 +197,7 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
         crate::visit::walk_stmt(self, stmt);
 
         // check the statement after walking incase there were var declarations
-        let mut check = StmtCheck { tyck: self };
+        let mut check = StmtCheck { tcxt: self };
         check.visit_stmt(stmt);
     }
 
@@ -159,7 +209,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("no type found for ident expr {:?}", self)
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        "no type found for ident expr",
+                    ));
                 }
             }
             Expr::Array { ident, exprs } => {
@@ -168,7 +222,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("no type found for array expr")
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        "no type found for array expr",
+                    ));
                 }
             }
             Expr::Urnary { op, expr } => {
@@ -185,7 +243,7 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                 let ty = self.expr_ty.get(&**inner_expr).expect("type for address of");
                 let ty = ty.derfreference(*indir);
 
-                check_dereference(inner_expr, *indir, self);
+                check_dereference(self, inner_expr, *indir);
 
                 self.expr_ty.insert(expr, ty);
             }
@@ -208,7 +266,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty)
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        &format!("no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
+                    ));
                 }
             }
             Expr::Parens(inner_expr) => {
@@ -218,7 +280,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("no type found for paren expr")
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        "no type found for paren expr",
+                    ));
                 }
             }
             Expr::Call { ident, args } => {
@@ -227,7 +293,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("unknown function name")
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        "unknown function name",
+                    ));
                 }
             }
             Expr::Value(val) => {
@@ -244,7 +314,11 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     )
                     .is_some()
                 {
-                    panic!("duplicate value expr {:?}\n{:?}", self.expr_ty, expr)
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        &format!("duplicate value expr {:?}\n{:?}", self.expr_ty, expr),
+                    ));
                 }
             }
             Expr::StructInit { name, fields } => {
@@ -287,16 +361,16 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
     }
 }
 
-fn check_dereference(expr: &Expression, indirection: usize, tyck: &TyCheckRes<'_>) {
+fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression, indirection: usize) {
     match &expr.val {
         Expr::Ident(id) => {
-            if let Some(ty) = tyck.type_of_ident(id, expr.span) {
-                println!("{:?} == {:?}", ty, tyck.expr_ty.get(expr))
+            if let Some(ty) = tcxt.type_of_ident(id, expr.span) {
+                println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
-                unreachable!("undeclared var")
+                tcxt.errors.push(Error::error_with_span(tcxt, expr.span, "undeclared var"));
             }
         }
-        Expr::Deref { indir, expr } => check_dereference(expr, *indir, tyck),
+        Expr::Deref { indir, expr } => check_dereference(tcxt, expr, *indir),
         Expr::AddrOf(expr) => todo!(),
         Expr::Array { ident, exprs } => todo!(),
         Expr::Urnary { op, expr } => todo!(),
@@ -311,11 +385,11 @@ fn check_dereference(expr: &Expression, indirection: usize, tyck: &TyCheckRes<'_
 }
 
 #[derive(Debug)]
-crate struct StmtCheck<'v, 'ast> {
-    tyck: &'v TyCheckRes<'ast>,
+crate struct StmtCheck<'v, 'ast, 'input> {
+    tcxt: &'v mut TyCheckRes<'ast, 'input>,
 }
 
-impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
+impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
     fn visit_stmt(&mut self, stmt: &Statement) {
         match &stmt.val {
             Stmt::VarDecl(_) => {}
@@ -323,21 +397,25 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
                 // TODO: this need some tweaking (the ident is not always valid)
                 let ident = &lval.val.as_ident_string();
                 // Check global scope
-                if let Some(global_ty) = self.tyck.global.get(ident) {
-                    if self.tyck.expr_ty.get(rval) != Some(global_ty) {
+                if let Some(global_ty) = self.tcxt.global.get(ident) {
+                    if self.tcxt.expr_ty.get(rval) != Some(global_ty) {
                         panic!("global type mismatch")
                     }
                 // Check function scope based on current span
                 } else if let Some(var_ty) =
-                    self.tyck.var_func.get(stmt.span).and_then(|name| {
-                        self.tyck.func_refs.get(name).and_then(|vars| vars.get(ident))
+                    self.tcxt.var_func.get(stmt.span).and_then(|name| {
+                        self.tcxt.func_refs.get(name).and_then(|vars| vars.get(ident))
                     })
                 {
                     println!("{:?} {}", var_ty, deref);
-                    if self.tyck.expr_ty.get(rval) != var_ty.reference(*deref).as_ref() {
+                    if self.tcxt.expr_ty.get(rval) != var_ty.reference(*deref).as_ref() {
                         println!("{:?}", rval);
-                        println!("{:?}", self.tyck.expr_ty.get(rval));
-                        panic!("variable type mismatch {:?}", self);
+                        println!("{:?}", self.tcxt.expr_ty.get(rval));
+                        self.tcxt.errors.push(Error::error_with_span(
+                            self.tcxt,
+                            stmt.span,
+                            "variable type mismatch",
+                        ));
                     }
                 // TODO: struct declarations
                 } else {

@@ -14,6 +14,7 @@ use pest::Parser as _;
 use pest_derive::Parser;
 
 mod ast;
+mod error;
 mod precedence;
 mod typeck;
 mod visit;
@@ -63,10 +64,12 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     println!("{:?}", items);
 
-    let mut tyck = typeck::TyCheckRes::default();
-    tyck.visit_prog(&items);
+    let mut tyck = typeck::TyCheckRes::new(&prog, path);
 
-    println!("{:?}", tyck);
+    tyck.visit_prog(&items);
+    tyck.report_errors().unwrap();
+
+    println!("\n\n{:?}", tyck);
 
     // let mut dot = visit::DotWalker::new();
     // dot.visit_prog(&items);
