@@ -95,6 +95,7 @@ impl<'input> TyCheckRes<'_, 'input> {
         Ok(())
     }
 
+    // TODO: struct declarations
     fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
         self.var_func
             .get(span)
@@ -229,12 +230,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     ));
                 }
             }
-            Expr::Urnary { op, expr } => {
-                self.visit_expr(expr);
-                let ty = self.expr_ty.get(&**expr);
+            Expr::Urnary { op, expr: inner_expr } => {
+                self.visit_expr(inner_expr);
+                let ty = self.expr_ty.get(&**inner_expr);
                 match op {
-                    UnOp::Not => todo!(),
-                    // UnOp::Inc => todo!(),
+                    UnOp::Not => {
+                        if let Some(Ty::Bool) = ty {
+                            self.expr_ty.insert(expr, Ty::Bool);
+                        } else {
+                            self.errors.push(Error::error_with_span(
+                                self,
+                                expr.span,
+                                "cannot negate non bool type",
+                            ));
+                        }
+                    } // UnOp::Inc => todo!(),
                 }
             }
             Expr::Deref { indir, expr: inner_expr } => {
@@ -394,33 +404,48 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
         match &stmt.val {
             Stmt::VarDecl(_) => {}
             Stmt::Assign { deref, lval, rval } => {
-                // TODO: this need some tweaking (the ident is not always valid)
-                let ident = &lval.val.as_ident_string();
-                // Check global scope
-                if let Some(global_ty) = self.tcxt.global.get(ident) {
-                    if self.tcxt.expr_ty.get(rval) != Some(global_ty) {
-                        panic!("global type mismatch")
+                let lval_ty = match &lval.val {
+                    Expr::Ident(id) => self.tcxt.type_of_ident(id, stmt.span),
+                    Expr::Deref { indir, expr } => {
+                        // TODO: may need to resolve the deref'ed type
+                        self.tcxt
+                            // TODO: this need some tweaking (the ident is not always valid)
+                            // (as_ident_string)
+                            .type_of_ident(&expr.val.as_ident_string(), stmt.span)
+                            .map(|t| t.derfreference(*indir))
                     }
-                // Check function scope based on current span
-                } else if let Some(var_ty) =
-                    self.tcxt.var_func.get(stmt.span).and_then(|name| {
-                        self.tcxt.func_refs.get(name).and_then(|vars| vars.get(ident))
-                    })
-                {
-                    println!("{:?} {}", var_ty, deref);
-                    if self.tcxt.expr_ty.get(rval) != var_ty.reference(*deref).as_ref() {
-                        println!("{:?}", rval);
-                        println!("{:?}", self.tcxt.expr_ty.get(rval));
-                        self.tcxt.errors.push(Error::error_with_span(
-                            self.tcxt,
-                            stmt.span,
-                            "variable type mismatch",
-                        ));
+                    Expr::Array { ident, exprs } => todo!(),
+                    Expr::FieldAccess { lhs, rhs } => todo!(),
+                    Expr::AddrOf(_)
+                    // invalid lval
+                    | Expr::Urnary { .. }
+                    | Expr::Binary { .. }
+                    | Expr::Parens(_)
+                    | Expr::Call { .. }
+                    | Expr::StructInit { .. }
+                    | Expr::ArrayInit { .. }
+                    | Expr::Value(_) => {
+                        panic!(
+                            "{}",
+                            Error::error_with_span(self.tcxt, stmt.span, "invalid lValue",)
+                        )
                     }
-                // TODO: struct declarations
-                } else {
-                    println!("{:?}", self);
-                    panic!("assign to undeclared variable {}", lval.val.as_ident_string())
+                };
+
+                println!("{:?} {}", lval_ty, deref);
+                let rval_ty = self.tcxt.expr_ty.get(rval);
+                if rval_ty != lval_ty.as_ref() {
+                    println!("{:?}", rval);
+                    println!("{:?}", self.tcxt.expr_ty.get(rval));
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        &format!(
+                            "assign to expression of wrong type\nfound {} expected {}",
+                            lval_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            rval_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                        ),
+                    ));
                 }
             }
             Stmt::Call { ident, args } => {}
@@ -465,24 +490,6 @@ fn fold_ty(lhs: Option<&Ty>, rhs: Option<&Ty>, op: &BinOp) -> Option<Ty> {
         (Ty::Adt(_), _) => todo!(""),
         // TODO: we should NOT get here (I think...)??
         (Ty::Ptr(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
-        (Ty::Ref(_), t) => todo!("{:?} {:?}", lhs?, rhs?),
-    }
-}
-
-fn after_op(ty: &Ty, op: BinOp) -> Option<Ty> {
-    match op {
-        BinOp::Add => todo!(),
-        BinOp::Sub => todo!(),
-        BinOp::Mul => todo!(),
-        BinOp::Div => todo!(),
-        BinOp::Rem => todo!(),
-        BinOp::And => todo!(),
-        BinOp::Or => todo!(),
-        BinOp::Eq => todo!(),
-        BinOp::Lt => todo!(),
-        BinOp::Le => todo!(),
-        BinOp::Ne => todo!(),
-        BinOp::Ge => todo!(),
-        BinOp::Gt => todo!(),
+        (r @ Ty::Ref(_), t) => fold_ty(r.resolve().as_ref(), Some(t), op),
     }
 }

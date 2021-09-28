@@ -208,16 +208,30 @@ impl Ty {
     crate fn derfreference(&self, mut indirection: usize) -> Self {
         let mut new = self.clone();
         while (indirection > 0) {
+            new = Ty::Ref(box new.into_spanned(DUMMY));
+            indirection -= 1;
+        }
+        new
+    }
+
+    crate fn resolve(&self) -> Option<Self> {
+        let mut new = self.clone();
+        let mut deref = 0;
+        while let Ty::Ref(t) = new {
+            deref += 1;
+            new = t.val;
+        }
+        while (deref > 0) {
             new = match new {
                 // peel off indirection
                 Ty::Ptr(ty) => ty.val,
                 Ty::Array { size, ty } => todo!("first element of array"),
                 Ty::String => todo!("char??"),
-                ty => Ty::Ref(box ty.into_spanned(DUMMY)),
+                ty => return None,
             };
-            indirection -= 1;
+            deref -= 1;
         }
-        new
+        Some(new)
     }
 }
 

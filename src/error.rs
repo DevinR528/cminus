@@ -34,11 +34,11 @@ impl fmt::Display for Error<'_> {
 
 /// Returns the `(row, column) of the span based on `input`.
 fn calc_line_col(span: Range, input: &str) -> (usize, usize) {
-    let mut col = 0;
-    let mut row = 0;
+    let mut col = 1;
+    let mut row = 1;
     for c in input.chars().take(span.start) {
         if c == '\n' {
-            col = 0;
+            col = 1;
             row += 1;
             continue;
         }
