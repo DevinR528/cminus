@@ -1,11 +1,9 @@
-use std::ops::Range;
-
 use pest::iterators::{Pair, Pairs};
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Declaration, Expr, Expression, Field, FieldInit, Func, Param,
-        Statement, Stmt, Struct, Ty, Type, UnOp, Val, Value, Var,
+        BinOp, Block, Decl, Declaration, Expr, Expression, Field, FieldInit, Func, Param, Range,
+        Statement, Stmt, Struct, Ty, Type, UnOp, Val, Var,
     },
     precedence::{Assoc, Operator, PrecClimber},
     Rule,
@@ -21,10 +19,10 @@ crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
                 }
                 Rule::var_decl => parse_var_decl(decl.into_inner())
                     .into_iter()
-                    .map(|var| Decl::Var(var).into_spanned(span.clone()))
+                    .map(|var| Decl::Var(var).into_spanned(span))
                     .collect(),
                 Rule::adt_decl => {
-                    vec![Decl::Adt(parse_struct(decl.into_inner(), span.clone())).into_spanned(span)]
+                    vec![Decl::Adt(parse_struct(decl.into_inner(), span)).into_spanned(span)]
                 }
                 _ => unreachable!("malformed declaration"),
             }
@@ -32,7 +30,7 @@ crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
         .collect()
 }
 
-fn parse_struct(struct_: Pairs<Rule>, span: Range<usize>) -> Struct {
+fn parse_struct(struct_: Pairs<Rule>, span: Range) -> Struct {
     match struct_.map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         [(Rule::STRUCT, _), (Rule::ident, ident), (Rule::LBR, _), fields @ .., (Rule::RBR, _), (Rule::SC, _)] => {
             Struct {
@@ -69,15 +67,10 @@ fn parse_struct_field_decl(param: Pair<Rule>) -> Field {
             match var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
             {
                 [(Rule::addrof, addr), (Rule::ident, id), array_parts @ ..] => {
-                    let inner_span = addr.as_span().start()..id.as_span().end();
+                    let inner_span = (addr.as_span().start()..id.as_span().end()).into();
                     let ty = {
                         let indirection = addr.as_str().matches('*').count();
-                        if indirection > 0 {
-                            // TODO: amount of indir
-                            Ty::AddrOf(box ty.clone()).into_spanned(inner_span.clone())
-                        } else {
-                            ty
-                        }
+                        build_recursive_pointer_ty(indirection, ty, inner_span)
                     };
                     if !array_parts.is_empty() {
                         Field {
@@ -140,7 +133,7 @@ fn parse_func(func: Pairs<Rule>) -> Func {
                     ),
                     _ => unreachable!("malformed statement"),
                 }).collect(),
-                span: ty.as_span().start()..rbr.as_span().end(),
+                span: (ty.as_span().start()..rbr.as_span().end()).into(),
             }
         }
         // int foo() { stmts }
@@ -160,14 +153,14 @@ fn parse_func(func: Pairs<Rule>) -> Func {
                     ).into_spanned(to_span(s)),
                     _ => unreachable!("malformed statement"),
                 }).collect(),
-                span: ty.as_span().start()..rbr.as_span().end(),
+                span: (ty.as_span().start()..rbr.as_span().end()).into(),
             }
         }
         _ => unreachable!("malformed function"),
     }
 }
 
-fn parse_stmt(mut stmt: Pair<Rule>) -> Statement {
+fn parse_stmt(stmt: Pair<Rule>) -> Statement {
     let stmt = stmt.into_inner().next().unwrap();
     let span = to_span(&stmt);
     #[rustfmt::skip]
@@ -345,24 +338,17 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
                 _ => unreachable!("malformed addrof type {}", ty.to_json()),
             }
             .into_spanned(to_span(ty));
-            // TODO: amount of indir
-            if indirection > 0 {
-                Ty::AddrOf(box t)
-            } else {
-                t.val
-            }
+            build_recursive_pointer_ty(indirection, t, span).val
         }
-        [(Rule::VOID, _), (Rule::addrof, addr)] if addr.as_str().is_empty() => Ty::Void,
         [(Rule::STRUCT, s), (Rule::ident, ident), (Rule::addrof, addr)] => {
             let indirection = addr.as_str().matches('*').count();
-            if indirection > 0 {
-                Ty::AddrOf(
-                    box Ty::Adt(ident.as_str().to_string())
-                        .into_spanned(s.as_span().start()..ident.as_span().end()),
-                )
-            } else {
+            build_recursive_pointer_ty(
+                indirection,
                 Ty::Adt(ident.as_str().to_string())
-            }
+                    .into_spanned(s.as_span().start()..addr.as_span().end()),
+                (s.as_span().start()..addr.as_span().end()).into(),
+            )
+            .val
         }
         _ => unreachable!("malformed type {}", ty.to_json()),
     }
@@ -380,15 +366,65 @@ fn parse_block(blk: Pair<Rule>) -> Block {
     }
 }
 
-fn parse_lvalue(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range<usize>) -> Statement {
+fn parse_lvalue(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range) -> Statement {
     let deref = var.as_str().matches('*').count();
-    Stmt::Assign { deref, lval: parse_expr(var), rval: parse_expr(expr.clone()) }.into_spanned(span)
+    let lval = parse_expr(var);
+    valid_lval(&lval.val).unwrap();
+    Stmt::Assign { deref, lval, rval: parse_expr(expr) }.into_spanned(span)
+}
+
+fn valid_lval(ex: &Expr) -> Result<(), String> {
+    let mut stack = vec![ex];
+
+    // validate lValue
+    while let Some(val) = stack.pop() {
+        match val {
+            Expr::Parens(expr) | Expr::Deref { expr, .. } | Expr::AddrOf(expr) => {
+                stack.push(&expr.val)
+            }
+            Expr::FieldAccess { lhs, rhs } => {
+                stack.push(&lhs.val);
+                stack.push(&rhs.val);
+            }
+            // Valid expressions that are not recursive
+            Expr::Ident(..) | Expr::Array { .. } => {}
+            Expr::Call { .. } => {
+                return Err("no call expression".to_owned());
+            }
+            Expr::Urnary { .. } => {
+                return Err("no urnary expression".to_owned());
+            }
+            Expr::Binary { .. } => {
+                return Err("no binary expression".to_owned());
+            }
+            Expr::StructInit { .. } => {
+                return Err("no struct init".to_owned());
+            }
+            Expr::ArrayInit { .. } => {
+                return Err("no struct init".to_owned());
+            }
+            Expr::Value(_) => {
+                return Err("no values".to_owned());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> Type {
     if let Some(size) = dims.next() {
-        let span = base_ty.span.clone();
+        let span = base_ty.span;
         Ty::Array { size, ty: box build_recursive_ty(dims, base_ty) }.into_spanned(span)
+    } else {
+        base_ty
+    }
+}
+
+fn build_recursive_pointer_ty(mut indir: usize, base_ty: Type, outer_span: Range) -> Type {
+    if indir > 0 {
+        let span = base_ty.span;
+        Ty::Ptr(box build_recursive_pointer_ty(indir - 1, base_ty, outer_span))
+            .into_spanned(outer_span)
     } else {
         base_ty
     }
@@ -409,15 +445,10 @@ fn parse_var_decl(var: Pairs<Rule>) -> Vec<Var> {
                     .as_slice()
                 {
                     [(Rule::addrof, addr), (Rule::ident, id), array_parts @ ..] => {
-                        let inner_span = addr.as_span().start()..id.as_span().end();
+                        let inner_span = (addr.as_span().start()..id.as_span().end()).into();
                         let ty = {
                             let indirection = addr.as_str().matches('*').count();
-                            if indirection > 0 {
-                                // TODO: amount of indir
-                                Ty::AddrOf(box ty.clone()).into_spanned(inner_span.clone())
-                            } else {
-                                ty.clone()
-                            }
+                            build_recursive_pointer_ty(indirection, ty.clone(), inner_span)
                         };
                         if !array_parts.is_empty() {
                             Var {
@@ -444,13 +475,10 @@ fn parse_var_decl(var: Pairs<Rule>) -> Vec<Var> {
 
             vec![parse_var_array(var_name)]
                 .into_iter()
-                .chain(names.iter().filter_map(|(r, n)| {
-                    // TODO: this is an error
-                    if matches!(r, Rule::var_name) {
-                        Some(parse_var_array(n))
-                    } else {
-                        None
-                    }
+                .chain(names.iter().filter_map(|(r, n)| match r {
+                    Rule::var_name => Some(parse_var_array(n)),
+                    Rule::CM => None,
+                    _ => unreachable!("malformed variable declaration"),
                 }))
                 .collect()
         }
@@ -458,7 +486,7 @@ fn parse_var_decl(var: Pairs<Rule>) -> Vec<Var> {
     }
 }
 
-fn parse_expr(mut expr: Pair<Rule>) -> Expression {
+fn parse_expr(expr: Pair<Rule>) -> Expression {
     // println!("{}", expr.to_json());
     let climber = PrecClimber::new(vec![
         // &&
@@ -506,7 +534,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
             Rule::LE => Expr::Binary { op: BinOp::Le, lhs: box lhs, rhs: box rhs },
             Rule::EQ => Expr::Binary { op: BinOp::Eq, lhs: box lhs, rhs: box rhs },
             Rule::NE => Expr::Binary { op: BinOp::Ne, lhs: box lhs, rhs: box rhs },
-            Rule::AND => Expr::Binary { op: BinOp::Add, lhs: box lhs, rhs: box rhs },
+            Rule::AND => Expr::Binary { op: BinOp::And, lhs: box lhs, rhs: box rhs },
             Rule::OR => Expr::Binary { op: BinOp::Or, lhs: box lhs, rhs: box rhs },
             _ => unreachable!(),
         };
@@ -591,7 +619,15 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                         Rule::decimal => Expr::Value(
                             Val::Float(konst.as_str().parse().unwrap()).into_spanned(inner_span),
                         ),
-                        Rule::charstr => Expr::Value(
+                        Rule::charstr => {
+                            let ch = konst.as_str().replace('\'', "").chars().collect::<Vec<_>>();
+                            if let [c] = ch.as_slice() {
+                                Expr::Value(Val::Char(*c).into_spanned(inner_span))
+                            } else {
+                                unreachable!("multiple char char is not allowed")
+                            }
+                        }
+                        Rule::string => Expr::Value(
                             Val::Str(konst.as_str().to_string()).into_spanned(inner_span),
                         ),
                         r => unreachable!("malformed const expression {:?}", r),
@@ -643,13 +679,10 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                         name: name.as_str().to_string(),
                         fields: fields
                             .iter()
-                            .filter_map(|(r, p)| {
-                                // TODO: this is an error
-                                if matches!(r, Rule::field_expr) {
-                                    Some(parse_field_init(p.clone()))
-                                } else {
-                                    None
-                                }
+                            .filter_map(|(r, p)| match r {
+                                Rule::field_expr => Some(parse_field_init(p.clone())),
+                                Rule::CM => None,
+                                _ => unreachable!("malformed struct initializer"),
                             })
                             .collect(),
                     }
@@ -679,63 +712,23 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
     }
 }
 
-fn parse_field_access(access: Pair<Rule>) -> Expr {
-    let ac_span = to_span(&access);
-    match access.as_rule() {
-        Rule::expr => {
-            let ex = parse_expr(access);
-
-            let mut stack = vec![];
-            if let Expr::FieldAccess { lhs, rhs } = &ex.val {
-                stack.push(lhs.val.clone());
-                stack.push(rhs.val.clone());
-            }
-
-            // validate lValue
-            while let Some(val) = stack.pop() {
-                match val {
-                    Expr::Parens(..)
-                    | Expr::Ident(..)
-                    | Expr::Deref { .. }
-                    | Expr::AddrOf(..)
-                    | Expr::Call { .. }
-                    | Expr::Array { .. } => {}
-                    Expr::FieldAccess { lhs, rhs } => {
-                        stack.push(lhs.val.clone());
-                        stack.push(rhs.val.clone());
-                    }
-                    Expr::Urnary { op, expr } => unreachable!("no urnary expression"),
-                    Expr::Binary { op, lhs, rhs } => unreachable!("no binary expression"),
-                    Expr::StructInit { name, fields } => unreachable!("no struct init"),
-                    Expr::ArrayInit { items } => unreachable!("no struct init"),
-                    Expr::Value(_) => unreachable!("no values"),
-                }
-            }
-            ex.val
-        }
-        _ => {
-            unreachable!("malformed field access {}", access.to_json())
-        }
-    }
-}
-
 fn parse_field_init(field: Pair<Rule>) -> FieldInit {
     match field.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         [(Rule::ident, ident), (Rule::COLON, _), (Rule::expr, expr)] => FieldInit {
             ident: ident.as_str().to_string(),
             init: parse_expr(expr.clone()),
-            span: ident.as_span().start()..expr.as_span().end(),
+            span: (ident.as_span().start()..expr.as_span().end()).into(),
         },
         [(Rule::ident, ident), (Rule::COLON, _), (Rule::arr_init, expr)] => FieldInit {
             ident: ident.as_str().to_string(),
             init: parse_expr(expr.clone()),
-            span: ident.as_span().start()..expr.as_span().end(),
+            span: (ident.as_span().start()..expr.as_span().end()).into(),
         },
         _ => unreachable!("malformed struct fields {}", field.to_json()),
     }
 }
 
-fn to_span(p: &Pair<Rule>) -> Range<usize> {
+fn to_span(p: &Pair<Rule>) -> Range {
     let sp = p.as_span();
-    sp.start()..sp.end()
+    (sp.start()..sp.end()).into()
 }

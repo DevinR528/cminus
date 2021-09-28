@@ -193,17 +193,19 @@ crate struct DotWalker {
     prev_id: usize,
 }
 
+type Res = std::fmt::Result;
+
 impl DotWalker {
     crate fn new() -> Self {
         Self { buf: String::from("digraph ast {\n"), ..DotWalker::default() }
     }
 
-    fn walk_deeper<P: Fn(&mut Self), F: Fn(&mut Self)>(&mut self, mut pre: P, mut calls: F) {
+    fn walk_deeper<P: Fn(&mut Self) -> Res, F: Fn(&mut Self) -> Res>(&mut self, pre: P, calls: F) {
         self.node_id += 1;
-        pre(self);
+        pre(self).unwrap();
         let tmp = self.prev_id;
         self.prev_id = self.node_id;
-        calls(self);
+        calls(self).unwrap();
         self.prev_id = tmp;
     }
 }
@@ -245,13 +247,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                         .map(|p| format!("{} {}", p.ty.val, p.ident))
                         .collect::<Vec<_>>()
                         .join(", ")
-                );
-                writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id);
+                )?;
+                writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id)
             },
             |this| {
                 for stmt in &func.stmts {
                     this.visit_stmt(stmt);
                 }
+                Ok(())
             },
         );
     }
@@ -264,8 +267,8 @@ impl<'ast> Visit<'ast> for DotWalker {
                     this.buf,
                     "{}[label = \"struct {}\", shape = ellipse]",
                     this.node_id, ident
-                );
-                writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id);
+                )?;
+                writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id)
             },
             |this| {
                 for Field { ident, ty, .. } in fields {
@@ -274,9 +277,10 @@ impl<'ast> Visit<'ast> for DotWalker {
                         this.buf,
                         "{}[label = \"field {} {}\", shape = ellipse]",
                         this.node_id, ty.val, ident
-                    );
-                    writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id);
+                    )?;
+                    writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id)?;
                 }
+                Ok(())
             },
         );
     }
@@ -314,10 +318,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             "{}[label = \"assign {}\", shape = ellipse]",
                             this.node_id,
                             lval.val.as_ident_string(),
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(rval),
+                    |this| {
+                        this.visit_expr(rval);
+                        Ok(())
+                    },
                 );
             }
             Stmt::Call { ident, args } => {
@@ -327,13 +334,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"call {}\", shape = ellipse]",
                             this.node_id, ident
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         for expr in args {
                             this.visit_expr(expr);
                         }
+                        Ok(())
                     },
                 );
             }
@@ -344,8 +352,8 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"if call\", shape = ellipse]",
                             this.node_id
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         this.visit_expr(cond);
@@ -355,13 +363,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                                     &mut me.buf,
                                     "{}[label = \"block\", shape = ellipse]",
                                     me.node_id
-                                );
-                                writeln!(&mut me.buf, "{} -> {}", me.prev_id, me.node_id);
+                                )?;
+                                writeln!(&mut me.buf, "{} -> {}", me.prev_id, me.node_id)
                             },
                             |me| {
                                 for stmt in &blk.stmts {
                                     me.visit_stmt(stmt);
                                 }
+                                Ok(())
                             },
                         );
                         if let Some(Block { stmts, .. }) = els {
@@ -371,16 +380,18 @@ impl<'ast> Visit<'ast> for DotWalker {
                                         &mut me.buf,
                                         "{}[label = \"else block\", shape = ellipse]",
                                         me.node_id
-                                    );
-                                    writeln!(&mut me.buf, "{} -> {}", me.prev_id, me.node_id);
+                                    )?;
+                                    writeln!(&mut me.buf, "{} -> {}", me.prev_id, me.node_id)
                                 },
                                 |me| {
                                     for stmt in stmts {
                                         me.visit_stmt(stmt);
                                     }
+                                    Ok(())
                                 },
                             );
                         }
+                        Ok(())
                     },
                 );
             }
@@ -391,12 +402,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"while loop\", shape = ellipse]",
                             this.node_id
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         this.visit_expr(cond);
                         this.visit_stmt(stmt);
+                        Ok(())
                     },
                 );
             }
@@ -416,10 +428,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"write call\", shape = ellipse]",
                             this.node_id
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        this.visit_expr(expr);
+                        Ok(())
+                    },
                 );
             }
             Stmt::Ret(expr) => {
@@ -429,10 +444,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"return\", shape = ellipse]",
                             this.node_id
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        this.visit_expr(expr);
+                        Ok(())
+                    },
                 );
             }
             Stmt::Exit => {
@@ -447,13 +465,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"block\", shape = ellipse]",
                             this.node_id
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         for stmt in stmts {
                             this.visit_stmt(stmt);
                         }
+                        Ok(())
                     },
                 );
             }
@@ -480,13 +499,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                             this.node_id,
                             ident,
                             "[]".repeat(exprs.len())
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         for expr in exprs {
                             this.visit_expr(expr);
                         }
+                        Ok(())
                     },
                 );
             }
@@ -497,10 +517,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"expr UrnOp {:?}\", shape = ellipse]",
                             this.node_id, op
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        this.visit_expr(expr);
+                        Ok(())
+                    },
                 );
             }
             Expr::Deref { indir, expr } => {
@@ -510,10 +533,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"expr deref of {} times\", shape = ellipse]",
                             this.node_id, indir,
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        this.visit_expr(expr);
+                        Ok(())
+                    },
                 );
             }
             Expr::AddrOf(expr) => {
@@ -523,10 +549,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"expr address of\", shape = ellipse]",
                             this.node_id,
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        this.visit_expr(expr);
+                        Ok(())
+                    },
                 );
             }
             Expr::Binary { op, lhs, rhs } => {
@@ -536,12 +565,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"expr BinOp {:?}\", shape = ellipse]",
                             this.node_id, op
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         this.visit_expr(lhs);
                         this.visit_expr(rhs);
+                        Ok(())
                     },
                 );
             }
@@ -552,10 +582,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"parenthesis\", shape = ellipse]",
                             this.node_id,
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
-                    |this| this.visit_expr(expr),
+                    |this| {
+                        this.visit_expr(expr);
+                        Ok(())
+                    },
                 );
             }
             Expr::StructInit { name, fields } => {
@@ -565,13 +598,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"struct initializer {}\", shape = ellipse]",
                             this.node_id, name,
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         for FieldInit { ident, init, span } in fields {
                             this.visit_expr(init);
                         }
+                        Ok(())
                     },
                 );
             }
@@ -582,13 +616,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"array initializer\", shape = ellipse]",
                             this.node_id,
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         for expr in items {
                             this.visit_expr(expr);
                         }
+                        Ok(())
                     },
                 );
             }
@@ -599,12 +634,13 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"expr field access\", shape = ellipse]",
                             this.node_id
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         this.visit_expr(lhs);
                         this.visit_expr(rhs);
+                        Ok(())
                     },
                 );
             }
@@ -615,13 +651,14 @@ impl<'ast> Visit<'ast> for DotWalker {
                             &mut this.buf,
                             "{}[label = \"call {}\", shape = ellipse]",
                             this.node_id, ident
-                        );
-                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id);
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
                     },
                     |this| {
                         for expr in args {
                             this.visit_expr(expr);
                         }
+                        Ok(())
                     },
                 );
             }

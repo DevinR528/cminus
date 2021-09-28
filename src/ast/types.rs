@@ -1,4 +1,4 @@
-use std::{fmt, hash, ops::Range};
+use std::{fmt, hash, ops};
 
 #[derive(Clone, Debug)]
 pub enum Val {
@@ -48,7 +48,7 @@ impl fmt::Display for Value {
 }
 
 impl Val {
-    crate fn into_spanned(self, span: Range<usize>) -> Value {
+    crate fn into_spanned(self, span: Range) -> Value {
         Spanned { val: self, span }
     }
 }
@@ -56,7 +56,7 @@ impl Val {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnOp {
     Not,
-    Inc,
+    // Inc,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -93,7 +93,7 @@ pub enum BinOp {
 pub struct FieldInit {
     pub ident: String,
     pub init: Expression,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -127,8 +127,8 @@ pub enum Expr {
 }
 
 impl Expr {
-    crate fn into_spanned(self, span: Range<usize>) -> Expression {
-        Spanned { val: self, span }
+    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Expression {
+        Spanned { val: self, span: span.into() }
     }
 
     crate fn deref_count(&self) -> usize {
@@ -142,9 +142,9 @@ impl Expr {
     crate fn as_ident_string(&self) -> String {
         match self {
             Expr::Ident(id) => id.to_string(),
-            Expr::Deref { indir, expr } => "*".repeat(*indir) + &expr.val.as_ident_string(),
-            Expr::AddrOf(expr) => "&".to_owned() + &expr.val.as_ident_string(),
-            Expr::Array { ident, exprs } => ident.to_string() + &"[]".repeat(exprs.len()),
+            Expr::Deref { indir, expr } => expr.val.as_ident_string(),
+            Expr::AddrOf(expr) => expr.val.as_ident_string(),
+            Expr::Array { ident, exprs } => ident.to_string(),
             // TODO: hmm
             Expr::Call { ident, args } => ident.to_string(),
             // TODO: hmm
@@ -173,7 +173,8 @@ impl Expr {
 pub enum Ty {
     Array { size: usize, ty: Box<Type> },
     Adt(String),
-    AddrOf(Box<Type>),
+    Ptr(Box<Type>),
+    Ref(Box<Type>),
     String,
     Int,
     Char,
@@ -183,16 +184,16 @@ pub enum Ty {
 }
 
 impl Ty {
-    crate fn into_spanned(self, span: Range<usize>) -> Type {
-        Spanned { val: self, span }
+    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Type {
+        Spanned { val: self, span: span.into() }
     }
 
-    crate fn dereference(&self, mut deref: usize) -> Option<Self> {
+    crate fn reference(&self, mut deref: usize) -> Option<Self> {
         let mut indirection = Some(self);
         let mut stop = false;
         while !stop {
             match indirection {
-                Some(Ty::AddrOf(next)) if deref > 0 => {
+                Some(Ty::Ptr(next)) if deref > 0 => {
                     deref -= 1;
                     indirection = Some(&next.val);
                 }
@@ -203,6 +204,21 @@ impl Ty {
         }
         indirection.cloned()
     }
+
+    crate fn derfreference(&self, mut indirection: usize) -> Self {
+        let mut new = self.clone();
+        while (indirection > 0) {
+            new = match new {
+                // peel off indirection
+                Ty::Ptr(ty) => ty.val,
+                Ty::Array { size, ty } => todo!("first element of array"),
+                Ty::String => todo!("char??"),
+                ty => Ty::Ref(box ty.into_spanned(DUMMY)),
+            };
+            indirection -= 1;
+        }
+        new
+    }
 }
 
 impl fmt::Display for Ty {
@@ -210,7 +226,8 @@ impl fmt::Display for Ty {
         match self {
             Ty::Array { size, ty } => write!(f, "{}[{}]", ty.val, size),
             Ty::Adt(n) => write!(f, "struct {}", n),
-            Ty::AddrOf(t) => write!(f, "&{}", t.val),
+            Ty::Ptr(t) => write!(f, "&{}", t.val),
+            Ty::Ref(t) => write!(f, "*{}", t.val),
             Ty::String => write!(f, "string"),
             Ty::Int => write!(f, "int"),
             Ty::Char => write!(f, "char"),
@@ -225,20 +242,20 @@ impl fmt::Display for Ty {
 pub struct Param {
     pub ty: Type,
     pub ident: String,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Statement>,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
     VarDecl(Vec<Var>),
-    /// Assignment `x = 0;`
+    /// Assignment `lval = rval;`
     Assign { deref: usize, lval: Expression, rval: Expression },
     /// A call statement `call(arg1, arg2)`
     Call { ident: String, args: Vec<Expression> },
@@ -261,8 +278,8 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    crate fn into_spanned(self, span: Range<usize>) -> Statement {
-        Spanned { val: self, span }
+    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Statement {
+        Spanned { val: self, span: span.into() }
     }
 }
 
@@ -270,14 +287,14 @@ impl Stmt {
 pub struct Field {
     pub ident: String,
     pub ty: Type,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]
 pub struct Struct {
     pub ident: String,
     pub fields: Vec<Field>,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]
@@ -286,14 +303,14 @@ pub struct Func {
     pub ident: String,
     pub params: Vec<Param>,
     pub stmts: Vec<Statement>,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]
 pub struct Var {
     pub ty: Type,
     pub ident: String,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]
@@ -304,15 +321,15 @@ pub enum Decl {
 }
 
 impl Decl {
-    crate fn into_spanned(self, span: Range<usize>) -> Declaration {
-        Spanned { val: self, span }
+    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Declaration {
+        Spanned { val: self, span: span.into() }
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Spanned<T> {
     pub val: T,
-    pub span: Range<usize>,
+    pub span: Range,
 }
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
@@ -321,7 +338,31 @@ impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     }
 }
 
-pub const DUMMY: Range<usize> = 0..0;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Range {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl fmt::Debug for Range {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}..{}", self.start, self.end)
+    }
+}
+
+impl From<ops::Range<usize>> for Range {
+    fn from(other: ops::Range<usize>) -> Self {
+        let (start, end) = (other.start, other.end);
+        Self { start, end }
+    }
+}
+
+const fn to_rng(other: ops::Range<usize>) -> Range {
+    let (start, end) = (other.start, other.end);
+    Range { start, end }
+}
+
+pub const DUMMY: Range = to_rng(0..0);
 
 pub type Declaration = Spanned<Decl>;
 pub type Statement = Spanned<Stmt>;

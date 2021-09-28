@@ -1,14 +1,42 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use pest::prec_climber::Operator;
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Expr, Expression, Field, Func, Param, Statement, Stmt, Struct, Ty,
-        Type, UnOp, Val, Value, Var, DUMMY,
+        BinOp, Block, Decl, Expr, Expression, Field, Func, Param, Range, Statement, Stmt, Struct,
+        Ty, Type, UnOp, Val, Value, Var, DUMMY,
     },
     visit::Visit,
 };
+
+#[derive(Debug)]
+crate struct Error {
+    span: Range,
+    msg: String,
+    help: String,
+}
+
+#[derive(Debug, Default)]
+crate struct VarInFunction {
+    func_spans: BTreeMap<Range, String>,
+}
+
+impl VarInFunction {
+    fn get(&self, span: Range) -> Option<&str> {
+        self.func_spans.iter().find_map(|(k, v)| {
+            if k.start <= span.start && k.end >= span.end {
+                Some(&**v)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn insert(&mut self, rng: Range, name: String) -> Option<String> {
+        self.func_spans.insert(rng, name)
+    }
+}
 
 #[derive(Debug, Default)]
 crate struct TyCheckRes<'ast> {
@@ -18,8 +46,8 @@ crate struct TyCheckRes<'ast> {
     curr_fn: Option<String>,
     /// The variables in functions, mapped fn name -> variables.
     func_refs: HashMap<String, HashMap<String, Ty>>,
-    /// A backwards mapping of variable name -> function name.
-    var_func: HashMap<String, String>,
+    /// A backwards mapping of variable span -> function name.
+    var_func: VarInFunction,
     /// Function name to return type.
     func_ret: HashMap<String, Ty>,
     /// The parameters of a function, fn name -> parameters.
@@ -31,12 +59,14 @@ crate struct TyCheckRes<'ast> {
     stmt_func: HashMap<&'ast Stmt, String>,
     /// A mapping of struct name to the fields of that struct.
     struct_fields: HashMap<String, Vec<Field>>,
+    /// Errors collected during parsing and type checking.
+    errors: Vec<Error>,
 }
 
 impl TyCheckRes<'_> {
-    fn type_of_ident(&self, id: &str) -> Option<Ty> {
+    fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
         self.var_func
-            .get(id)
+            .get(span)
             .and_then(|f| self.func_refs.get(f).and_then(|s| s.get(id)))
             .or_else(|| self.global.get(id))
             .cloned()
@@ -47,6 +77,9 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
             self.curr_fn = Some(func.ident.clone());
+            if self.var_func.insert(func.span, func.ident.clone()).is_some() {
+                panic!("function takes up same span as other function")
+            }
             if self.func_ret.insert(func.ident.clone(), func.ret.val.clone()).is_some() {
                 panic!("multiple function return types")
             }
@@ -70,15 +103,12 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
         if let Some(fn_id) = self.curr_fn.clone() {
             if self
                 .func_refs
-                .entry(fn_id.clone())
+                .entry(fn_id)
                 .or_default()
                 .insert(var.ident.clone(), var.ty.val.clone())
                 .is_some()
             {
                 panic!("function with variable name error")
-            }
-            if self.var_func.insert(var.ident.clone(), fn_id).is_some() {
-                unreachable!("this should be check param names")
             }
         } else if self.global.insert(var.ident.clone(), var.ty.val.clone()).is_some() {
             panic!("global variable name error")
@@ -105,13 +135,9 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                     .entry(fn_id.clone())
                     .or_default()
                     .push((ident.clone(), ty.val.clone()));
-                if self.func_params.len() > params.len() {
-                    panic!("function with param error")
-                }
 
-                // Insert param names to reverse look-up table
-                if self.var_func.insert(ident.clone(), fn_id).is_some() {
-                    unreachable!("this should be check param names")
+                if self.func_params.get(&fn_id).map_or(0, |p| p.len()) > params.len() {
+                    panic!("function with param error")
                 }
             }
         }
@@ -128,16 +154,16 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
     fn visit_expr(&mut self, expr: &'ast Expression) {
         match &expr.val {
             Expr::Ident(var_name) => {
-                if let Some(ty) = self.type_of_ident(var_name) {
+                if let Some(ty) = self.type_of_ident(var_name, expr.span) {
                     if self.expr_ty.insert(expr, ty).is_some() {
                         unimplemented!("NOT SURE TODO")
                     }
                 } else {
-                    panic!("no type found for ident expr")
+                    panic!("no type found for ident expr {:?}", self)
                 }
             }
             Expr::Array { ident, exprs } => {
-                if let Some(ty) = self.type_of_ident(ident) {
+                if let Some(ty) = self.type_of_ident(ident, expr.span) {
                     if self.expr_ty.insert(expr, ty).is_some() {
                         unimplemented!("NOT SURE TODO")
                     }
@@ -150,21 +176,24 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
                 let ty = self.expr_ty.get(&**expr);
                 match op {
                     UnOp::Not => todo!(),
-                    UnOp::Inc => todo!(),
+                    // UnOp::Inc => todo!(),
                 }
             }
             Expr::Deref { indir, expr: inner_expr } => {
                 self.visit_expr(inner_expr);
 
                 let ty = self.expr_ty.get(&**inner_expr).expect("type for address of");
-                let ty = ty.dereference(*indir).expect("a dereferencable type");
+                let ty = ty.derfreference(*indir);
+
+                check_dereference(inner_expr, *indir, self);
+
                 self.expr_ty.insert(expr, ty);
             }
             Expr::AddrOf(inner_expr) => {
                 self.visit_expr(inner_expr);
 
                 let ty = self.expr_ty.get(&**inner_expr).expect("type for address of").clone();
-                self.expr_ty.insert(expr, Ty::AddrOf(box ty.into_spanned(DUMMY)));
+                self.expr_ty.insert(expr, Ty::Ptr(box ty.into_spanned(DUMMY)));
             }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
@@ -258,6 +287,30 @@ impl<'ast> Visit<'ast> for TyCheckRes<'ast> {
     }
 }
 
+fn check_dereference(expr: &Expression, indirection: usize, tyck: &TyCheckRes<'_>) {
+    match &expr.val {
+        Expr::Ident(id) => {
+            if let Some(ty) = tyck.type_of_ident(id, expr.span) {
+                println!("{:?} == {:?}", ty, tyck.expr_ty.get(expr))
+            } else {
+                unreachable!("undeclared var")
+            }
+        }
+        Expr::Deref { indir, expr } => check_dereference(expr, *indir, tyck),
+        Expr::AddrOf(expr) => todo!(),
+        Expr::Array { ident, exprs } => todo!(),
+        Expr::Urnary { op, expr } => todo!(),
+        Expr::Binary { op, lhs, rhs } => todo!(),
+        Expr::Parens(_) => todo!(),
+        Expr::Call { ident, args } => todo!(),
+        Expr::FieldAccess { lhs, rhs } => todo!(),
+        Expr::StructInit { name, fields } => todo!(),
+        Expr::ArrayInit { items } => todo!(),
+        Expr::Value(_) => todo!(),
+    }
+}
+
+#[derive(Debug)]
 crate struct StmtCheck<'v, 'ast> {
     tyck: &'v TyCheckRes<'ast>,
 }
@@ -267,23 +320,29 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast> {
         match &stmt.val {
             Stmt::VarDecl(_) => {}
             Stmt::Assign { deref, lval, rval } => {
+                // TODO: this need some tweaking (the ident is not always valid)
                 let ident = &lval.val.as_ident_string();
+                // Check global scope
                 if let Some(global_ty) = self.tyck.global.get(ident) {
                     if self.tyck.expr_ty.get(rval) != Some(global_ty) {
                         panic!("global type mismatch")
                     }
+                // Check function scope based on current span
                 } else if let Some(var_ty) =
-                    self.tyck.var_func.get(ident).and_then(|name| {
+                    self.tyck.var_func.get(stmt.span).and_then(|name| {
                         self.tyck.func_refs.get(name).and_then(|vars| vars.get(ident))
                     })
                 {
-                    if self.tyck.expr_ty.get(rval) != var_ty.dereference(*deref).as_ref() {
+                    println!("{:?} {}", var_ty, deref);
+                    if self.tyck.expr_ty.get(rval) != var_ty.reference(*deref).as_ref() {
                         println!("{:?}", rval);
                         println!("{:?}", self.tyck.expr_ty.get(rval));
-                        panic!("variable type mismatch {:?}", var_ty);
+                        panic!("variable type mismatch {:?}", self);
                     }
+                // TODO: struct declarations
                 } else {
-                    panic!("assign to undeclared variable")
+                    println!("{:?}", self);
+                    panic!("assign to undeclared variable {}", lval.val.as_ident_string())
                 }
             }
             Stmt::Call { ident, args } => {}
@@ -327,7 +386,8 @@ fn fold_ty(lhs: Option<&Ty>, rhs: Option<&Ty>, op: &BinOp) -> Option<Ty> {
         // TODO: deal with structs expr will need field access
         (Ty::Adt(_), _) => todo!(""),
         // TODO: we should NOT get here (I think...)??
-        (Ty::AddrOf(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
+        (Ty::Ptr(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
+        (Ty::Ref(_), t) => todo!("{:?} {:?}", lhs?, rhs?),
     }
 }
 

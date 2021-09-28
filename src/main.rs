@@ -1,5 +1,6 @@
 // fun rust features I'm turning on
 #![feature(box_syntax, box_patterns, try_blocks, crate_visibility_modifier, stmt_expr_attributes)]
+// TODO: remove
 // tell rust not to complain about unused anything
 #![allow(unused)]
 
@@ -9,10 +10,7 @@ use std::{
     path::Path,
 };
 
-use pest::{
-    iterators::{Pair, Pairs},
-    Parser as _,
-};
+use pest::Parser as _;
 use pest_derive::Parser;
 
 mod ast;
@@ -20,8 +18,7 @@ mod precedence;
 mod typeck;
 mod visit;
 
-use ast::{parse::parse_decl, types::Expr};
-use precedence::{Assoc, Operator, PrecClimber};
+use ast::parse::parse_decl;
 
 use crate::visit::Visit;
 

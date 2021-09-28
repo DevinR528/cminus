@@ -11,5 +11,5 @@ void add(int* x) {
     foo(&y);
     int a, *b;
     b = &y;
-    ptr(y) = b; // this will be illegal (not lvalue)
+    // ptr(y) = b; this will be illegal (not lvalue)
 }
