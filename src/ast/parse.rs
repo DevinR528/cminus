@@ -367,10 +367,9 @@ fn parse_block(blk: Pair<Rule>) -> Block {
 }
 
 fn parse_lvalue(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range) -> Statement {
-    let deref = var.as_str().matches('*').count();
     let lval = parse_expr(var);
     valid_lval(&lval.val).unwrap();
-    Stmt::Assign { deref, lval, rval: parse_expr(expr) }.into_spanned(span)
+    Stmt::Assign { lval, rval: parse_expr(expr) }.into_spanned(span)
 }
 
 fn valid_lval(ex: &Expr) -> Result<(), String> {

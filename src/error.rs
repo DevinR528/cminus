@@ -27,7 +27,7 @@ impl fmt::Display for Error<'_> {
             self.name,
             row,
             col,
-            calc_snippet_around(self.span, self.input)
+            calc_snippet_around(self.span, self.input, row)
         )
     }
 }
@@ -51,7 +51,7 @@ fn calc_line_col(span: Range, input: &str) -> (usize, usize) {
     (row, col)
 }
 
-fn calc_snippet_around(span: Range, input: &str) -> String {
+fn calc_snippet_around(span: Range, input: &str, row: usize) -> String {
     let mut first = false;
     let pre = input[0..span.start]
         .chars()
@@ -89,5 +89,17 @@ fn calc_snippet_around(span: Range, input: &str) -> String {
     } else {
         area.to_owned()
     };
+    // TODO: bad/wrong algorithm
+    let mut adjusted = row - 1;
     format!("{}{}{}", pre, error_area, post)
+        .lines()
+        .enumerate()
+        .map(|(i, l)| {
+            if row + 1 == adjusted + i {
+                format!("  |{}\n", l)
+            } else {
+                format!("{} |{}\n", i + adjusted, l)
+            }
+        })
+        .collect::<String>()
 }

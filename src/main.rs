@@ -1,5 +1,12 @@
 // fun rust features I'm turning on
-#![feature(box_syntax, box_patterns, try_blocks, crate_visibility_modifier, stmt_expr_attributes)]
+#![feature(
+    box_syntax,
+    box_patterns,
+    try_blocks,
+    crate_visibility_modifier,
+    stmt_expr_attributes,
+    array_chunks
+)]
 // TODO: remove
 // tell rust not to complain about unused anything
 #![allow(unused)]

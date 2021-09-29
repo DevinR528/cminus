@@ -310,7 +310,7 @@ impl<'ast> Visit<'ast> for DotWalker {
                     self.visit_var(var);
                 }
             }
-            Stmt::Assign { lval, rval, deref } => {
+            Stmt::Assign { lval, rval } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(

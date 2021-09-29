@@ -1,5 +1,10 @@
 use std::{fmt, hash, ops};
 
+crate trait TypeEquality {
+    /// If the two types are considered equal.
+    fn is_ty_eq(&self, other: &Self) -> bool;
+}
+
 #[derive(Clone, Debug)]
 pub enum Val {
     Float(f64),
@@ -144,9 +149,9 @@ impl Expr {
             Expr::Ident(id) => id.to_string(),
             Expr::Deref { indir, expr } => expr.val.as_ident_string(),
             Expr::AddrOf(expr) => expr.val.as_ident_string(),
-            Expr::Array { ident, exprs } => ident.to_string(),
+            Expr::Array { ident, .. } => ident.to_string(),
             // TODO: hmm
-            Expr::Call { ident, args } => ident.to_string(),
+            Expr::Call { ident, .. } => ident.to_string(),
             // TODO: hmm
             Expr::FieldAccess { lhs, rhs } => {
                 let lhs = lhs.val.as_ident_string();
@@ -205,7 +210,7 @@ impl Ty {
         indirection.cloned()
     }
 
-    crate fn derfreference(&self, mut indirection: usize) -> Self {
+    crate fn dereference(&self, mut indirection: usize) -> Self {
         let mut new = self.clone();
         while (indirection > 0) {
             new = Ty::Ref(box new.into_spanned(DUMMY));
@@ -233,12 +238,41 @@ impl Ty {
         }
         Some(new)
     }
+
+    crate fn array_dim(&self) -> usize {
+        let mut dim = 0;
+        let mut new = self;
+        while let Ty::Array { ty, .. } = new {
+            new = &ty.val;
+            dim += 1;
+        }
+        dim
+    }
+
+    crate fn index_dim(&self, mut dim: usize) -> Self {
+        let mut new = self.clone();
+        while (dim > 0) {
+            if let Ty::Array { ty, .. } = new {
+                new = ty.val;
+                dim -= 1;
+            } else {
+                break;
+            }
+        }
+        new
+    }
 }
 
 impl fmt::Display for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Ty::Array { size, ty } => write!(f, "{}[{}]", ty.val, size),
+            Ty::Array { size, ty } => {
+                if let Ty::Array { ty: t, size: s } = &ty.val {
+                    write!(f, "{}[{}][{}]", t.val, size, s)
+                } else {
+                    write!(f, "{}[{}]", ty.val, size)
+                }
+            }
             Ty::Adt(n) => write!(f, "struct {}", n),
             Ty::Ptr(t) => write!(f, "&{}", t.val),
             Ty::Ref(t) => write!(f, "*{}", t.val),
@@ -248,6 +282,36 @@ impl fmt::Display for Ty {
             Ty::Float => write!(f, "float"),
             Ty::Bool => write!(f, "bool"),
             Ty::Void => write!(f, "void"),
+        }
+    }
+}
+
+impl TypeEquality for Ty {
+    fn is_ty_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // TODO: does size matter? :)
+            (Ty::Array { size: s1, ty: t1 }, Ty::Array { size: s2, ty: t2 }) => {
+                s1.eq(s2) && t1.is_ty_eq(t2)
+            }
+            (Ty::Array { .. }, _) => false,
+            (Ty::Adt(n1), Ty::Adt(n2)) => n1 == n2,
+            (Ty::Adt(_), _) => false,
+            (Ty::Ptr(t1), Ty::Ptr(t2)) => t1.val.is_ty_eq(&t2.val),
+            (Ty::Ptr(_), _) => false,
+            (Ty::Ref(t1), Ty::Ref(t2)) => t1.val.is_ty_eq(&t2.val),
+            (Ty::Ref(_), _) => false,
+            (Ty::String, Ty::String) => true,
+            (Ty::String, _) => false,
+            (Ty::Int, Ty::Int) => true,
+            (Ty::Int, _) => false,
+            (Ty::Char, Ty::Char) => true,
+            (Ty::Char, _) => false,
+            (Ty::Float, Ty::Float) => true,
+            (Ty::Float, _) => false,
+            (Ty::Bool, Ty::Bool) => true,
+            (Ty::Bool, _) => false,
+            (Ty::Void, Ty::Void) => true,
+            (Ty::Void, _) => false,
         }
     }
 }
@@ -270,7 +334,7 @@ pub enum Stmt {
     /// Variable declaration `int x;`
     VarDecl(Vec<Var>),
     /// Assignment `lval = rval;`
-    Assign { deref: usize, lval: Expression, rval: Expression },
+    Assign { lval: Expression, rval: Expression },
     /// A call statement `call(arg1, arg2)`
     Call { ident: String, args: Vec<Expression> },
     /// If statement `if (expr) { stmts }`
@@ -340,10 +404,25 @@ impl Decl {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct Spanned<T> {
     pub val: T,
     pub span: Range,
+}
+
+impl<T: TypeEquality> TypeEquality for Spanned<T> {
+    fn is_ty_eq(&self, other: &Self) -> bool {
+        self.val.is_ty_eq(&other.val)
+    }
+}
+
+impl<T: TypeEquality> TypeEquality for Option<&T> {
+    fn is_ty_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Some(a), Some(b)) => a.is_ty_eq(b),
+            _ => false,
+        }
+    }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
