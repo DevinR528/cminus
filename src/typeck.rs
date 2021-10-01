@@ -334,9 +334,30 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::StructInit { name, fields } => {
+                let field_tys =
+                    self.struct_fields.get(name).expect("initialized undefined struct").clone();
+
                 for FieldInit { ident, init, .. } in fields {
                     self.visit_expr(init);
-                    check fields??
+                    let fty = field_tys.iter().find_map(|f| {
+                        if f.ident == *ident {
+                            Some(&f.ty.val)
+                        } else {
+                            None
+                        }
+                    });
+                    let exprty = self.expr_ty.get(&*init);
+                    if !exprty.is_ty_eq(&fty) {
+                        self.errors.push(Error::error_with_span(
+                            self,
+                            init.span,
+                            &format!(
+                                "field initialized with mismatched type {} == {}",
+                                exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                fty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        ));
+                    }
                 }
                 // TODO: check fields and
                 if self.expr_ty.insert(expr, Ty::Adt(name.clone())).is_some() {
