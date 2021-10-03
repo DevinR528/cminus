@@ -341,7 +341,7 @@ pub enum Stmt {
     If { cond: Expression, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
     While { cond: Expression, stmt: Box<Statement> },
-    /// Read statment `read(ident | "string")`
+    /// Read statment `read(ident)`
     Read(String),
     /// Write statement `write(expr)`
     Write { expr: Expression },

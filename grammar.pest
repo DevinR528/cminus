@@ -50,7 +50,7 @@ block_stmt = { LBR ~ (stmt)* ~ RBR }
 
 struct_assign = { ident ~ LBR ~ field_expr ~ (CM ~ field_expr)* ~ CM? ~ RBR }
 
-field_expr = { ident ~ COLON ~ (arr_init | expr) }
+field_expr = { ident ~ COLON ~ (struct_assign | arr_init | expr) }
 
 expr = { term ~ (op ~ term)* }
 

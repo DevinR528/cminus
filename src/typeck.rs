@@ -251,10 +251,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::Deref { indir, expr: inner_expr } => {
                 self.visit_expr(inner_expr);
 
-                let ty = self.expr_ty.get(&**inner_expr).expect("type for dereference");
+                let ty = self.expr_ty.get(&**inner_expr).expect(&format!("{:?}", expr));
                 let ty = ty.dereference(*indir);
 
-                check_dereference(self, inner_expr, *indir);
+                check_dereference(self, inner_expr);
 
                 self.expr_ty.insert(expr, ty);
             }
@@ -300,6 +300,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::Call { ident, args } => {
+                for arg in args {
+                    self.visit_expr(arg);
+                }
                 if let Some(ret) = self.func_ret.get(ident) {
                     if self.expr_ty.insert(expr, ret.clone()).is_some() {
                         unimplemented!("NOT SURE TODO")
@@ -339,6 +342,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 for FieldInit { ident, init, .. } in fields {
                     self.visit_expr(init);
+
                     let fty = field_tys.iter().find_map(|f| {
                         if f.ident == *ident {
                             Some(&f.ty.val)
@@ -359,7 +363,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         ));
                     }
                 }
-                // TODO: check fields and
                 if self.expr_ty.insert(expr, Ty::Adt(name.clone())).is_some() {
                     unimplemented!("No duplicates")
                 }
@@ -404,27 +407,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
             Expr::FieldAccess { lhs, rhs } => {
                 self.visit_expr(lhs);
-                let lhs_ty = self.expr_ty.get(&**lhs);
 
-                let (name, fields) = if let Some(Ty::Adt(name)) = lhs_ty {
-                    (name, self.struct_fields.get(name).expect("no struct definition found"))
+                // rhs is saved in `check_field_access`
+                let field_ty = check_field_access(self, lhs, rhs);
+                if let Some(ty) = field_ty {
+                    // TODO: duplicate expression, should be impossible??
+                    if self.expr_ty.insert(expr, ty).is_some() {
+                        unimplemented!("NOT SURE TODO")
+                    }
                 } else {
-                    unreachable!("left hand side must be struct")
-                };
-
-                let field_ty = match &rhs.val {
-                    Expr::Ident(ident) | Expr::Array { ident, .. } => fields
-                        .iter()
-                        .find(|f| &f.ident == ident)
-                        .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name)),
-                    // TODO: see below
-                    Expr::FieldAccess { lhs, rhs } => todo!("this is special"),
-                    _ => unreachable!("access struct with non ident"),
-                };
-
-                // TODO: duplicate expression, should be impossible??
-                if self.expr_ty.insert(expr, field_ty.ty.val.clone()).is_some() {
-                    unimplemented!("NOT SURE TODO")
+                    // TODO: this error is crappy
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        expr.span,
+                        "no type found for field access",
+                    ));
                 }
             }
         }
@@ -433,19 +430,90 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 }
 
-fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression, indirection: usize) {
+/// The left hand side of field access has been collected calling this collects the right side.
+///
+/// The is used in the collection of expressions.
+fn check_field_access<'ast>(
+    tcxt: &mut TyCheckRes<'ast, '_>,
+    lhs: &'ast Expression,
+    rhs: &'ast Expression,
+) -> Option<Ty> {
+    let lhs_ty = tcxt.expr_ty.get(lhs);
+
+    let (name, fields) = if let Some(Ty::Adt(name)) = lhs_ty.and_then(|t| t.resolve()) {
+        (name.clone(), tcxt.struct_fields.get(&name).expect("no struct definition found"))
+    } else {
+        // TODO: this is unrecoverable ??
+        panic!("{}", Error::error_with_span(tcxt, lhs.span, "not valid field access"));
+    };
+
+    match &rhs.val {
+        Expr::Ident(ident) => {
+            let rty = fields
+                .iter()
+                .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
+                .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name));
+            tcxt.expr_ty.insert(rhs, rty.clone());
+            Some(rty)
+        }
+        Expr::Array { ident, exprs } => {
+            let rty = fields
+                .iter()
+                .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
+                .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name));
+            tcxt.expr_ty.insert(rhs, rty.clone());
+            Some(rty.index_dim(exprs.len()))
+        }
+        Expr::FieldAccess { lhs, rhs } => {
+            let accty = check_field_access(tcxt, lhs, rhs);
+            if let Some(ty) = &accty {
+                tcxt.expr_ty.insert(rhs, ty.clone());
+            }
+            accty
+        }
+        _ => unreachable!("access struct with non ident"),
+    }
+}
+
+/// The is used in the collection of expressions.
+fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
     match &expr.val {
         Expr::Ident(id) => {
-            if let Some(ty) = tcxt.type_of_ident(id, expr.span) {
+            let ty = tcxt.type_of_ident(id, expr.span);
+            if let Some(ty) = ty {
                 println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
-                tcxt.errors.push(Error::error_with_span(tcxt, expr.span, "undeclared var"));
+                tcxt.errors.push(Error::error_with_span(
+                    tcxt,
+                    expr.span,
+                    &format!(
+                        "cannot dereference {}",
+                        ty.map_or("<unknown>".to_owned(), |t| t.to_string())
+                    ),
+                ));
             }
         }
-        Expr::Deref { indir, expr } => check_dereference(tcxt, expr, *indir),
-        Expr::AddrOf(expr) => todo!(),
-        Expr::FieldAccess { lhs, rhs } => todo!(),
-        Expr::Array { ident, exprs } => todo!(),
+        Expr::Deref { indir, expr } => check_dereference(tcxt, expr),
+        Expr::AddrOf(expr) => check_dereference(tcxt, expr),
+        Expr::FieldAccess { lhs, rhs } => {
+            check_dereference(tcxt, lhs);
+            check_dereference(tcxt, rhs);
+        }
+        Expr::Array { ident, exprs } => {
+            let ty = tcxt.type_of_ident(ident, expr.span).map(|ty| ty.index_dim(exprs.len()));
+            if let Some(ty) = ty {
+                println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
+            } else {
+                tcxt.errors.push(Error::error_with_span(
+                    tcxt,
+                    expr.span,
+                    &format!(
+                        "cannot dereference {}",
+                        ty.map_or("<unknown>".to_owned(), |t| t.to_string())
+                    ),
+                ));
+            }
+        }
 
         Expr::Urnary { .. }
         | Expr::Binary { .. }
@@ -457,24 +525,31 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression, indirecti
     }
 }
 
+//
+//
+//
+// All the following is used for actual type checking after the collection phase.
+
 #[derive(Debug)]
 crate struct StmtCheck<'v, 'ast, 'input> {
     tcxt: &'v mut TyCheckRes<'ast, 'input>,
 }
 
 impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
-    fn visit_stmt(&mut self, stmt: &Statement) {
+    fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
             // Nothing to do here, TODO: could maybe record for dead code?
             Stmt::VarDecl(_) => {}
             Stmt::Assign { lval, rval } => {
-                let lval_ty = lvalue_type(self.tcxt, lval, stmt.span);
+                let lval_ty =
+                    lvalue_type(self.tcxt, lval, stmt.span).and_then(|t| resolve_ty(lval, t));
 
-                let rval_ty = self.tcxt.expr_ty.get(rval);
+                let rval_ty =
+                    self.tcxt.expr_ty.get(rval).cloned().and_then(|t| resolve_ty(rval, t));
 
                 println!("{:?} == {:?}", lval_ty, rval_ty);
 
-                if !lval_ty.as_ref().is_ty_eq(&rval_ty) {
+                if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
@@ -486,27 +561,131 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     ));
                 }
             }
-            Stmt::Call { ident, args } => {}
-            Stmt::If { cond, blk, els } => {}
-            Stmt::While { cond, stmt } => {}
-            Stmt::Read(_) => {}
-            Stmt::Write { expr } => {}
-            Stmt::Ret(_) => {}
-            Stmt::Exit => {}
-            Stmt::Block(_) => {}
+            Stmt::Call { ident, args } => {
+                let func = self.tcxt.func_params.get(ident).expect("undefined function");
+                for (idx, arg) in args.iter().enumerate() {
+                    let param_ty = func.get(idx).map(|p| &p.1);
+                    let arg_ty = self.tcxt.expr_ty.get(arg);
+
+                    if !param_ty.is_ty_eq(&arg_ty) {
+                        self.tcxt.errors.push(Error::error_with_span(
+                            self.tcxt,
+                            stmt.span,
+                            &format!(
+                                "call with wrong argument type\nfound {} expected {}",
+                                arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        ));
+                    }
+                }
+            }
+            Stmt::If { cond, blk: Block { stmts, .. }, els } => {
+                let cond_ty = self.tcxt.expr_ty.get(cond);
+                if !cond_ty.is_ty_eq(&Some(&Ty::Bool)) {
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        "condition of if must be of type bool",
+                    ));
+                }
+
+                for stmt in stmts {
+                    self.visit_stmt(stmt);
+                }
+
+                if let Some(Block { stmts, .. }) = els {
+                    for stmt in stmts {
+                        self.visit_stmt(stmt);
+                    }
+                }
+            }
+            Stmt::While { cond, stmt } => {
+                let cond_ty = self.tcxt.expr_ty.get(cond);
+                if !cond_ty.is_ty_eq(&Some(&Ty::Bool)) {
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        "condition of while must be of type bool",
+                    ));
+                }
+                self.visit_stmt(stmt);
+            }
+            Stmt::Read(id) => {
+                // TODO: writable trait
+                // id must be something that can be from_string or something
+            }
+            Stmt::Write { expr } => {
+                // TODO: display trait?
+            }
+            Stmt::Ret(expr) => {
+                let ret_ty = self.tcxt.expr_ty.get(expr);
+                let func_ret_ty = self
+                    .tcxt
+                    .var_func
+                    .get(expr.span)
+                    .and_then(|fname| self.tcxt.func_ret.get(fname).cloned());
+                if !ret_ty.is_ty_eq(&func_ret_ty.as_ref()) {
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        &format!(
+                            "call with wrong argument type\nfound {} expected {}",
+                            ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                        ),
+                    ));
+                }
+            }
+            Stmt::Exit => {
+                let func_ret_ty = self
+                    .tcxt
+                    .var_func
+                    .get(stmt.span)
+                    .and_then(|fname| self.tcxt.func_ret.get(fname));
+                if !func_ret_ty.is_ty_eq(&Some(&Ty::Void)) {
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        "return type must be void",
+                    ));
+                }
+            }
+            Stmt::Block(Block { stmts, .. }) => {
+                for stmt in stmts {
+                    self.visit_stmt(stmt);
+                }
+            }
         }
+    }
+}
+
+fn resolve_ty(expr: &Expression, ty: Ty) -> Option<Ty> {
+    match &expr.val {
+        Expr::Deref { indir, expr } => ty.resolve(),
+        Expr::Array { ident, exprs } => Some(ty.index_dim(exprs.len())),
+        Expr::AddrOf(_) => {
+            println!("{:?} == {:?}", expr.val, ty);
+            Some(ty)
+        }
+        Expr::Ident(_)
+        | Expr::Urnary { .. }
+        | Expr::Binary { .. }
+        | Expr::Parens(_)
+        | Expr::Call { .. }
+        | Expr::FieldAccess { .. }
+        | Expr::StructInit { .. }
+        | Expr::ArrayInit { .. }
+        | Expr::Value(_) => Some(ty),
     }
 }
 
 fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Range) -> Option<Ty> {
     let lval_ty = match &lval.val {
-        Expr::Ident(id) => tcxt.type_of_ident(id, stmt_span),
+        Expr::Ident(id) => tcxt.expr_ty.get(lval).cloned(),
         Expr::Deref { indir, expr } => {
-            // TODO: may need to resolve the deref'ed type
-            tcxt
-                // TODO: this need some tweaking (the ident is not always valid)
-                // (as_ident_string)
-                .type_of_ident(&expr.val.as_ident_string(), stmt_span)
+            println!("lvaltype: {:?}", expr);
+            lvalue_type(tcxt, expr, stmt_span)
                 .map(|t| t.dereference(*indir))
         }
         Expr::Array { ident, exprs } => {
@@ -528,15 +707,19 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
             }
         },
         Expr::FieldAccess { lhs, rhs } => {
-            let id = lhs.val.as_ident_string();
-            if let Some(Ty::Adt(name)) = tcxt.type_of_ident(&id, stmt_span) {
-                let fields = tcxt.struct_fields.get(&name).cloned().unwrap_or_default();
+            if let Some(Ty::Adt(name)) = tcxt.expr_ty.get(&**lhs) {
+                let fields = tcxt.struct_fields.get(name).cloned().unwrap_or_default();
+
                 walk_field_access(tcxt, &fields, rhs)
             } else {
                 tcxt.errors.push(Error::error_with_span(
                     tcxt,
                     stmt_span,
-                    &format!("no struct {} found", id),
+                    &format!(
+                        "no struct {} found",
+                        tcxt.type_of_ident(&lhs.val.as_ident_string(), lhs.span)
+                            .map_or("<unknown>".to_owned(), |t| t.to_string()),
+                    ),
                 ));
                 None
             }
@@ -567,7 +750,11 @@ fn walk_field_access(
     match &expr.val {
         Expr::Ident(id) => fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.val.clone()) } else { None }),
         Expr::Deref { indir, expr } => {
-            walk_field_access(tcxt, fields, expr)
+            if let Some(ty) = walk_field_access(tcxt, fields, expr) {
+                Some(ty.dereference(*indir))
+            } else {
+                unreachable!("no type for dereference {:?}", expr)
+            }
         }
         Expr::Array { ident, exprs } => {
             if let arr @ Some(ty @ Ty::Array { .. }) = &tcxt.type_of_ident(ident, expr.span) {
@@ -589,9 +776,9 @@ fn walk_field_access(
         },
         Expr::FieldAccess { lhs, rhs } => {
             let id = lhs.val.as_ident_string();
-            if let Some(Ty::Adt(name)) = tcxt.type_of_ident(&id, expr.span) {
+            if let Some(Ty::Adt(name)) = tcxt.type_of_ident(&id, expr.span).and_then(|t| t.resolve()) {
                 // TODO: this is kinda ugly because of the clone but it complains about tcxt otherwise
-                // or default not being impl'ed /o\
+                // or default not being impl'ed \o/
                 let fields = tcxt.struct_fields.get(&name).cloned().unwrap_or_default();
                 walk_field_access(tcxt, &fields, rhs)
             } else {

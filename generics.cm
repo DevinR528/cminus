@@ -1,0 +1,27 @@
+struct list<T> {
+    int len;
+    int cap;
+    T* buf;
+};
+
+T* alloc(int size) {
+    // TODO
+}
+
+struct list<T> list(int size) {
+    struct list x;
+    x = list {
+        len: 0,
+        cap: size,
+        buf: alloc(size),
+    }
+}
+
+void push(struct list<T>* this, T item) {
+    if (this->cap <= this->len) {
+        // allocate ...
+    } else {
+        this->buf[this->len] = item;
+        this->len = this->len + 1;
+    }
+}

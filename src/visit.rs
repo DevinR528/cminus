@@ -99,6 +99,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
         }
         Stmt::Assign { lval, rval, .. } => {
             // visit.visit_ident(ident);
+            visit.visit_expr(lval);
             visit.visit_expr(rval);
         }
         Stmt::Call { ident, args } => {

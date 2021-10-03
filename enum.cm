@@ -1,0 +1,14 @@
+enum option<T> {
+    some(T),
+    none,
+};
+
+enum thing {
+    a, b, c, d, e, f, g
+};
+
+void main() {
+    enum thing x;
+    x = thing::a;
+    enum option = option::some(x);
+}

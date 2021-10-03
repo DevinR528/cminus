@@ -503,21 +503,26 @@ fn parse_expr(expr: Pair<Rule>) -> Expression {
         Operator::new(Rule::PLUS, Assoc::Left) | Operator::new(Rule::SUB, Assoc::Left),
         // *, /
         Operator::new(Rule::MUL, Assoc::Left) | Operator::new(Rule::DIV, Assoc::Left),
-        // .
-        Operator::new(Rule::DOT, Assoc::Left),
-        // ->
-        Operator::new(Rule::ARROW, Assoc::Left),
+        // ., ->
+        Operator::new(Rule::DOT, Assoc::Left) | Operator::new(Rule::ARROW, Assoc::Left),
     ]);
 
-    consume(expr, &climber)
+    consume(expr, &climber, true)
 }
 
-fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
-    let primary = |p: Pair<'_, _>| consume(p, climber);
+fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Expression {
+    let primary = |p: Pair<'_, _>| consume(p, climber, false);
     let infix = |lhs: Expression, op: Pair<Rule>, rhs: Expression| {
         let span = lhs.span.start..rhs.span.end;
         let expr = match op.as_rule() {
-            Rule::DOT => Expr::FieldAccess { lhs: box lhs, rhs: box rhs },
+            Rule::DOT => match &lhs.val {
+                Expr::Deref { indir, expr: inner } => Expr::Deref {
+                    indir: *indir,
+                    expr: box Expr::FieldAccess { lhs: inner.clone(), rhs: box rhs }
+                        .into_spanned(inner.span.start..span.end),
+                },
+                _ => Expr::FieldAccess { lhs: box lhs, rhs: box rhs },
+            },
             Rule::ARROW => Expr::FieldAccess {
                 lhs: box Expr::Deref { indir: 1, expr: box lhs }
                     .into_spanned(span.start..rhs.span.start),
@@ -540,11 +545,17 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
         expr.into_spanned(span)
     };
 
-    match expr.as_rule() {
+    let span = to_span(&expr);
+    enum ExprKind {
+        Deref(usize),
+        AddrOf,
+        None,
+    }
+    let mut wrapper = ExprKind::None;
+    let ex = match expr.as_rule() {
         Rule::expr => climber.climb(expr.into_inner(), primary, infix),
         Rule::op => climber.climb(expr.into_inner(), primary, infix),
         Rule::term => {
-            let span = to_span(&expr);
             match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
                 // x,y[],z.z
                 [(Rule::variable, var)] => {
@@ -559,23 +570,17 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                         [(Rule::deref, deref), (Rule::ident, ident)] => {
                             let indir = deref.as_str();
                             if indir == "&" {
-                                Expr::AddrOf(box Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident)))
+                                wrapper = ExprKind::AddrOf;
                             } else {
                                 let indirection = indir.matches('*').count();
                                 if indirection > 0 {
-                                    Expr::Deref {
-                                        indir: indirection,
-                                        expr: box Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident))
-                                    }
-                                } else {
-                                    Expr::Ident(ident.as_str().to_string())
+                                    wrapper = ExprKind::Deref(indirection);
                                 }
                             }
-                        },
-                        [(Rule::deref, deref), (Rule::ident, ident),
-                            (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _),
-                            rest @ ..
-                        ] => {
+                            Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident))
+                        }
+                        [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] =>
+                        {
                             let indir = deref.as_str();
 
                             let arr = Expr::Array {
@@ -590,25 +595,20 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
                                     .collect(),
                             };
                             if indir == "&" {
-                                Expr::AddrOf(box arr.into_spanned(ident.as_span().start()..span.end))
+                                wrapper = ExprKind::AddrOf;
                             } else {
                                 let indirection = indir.matches('*').count();
                                 if indirection > 0 {
-                                    Expr::Deref {
-                                        indir: indirection,
-                                        expr: box arr.into_spanned(ident.as_span().start()..span.end),
-                                    }
-                                } else {
-                                    arr
+                                    wrapper = ExprKind::Deref(indirection);
                                 }
                             }
 
-
+                            arr.into_spanned(ident.as_span().start()..span.end)
                         }
                         _ => unreachable!("malformed variable name {}", var.to_json()),
-                    }.into_spanned(span)
+                    }
                 }
-                // 1,true,"a"
+                // 1,true,'a', "string"
                 [(Rule::const_, konst)] => {
                     let inner_span = to_span(konst);
                     match konst.clone().into_inner().next().unwrap().as_rule() {
@@ -708,6 +708,11 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
             }
         }
         err => unreachable!("{:?}", err),
+    };
+    match wrapper {
+        ExprKind::Deref(indir) => Expr::Deref { indir, expr: box ex }.into_spanned(span),
+        ExprKind::AddrOf => Expr::AddrOf(box ex).into_spanned(span),
+        ExprKind::None => ex,
     }
 }
 
@@ -719,6 +724,11 @@ fn parse_field_init(field: Pair<Rule>) -> FieldInit {
             span: (ident.as_span().start()..expr.as_span().end()).into(),
         },
         [(Rule::ident, ident), (Rule::COLON, _), (Rule::arr_init, expr)] => FieldInit {
+            ident: ident.as_str().to_string(),
+            init: parse_expr(expr.clone()),
+            span: (ident.as_span().start()..expr.as_span().end()).into(),
+        },
+        [(Rule::ident, ident), (Rule::COLON, _), (Rule::struct_assign, expr)] => FieldInit {
             ident: ident.as_str().to_string(),
             init: parse_expr(expr.clone()),
             span: (ident.as_span().start()..expr.as_span().end()).into(),
