@@ -10,5 +10,14 @@ enum thing {
 void main() {
     enum thing x;
     x = thing::a;
-    enum option = option::some(x);
+    enum option opt;
+    opt = option::some(x);
+    match opt {
+        option::some(a) -> {
+            write(a);
+        },
+        option::none -> {
+            exit;
+        }
+    }
 }

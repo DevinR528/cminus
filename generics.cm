@@ -1,12 +1,14 @@
+// Generic list data structure with push "method".
+
+T* alloc<T>(int size) {
+    // TODO
+}
+
 struct list<T> {
     int len;
     int cap;
     T* buf;
 };
-
-T* alloc(int size) {
-    // TODO
-}
 
 struct list<T> list(int size) {
     struct list x;
@@ -14,10 +16,11 @@ struct list<T> list(int size) {
         len: 0,
         cap: size,
         buf: alloc(size),
-    }
+    };
+    return x;
 }
 
-void push(struct list<T>* this, T item) {
+void push<T>(struct list<T>* this, T item) {
     if (this->cap <= this->len) {
         // allocate ...
     } else {

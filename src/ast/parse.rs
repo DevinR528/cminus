@@ -2,8 +2,9 @@ use pest::iterators::{Pair, Pairs};
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Declaration, Expr, Expression, Field, FieldInit, Func, Param, Range,
-        Statement, Stmt, Struct, Ty, Type, UnOp, Val, Var,
+        Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit,
+        Func, Generic, MatchArm, Param, Pattern, Range, Statement, Stmt, Struct, Ty, Type, UnOp,
+        Val, Var, Variant,
     },
     precedence::{Assoc, Operator, PrecClimber},
     Rule,
@@ -22,7 +23,7 @@ crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
                     .map(|var| Decl::Var(var).into_spanned(span))
                     .collect(),
                 Rule::adt_decl => {
-                    vec![Decl::Adt(parse_struct(decl.into_inner(), span)).into_spanned(span)]
+                    vec![Decl::Adt(parse_adt(decl.into_inner(), span)).into_spanned(span)]
                 }
                 _ => unreachable!("malformed declaration"),
             }
@@ -30,10 +31,10 @@ crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
         .collect()
 }
 
-fn parse_struct(struct_: Pairs<Rule>, span: Range) -> Struct {
-    match struct_.map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::STRUCT, _), (Rule::ident, ident), (Rule::LBR, _), fields @ .., (Rule::RBR, _), (Rule::SC, _)] => {
-            Struct {
+fn parse_adt(struct_: Pairs<Rule>, span: Range) -> Adt {
+    match struct_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::STRUCT, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), fields @ .., (Rule::RBR, _), (Rule::SC, _)] => {
+            Adt::Struct(Struct {
                 ident: ident.as_str().to_string(),
                 fields: fields
                     .iter()
@@ -52,10 +53,26 @@ fn parse_struct(struct_: Pairs<Rule>, span: Range) -> Struct {
                         }
                     })
                     .collect(),
+                generics: parse_generics(gen.clone()),
                 span,
-            }
+            })
         }
-        _ => unreachable!("malformed function parameter"),
+        [(Rule::ENUM, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), fields @ .., (Rule::RBR, _), (Rule::SC, _)] => {
+            Adt::Enum(Enum {
+                ident: ident.as_str().to_string(),
+                variants: fields
+                    .iter()
+                    .filter_map(|(r, p)| match r {
+                        Rule::variant => Some(parse_variant_decl(p.clone())),
+                        Rule::CM => None,
+                        _ => unreachable!("malformed variant {}", p.to_json()),
+                    })
+                    .collect(),
+                generics: parse_generics(gen.clone()),
+                span,
+            })
+        }
+        _ => unreachable!("malformed function parameter {}", struct_.to_json()),
     }
 }
 
@@ -98,6 +115,34 @@ fn parse_struct_field_decl(param: Pair<Rule>) -> Field {
     }
 }
 
+fn parse_variant_decl(variant: Pair<Rule>) -> Variant {
+    let span = to_span(&variant);
+    match variant.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
+        [(Rule::ident, id), content_tuple @ ..] => Variant {
+            ident: id.as_str().to_string(),
+            types: if content_tuple.is_empty() {
+                vec![]
+            } else {
+                match content_tuple {
+                    [(Rule::LP, _), (Rule::type_, ty), rest @ ..] => vec![parse_ty(ty.clone())]
+                        .into_iter()
+                        .chain(rest.iter().filter_map(|(r, n)| match r {
+                            Rule::type_ => Some(parse_ty(n.clone())),
+                            Rule::CM | Rule::RP => None,
+                            _ => {
+                                unreachable!("malformed variant tuple declaration {}", n.to_json())
+                            }
+                        }))
+                        .collect(),
+                    _ => unreachable!("malformed variant declaration"),
+                }
+            },
+            span,
+        },
+        _ => unreachable!("malformed function parameter"),
+    }
+}
+
 fn parse_param(param: Pair<Rule>) -> Param {
     match param.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         [(Rule::type_, ty), (Rule::var_name, var)] => {
@@ -113,7 +158,7 @@ fn parse_func(func: Pairs<Rule>) -> Func {
     // println!("func = {}", func.to_json());
     match func.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
         // int foo(int a, int b) { stmts }
-        [(Rule::type_, ty), (Rule::ident, ident),
+        [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen),
          (Rule::LP, _), (Rule::param_list, params), (Rule::RP, _), (Rule::LBR, _),
          action @ ..,
          (Rule::RBR, rbr)
@@ -133,11 +178,12 @@ fn parse_func(func: Pairs<Rule>) -> Func {
                     ),
                     _ => unreachable!("malformed statement"),
                 }).collect(),
+                generics: parse_generics(gen.clone()),
                 span: (ty.as_span().start()..rbr.as_span().end()).into(),
             }
         }
         // int foo() { stmts }
-        [(Rule::type_, ty), (Rule::ident, ident),
+        [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen),
          (Rule::LP, _), (Rule::RP, _), (Rule::LBR, _),
          action @ ..,
          (Rule::RBR, rbr)
@@ -153,6 +199,7 @@ fn parse_func(func: Pairs<Rule>) -> Func {
                     ).into_spanned(to_span(s)),
                     _ => unreachable!("malformed statement"),
                 }).collect(),
+                generics: parse_generics(gen.clone()),
                 span: (ty.as_span().start()..rbr.as_span().end()).into(),
             }
         }
@@ -187,6 +234,12 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                 // var = { 1, 2, };
                 [(Rule::expr, var), (Rule::ASSIGN, _),
                     (Rule::arr_init, expr), (Rule::SC, _)
+                ] => {
+                    parse_lvalue(var.clone(), expr.clone(), span)
+                }
+                // var = enum::variant(10, false);
+                [(Rule::expr, var), (Rule::ASSIGN, _),
+                    (Rule::enum_init, expr), (Rule::SC, _)
                 ] => {
                     parse_lvalue(var.clone(), expr.clone(), span)
                 }
@@ -245,6 +298,36 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                             [] => None,
                             _ => unreachable!("malformed if statement"),
                         },
+                    }.into_spanned(span)
+                }
+                _ => unreachable!("malformed assingment"),
+            }
+        }
+        Rule::match_stmt => {
+            match stmt
+                .into_inner()
+                .map(|p| (p.as_rule(), p))
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+                // match expr { stmts } [ else { stmts }]
+                [(Rule::MATCH, _), (Rule::expr, expr), (Rule::LBR, _), arms @ .., (Rule::RBR, _),] => {
+                    Stmt::Match {
+                        expr: parse_expr(expr.clone()),
+                        arms: arms.iter().filter_map(|(_, a)| match a.clone().into_inner()
+                        .map(|p| (p.as_rule(), p))
+                        .collect::<Vec<_>>()
+                        .as_slice() {
+                            [
+                                (Rule::enum_init, pat), (Rule::ARROW, _),
+                                (Rule::block_stmt, blk), opt_comma @ ..
+                            ] if opt_comma.len() <= 1 => Some(MatchArm {
+                                pat: parse_match_arm_pat(pat.clone()),
+                                blk: parse_block(blk.clone()),
+                                span: to_span(a),
+                            }),
+                            _ => unreachable!("malformed match arm")
+                        }).collect(),
                     }.into_spanned(span)
                 }
                 _ => unreachable!("malformed assingment"),
@@ -324,6 +407,46 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
     }
 }
 
+fn parse_match_arm_pat(pat: Pair<'_, Rule>) -> Pattern {
+    let span = to_span(&pat);
+    match pat.clone().into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
+        [(Rule::ident, enum_name), (Rule::ident, variant), items @ ..] => Pattern {
+            ident: enum_name.as_str().to_string(),
+            variant: variant.as_str().to_string(),
+            items: items
+                .iter()
+                .filter_map(|(r, p)| match r {
+                    Rule::expr => Some(match parse_expr(p.clone()).val {
+                        Expr::Ident(name) => Binding::Wild(name),
+                        Expr::Value(v) => Binding::Value(v),
+                        Expr::EnumInit { ident, variant, items } => todo!("this is hard"),
+                        _ => todo!("more pattern types"),
+                    }),
+                    Rule::CM | Rule::LP | Rule::RP => None,
+                    _ => unreachable!("malformed item in enum initializer {}", p.to_json()),
+                })
+                .collect(),
+            span,
+        },
+        _ => unreachable!("malformed enum assignment {}", pat.to_json()),
+    }
+}
+
+fn parse_generics(generics: Pair<Rule>) -> Vec<Generic> {
+    let span = to_span(&generics);
+    generics
+        .into_inner()
+        .map(|g| (g.as_rule(), g))
+        .filter_map(|(r, g)| match r {
+            Rule::CM => None,
+            Rule::ident => {
+                Some(Generic { ident: g.as_str().to_string(), bound: (), span: to_span(&g) })
+            }
+            _ => unreachable!("malformed generic type in declaration"),
+        })
+        .collect()
+}
+
 fn parse_ty(ty: Pair<Rule>) -> Type {
     let span = to_span(&ty);
     match ty.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
@@ -335,16 +458,27 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
                 Rule::FLOAT => Ty::Float,
                 Rule::CHAR => Ty::Char,
                 Rule::VOID if addr.as_str().is_empty() => Ty::Void,
+                Rule::ident => Ty::Generic { ident: ty.as_str().to_string(), bound: () },
                 _ => unreachable!("malformed addrof type {}", ty.to_json()),
             }
             .into_spanned(to_span(ty));
             build_recursive_pointer_ty(indirection, t, span).val
         }
-        [(Rule::STRUCT, s), (Rule::ident, ident), (Rule::addrof, addr)] => {
+        [(Rule::STRUCT, s), (Rule::ident, ident), (Rule::generic, gen), (Rule::addrof, addr)] => {
             let indirection = addr.as_str().matches('*').count();
             build_recursive_pointer_ty(
                 indirection,
-                Ty::Adt(ident.as_str().to_string())
+                Ty::Struct { ident: ident.as_str().to_string(), gen: None }
+                    .into_spanned(s.as_span().start()..addr.as_span().end()),
+                (s.as_span().start()..addr.as_span().end()).into(),
+            )
+            .val
+        }
+        [(Rule::ENUM, s), (Rule::ident, ident), (Rule::generic, gen), (Rule::addrof, addr)] => {
+            let indirection = addr.as_str().matches('*').count();
+            build_recursive_pointer_ty(
+                indirection,
+                Ty::Enum { ident: ident.as_str().to_string(), gen: None }
                     .into_spanned(s.as_span().start()..addr.as_span().end()),
                 (s.as_span().start()..addr.as_span().end()).into(),
             )
@@ -399,8 +533,11 @@ fn valid_lval(ex: &Expr) -> Result<(), String> {
             Expr::StructInit { .. } => {
                 return Err("no struct init".to_owned());
             }
+            Expr::EnumInit { .. } => {
+                return Err("no enum init".to_owned());
+            }
             Expr::ArrayInit { .. } => {
-                return Err("no struct init".to_owned());
+                return Err("no array init".to_owned());
             }
             Expr::Value(_) => {
                 return Err("no values".to_owned());
@@ -704,7 +841,27 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                         .collect(),
                 }
                 .into_spanned(span),
-                _ => unreachable!("malformed struct assignment"),
+                _ => unreachable!("malformed array assignment"),
+            }
+        }
+        Rule::enum_init => {
+            let span = to_span(&expr);
+            match expr.clone().into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice()
+            {
+                [(Rule::ident, enum_name), (Rule::ident, variant), items @ ..] => Expr::EnumInit {
+                    ident: enum_name.as_str().to_string(),
+                    variant: variant.as_str().to_string(),
+                    items: items
+                        .iter()
+                        .filter_map(|(r, p)| match r {
+                            Rule::expr => Some(parse_expr(p.clone())),
+                            Rule::CM | Rule::LP | Rule::RP => None,
+                            _ => unreachable!("malformed item in enum initializer {}", p.to_json()),
+                        })
+                        .collect(),
+                }
+                .into_spanned(span),
+                _ => unreachable!("malformed enum assignment {}", expr.to_json()),
             }
         }
         err => unreachable!("{:?}", err),

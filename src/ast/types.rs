@@ -125,6 +125,8 @@ pub enum Expr {
     FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
     /// An ADT is initialized with field values.
     StructInit { name: String, fields: Vec<FieldInit> },
+    /// An ADT is initialized with field values.
+    EnumInit { ident: String, variant: String, items: Vec<Expression> },
     /// An array initializer `{0, 1, 2}`
     ArrayInit { items: Vec<Expression> },
     /// A literal value `1, "hello", true`
@@ -165,6 +167,7 @@ impl Expr {
                 format!("{}{}", start, rhs.val.as_ident_string())
             }
             Expr::StructInit { .. }
+            | Expr::EnumInit { .. }
             | Expr::Urnary { .. }
             | Expr::Binary { .. }
             | Expr::Parens(..)
@@ -176,8 +179,10 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ty {
+    Generic { ident: String, bound: () },
     Array { size: usize, ty: Box<Type> },
-    Adt(String),
+    Struct { ident: String, gen: Option<Generic> },
+    Enum { ident: String, gen: Option<Generic> },
     Ptr(Box<Type>),
     Ref(Box<Type>),
     String,
@@ -273,7 +278,9 @@ impl fmt::Display for Ty {
                     write!(f, "{}[{}]", ty.val, size)
                 }
             }
-            Ty::Adt(n) => write!(f, "struct {}", n),
+            Ty::Generic { ident, .. } => write!(f, "<{}>", ident),
+            Ty::Struct { ident, .. } => write!(f, "struct {}", ident),
+            Ty::Enum { ident, .. } => write!(f, "enum {}", ident),
             Ty::Ptr(t) => write!(f, "&{}", t.val),
             Ty::Ref(t) => write!(f, "*{}", t.val),
             Ty::String => write!(f, "string"),
@@ -294,8 +301,11 @@ impl TypeEquality for Ty {
                 s1.eq(s2) && t1.is_ty_eq(t2)
             }
             (Ty::Array { .. }, _) => false,
-            (Ty::Adt(n1), Ty::Adt(n2)) => n1 == n2,
-            (Ty::Adt(_), _) => false,
+            // TODO: generic comparison
+            (Ty::Struct { ident: n1, .. }, Ty::Struct { ident: n2, .. }) => n1 == n2,
+            (Ty::Struct { .. }, _) => false,
+            (Ty::Enum { ident: n1, .. }, Ty::Enum { ident: n2, .. }) => n1 == n2,
+            (Ty::Enum { .. }, _) => false,
             (Ty::Ptr(t1), Ty::Ptr(t2)) => t1.val.is_ty_eq(&t2.val),
             (Ty::Ptr(_), _) => false,
             (Ty::Ref(t1), Ty::Ref(t2)) => t1.val.is_ty_eq(&t2.val),
@@ -312,6 +322,10 @@ impl TypeEquality for Ty {
             (Ty::Bool, _) => false,
             (Ty::Void, Ty::Void) => true,
             (Ty::Void, _) => false,
+            (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => {
+                todo!("both generic ident match? = {}", i1.eq(i2))
+            }
+            (Ty::Generic { .. }, _) => todo!("mismatch types one is generic"),
         }
     }
 }
@@ -330,6 +344,49 @@ pub struct Block {
 }
 
 #[derive(Clone, Debug)]
+pub enum Binding {
+    Wild(String),
+    Value(Value),
+}
+
+impl fmt::Display for Binding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Wild(id) => write!(f, "{}", id),
+            Self::Value(id) => write!(f, "{}", id),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Pattern {
+    pub ident: String,
+    pub variant: String,
+    pub items: Vec<Binding>,
+    pub span: Range,
+}
+
+impl fmt::Display for Pattern {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Pattern { ident, variant, items, .. } = self;
+        write!(
+            f,
+            "{}::{}{}",
+            ident,
+            variant,
+            items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MatchArm {
+    pub pat: Pattern,
+    pub blk: Block,
+    pub span: Range,
+}
+
+#[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
     VarDecl(Vec<Var>),
@@ -341,6 +398,8 @@ pub enum Stmt {
     If { cond: Expression, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
     While { cond: Expression, stmt: Box<Statement> },
+    /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
+    Match { expr: Expression, arms: Vec<MatchArm> },
     /// Read statment `read(ident)`
     Read(String),
     /// Write statement `write(expr)`
@@ -372,6 +431,39 @@ pub struct Field {
 pub struct Struct {
     pub ident: String,
     pub fields: Vec<Field>,
+    pub generics: Vec<Generic>,
+    pub span: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct Variant {
+    /// The name of the variant `some`.
+    pub ident: String,
+    /// The types contained in the variants "tuple".
+    pub types: Vec<Type>,
+    pub span: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct Enum {
+    /// The name of the enum `<option>::none`.
+    pub ident: String,
+    /// The variants of the enum `option::<some(type, type)>`.
+    pub variants: Vec<Variant>,
+    pub generics: Vec<Generic>,
+    pub span: Range,
+}
+
+#[derive(Clone, Debug)]
+pub enum Adt {
+    Struct(Struct),
+    Enum(Enum),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Generic {
+    pub ident: String,
+    pub bound: (),
     pub span: Range,
 }
 
@@ -379,6 +471,7 @@ pub struct Struct {
 pub struct Func {
     pub ret: Type,
     pub ident: String,
+    pub generics: Vec<Generic>,
     pub params: Vec<Param>,
     pub stmts: Vec<Statement>,
     pub span: Range,
@@ -393,7 +486,7 @@ pub struct Var {
 
 #[derive(Clone, Debug)]
 pub enum Decl {
-    Adt(Struct),
+    Adt(Adt),
     Func(Func),
     Var(Var),
 }

@@ -2,7 +2,7 @@ program = { SOI ~ "\n"* ~ (decl)* ~ EOI }
 
 decl = { (func_decl | var_decl | adt_decl) }
 
-func_decl = { type_ ~ ident ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
+func_decl = { type_ ~ ident ~ generic ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
 
 param_list = { param ~ (CM ~ param)* }
 
@@ -10,13 +10,18 @@ param = { type_ ~ var_name }
 
 var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
-adt_decl = { STRUCT ~ ident ~ LBR ~ (field)+ ~ RBR ~ SC }
+adt_decl = {
+    (STRUCT ~ ident ~ generic ~ LBR ~ (field)+ ~ RBR ~ SC)
+    | (ENUM ~ ident ~ generic ~ LBR ~ (variant ~ (CM ~ variant)* ~ CM?)+ ~ RBR ~ SC)
+}
 
 field = { param ~ SC }
 
+variant = { ident ~ (LP ~ (type_ ~ (CM ~ type_)* ~ CM?)? ~ RP)? }
+
 var_name = { addrof? ~ ident ~ (LBK ~ integer ~ RBK)* }
 
-type_ = { (INT | CHAR | FLOAT | VOID | STRUCT ~ ident) ~ addrof? }
+type_ = { (INT | CHAR | FLOAT | VOID | STRUCT ~ ident ~ generic | ENUM ~ ident ~ generic | (!keyword ~ ident)) ~ addrof? }
 
 stmt = {
     assing
@@ -24,18 +29,21 @@ stmt = {
     | call_stmt
     | if_stmt
     | while_stmt
+    | match_stmt
     | ret_stmt
     | exit_stmt
     | block_stmt
 }
 
-assing = { expr ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
+assing = { expr ~ ASSIGN ~ (struct_assign | arr_init | enum_init | expr) ~ SC }
 
 call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
 
 if_stmt = { IF ~ LP ~ expr ~ RP ~ block_stmt ~ (ELSE ~ block_stmt)? }
 
 while_stmt = { WHILE ~ LP ~ expr ~ RP ~ stmt }
+
+match_stmt = { MATCH ~ expr ~ LBR ~ (arm)* ~ RBR ~ SC? }
 
 io_stmt = {
     (READ ~ LP ~ variable ~ RP ~ SC)
@@ -48,6 +56,10 @@ exit_stmt = { EXIT ~ SC }
 
 block_stmt = { LBR ~ (stmt)* ~ RBR }
 
+arm = { enum_init ~ ARROW ~ block_stmt ~ CM? }
+
+enum_init = { ident ~ "::" ~ ident ~ (LP ~ (expr ~ (CM ~ expr)* ~ CM?)? ~ RP)? }
+
 struct_assign = { ident ~ LBR ~ field_expr ~ (CM ~ field_expr)* ~ CM? ~ RBR }
 
 field_expr = { ident ~ COLON ~ (struct_assign | arr_init | expr) }
@@ -57,6 +69,7 @@ expr = { term ~ (op ~ term)* }
 term = {
     variable ~ !LP
     | const_
+    | enum_init
     | ident ~ LP ~ (arg_list)? ~ RP
     | NOT ~ expr
     | LP ~ expr ~ RP
@@ -90,6 +103,8 @@ op = {
     | AND
 }
 
+generic = { ("<" ~ ident ~ (CM ~ ident)* ~ ">")? }
+
 deref = { AMP | (MUL)* }
 
 addrof = { (MUL)* }
@@ -105,7 +120,7 @@ charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
 string = @{ DQ ~ ( DQ ~ DQ | (!DQ ~ ANY) )* ~ DQ }
 
 keyword = {
-    CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | VOID | WHILE | WRITE
+    CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | VOID | WHILE | WRITE | MATCH
 }
 
 // keywords
@@ -118,8 +133,10 @@ INT = { "int" }
 READ = { "read" }
 RETURN = { "return" }
 STRUCT = { "struct" }
+ENUM = { "enum" }
 VOID = { "void" }
 WHILE = { "while" }
+MATCH = { "match" }
 WRITE = { "write" }
 
 // operations

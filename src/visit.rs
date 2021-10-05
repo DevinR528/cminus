@@ -1,8 +1,8 @@
 use std::fmt::{self, Display, Write};
 
 use crate::ast::types::{
-    Block, Decl, Declaration, Expr, Expression, Field, FieldInit, Func, Param, Statement, Stmt,
-    Struct, Ty, Type, Value, Var,
+    Adt, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic,
+    MatchArm, Param, Statement, Stmt, Struct, Ty, Type, Value, Var, Variant, DUMMY,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -18,8 +18,8 @@ pub trait Visit<'ast>: Sized {
         walk_func(self, func)
     }
 
-    fn visit_adt(&mut self, struc: &'ast Struct) {
-        walk_adt(self, struc)
+    fn visit_adt(&mut self, adt: &'ast Adt) {
+        walk_adt(self, adt)
     }
 
     fn visit_var(&mut self, var: &Var) {
@@ -30,12 +30,20 @@ pub trait Visit<'ast>: Sized {
         walk_params(self, params)
     }
 
+    fn visit_generics(&mut self, generics: &[Generic]) {
+        walk_generics(self, generics)
+    }
+
     fn visit_ty(&mut self, ty: &Type) {
         // done
     }
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         walk_stmt(self, stmt)
+    }
+
+    fn visit_match_arm(&mut self, arms: &'ast [MatchArm]) {
+        walk_match_arm(self, arms)
     }
 
     fn visit_expr(&mut self, expr: &'ast Expression) {
@@ -62,8 +70,9 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
 }
 
 crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
-    let Func { ident, params, stmts, ret, span: _ } = func;
+    let Func { ident, params, stmts, ret, generics, span: _ } = func;
     // visit.visit_ident(ident);
+    visit.visit_generics(generics);
     visit.visit_params(params);
     visit.visit_ty(ret);
     for stmt in stmts {
@@ -71,11 +80,21 @@ crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
     }
 }
 
-crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, struc: &'ast Struct) {
-    let Struct { ident, fields, span: _ } = struc;
-    // visit.visit_ident(ident);
-    for Field { ident, ty, span: _ } in fields {
-        visit.visit_ty(ty);
+crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, adt: &'ast Adt) {
+    match adt {
+        Adt::Struct(Struct { ident, fields, generics, span: _ }) => {
+            // visit.visit_ident(ident);
+            for Field { ident, ty, span: _ } in fields {
+                visit.visit_ty(ty);
+            }
+        }
+        Adt::Enum(Enum { ident, variants, generics, .. }) => {
+            for Variant { ident, types, span: _ } in variants {
+                for ty in types {
+                    visit.visit_ty(ty);
+                }
+            }
+        }
     }
 }
 
@@ -87,6 +106,20 @@ crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &Var) {
 crate fn walk_params<'ast, V: Visit<'ast>>(visit: &mut V, params: &[Param]) {
     for Param { ident, ty, .. } in params {
         visit.visit_ty(ty);
+    }
+}
+
+crate fn walk_generics<'ast, V: Visit<'ast>>(visit: &mut V, generics: &[Generic]) {
+    for Generic { ident, bound, .. } in generics {
+        // visit.visit_ty(ty);
+    }
+}
+
+crate fn walk_match_arm<'ast, V: Visit<'ast>>(visit: &mut V, arms: &'ast [MatchArm]) {
+    for MatchArm { pat, blk: Block { stmts, .. }, .. } in arms {
+        for stmt in stmts {
+            visit.visit_stmt(stmt);
+        }
     }
 }
 
@@ -122,6 +155,10 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
         Stmt::While { cond, stmt } => {
             visit.visit_expr(cond);
             visit.visit_stmt(stmt);
+        }
+        Stmt::Match { expr, arms } => {
+            visit.visit_expr(expr);
+            visit.visit_match_arm(arms);
         }
         Stmt::Read(_) => {
             // variable ident
@@ -165,6 +202,11 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
         Expr::StructInit { name, fields } => {
             for FieldInit { ident, init, span: _ } in fields {
                 visit.visit_expr(init);
+            }
+        }
+        Expr::EnumInit { items, .. } => {
+            for expr in items {
+                visit.visit_expr(expr);
             }
         }
         Expr::ArrayInit { items } => {
@@ -260,8 +302,30 @@ impl<'ast> Visit<'ast> for DotWalker {
         );
     }
 
-    fn visit_adt(&mut self, struc: &'ast Struct) {
-        let Struct { ident, fields, span } = struc;
+    fn visit_adt(&mut self, adt: &'ast Adt) {
+        let (ident, fields): (_, Vec<_>) = match adt {
+            Adt::Struct(Struct { ident, fields, .. }) => (
+                ident.clone(),
+                fields.iter().map(|f| format!("field {}{}", f.ty.val, f.ident)).collect(),
+            ),
+            Adt::Enum(Enum { ident, variants, .. }) => (
+                ident.clone(),
+                variants
+                    .iter()
+                    .map(|v| {
+                        format!(
+                            "variant {}({})",
+                            v.ident,
+                            v.types
+                                .iter()
+                                .map(|t| t.val.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    })
+                    .collect(),
+            ),
+        };
         self.walk_deeper(
             |this| {
                 writeln!(
@@ -272,13 +336,9 @@ impl<'ast> Visit<'ast> for DotWalker {
                 writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id)
             },
             |this| {
-                for Field { ident, ty, .. } in fields {
+                for ident in &fields {
                     this.node_id += 1;
-                    writeln!(
-                        this.buf,
-                        "{}[label = \"field {} {}\", shape = ellipse]",
-                        this.node_id, ty.val, ident
-                    )?;
+                    writeln!(this.buf, "{}[label = \"{}\", shape = ellipse]", this.node_id, ident)?;
                     writeln!(this.buf, "{} -> {}", this.prev_id, this.node_id)?;
                 }
                 Ok(())
@@ -296,8 +356,23 @@ impl<'ast> Visit<'ast> for DotWalker {
         writeln!(&mut self.buf, "{} -> {}", self.prev_id, self.node_id);
     }
 
-    fn visit_params(&mut self, params: &[Param]) {
-        walk_params(self, params);
+    fn visit_match_arm(&mut self, arms: &'ast [MatchArm]) {
+        for MatchArm { pat, blk, span } in arms {
+            self.walk_deeper(
+                |this| {
+                    writeln!(
+                        &mut this.buf,
+                        "{}[label = \"arm {}\", shape = ellipse]",
+                        this.node_id, pat
+                    )?;
+                    writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
+                },
+                |this| {
+                    this.visit_stmt(&Stmt::Block(blk.clone()).into_spanned(DUMMY));
+                    Ok(())
+                },
+            );
+        }
     }
 
     fn visit_ty(&mut self, ty: &Type) {
@@ -409,6 +484,23 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| {
                         this.visit_expr(cond);
                         this.visit_stmt(stmt);
+                        Ok(())
+                    },
+                );
+            }
+            Stmt::Match { expr, arms } => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"match stmt\", shape = ellipse]",
+                            this.node_id
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
+                    },
+                    |this| {
+                        this.visit_expr(expr);
+                        this.visit_match_arm(arms);
                         Ok(())
                     },
                 );
@@ -605,6 +697,24 @@ impl<'ast> Visit<'ast> for DotWalker {
                     |this| {
                         for FieldInit { ident, init, span } in fields {
                             this.visit_expr(init);
+                        }
+                        Ok(())
+                    },
+                );
+            }
+            Expr::EnumInit { ident, variant, items } => {
+                self.walk_deeper(
+                    |this| {
+                        writeln!(
+                            &mut this.buf,
+                            "{}[label = \"enum initializer {}::{}\", shape = ellipse]",
+                            this.node_id, ident, variant
+                        )?;
+                        writeln!(&mut this.buf, "{} -> {}", this.prev_id, this.node_id)
+                    },
+                    |this| {
+                        for expr in items {
+                            this.visit_expr(expr);
                         }
                         Ok(())
                     },

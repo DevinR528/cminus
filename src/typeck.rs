@@ -7,7 +7,7 @@ use pest::prec_climber::Operator;
 
 use crate::{
     ast::types::{
-        BinOp, Block, Decl, Expr, Expression, Field, FieldInit, Func, Param, Range, Statement,
+        Adt, BinOp, Block, Decl, Expr, Expression, Field, FieldInit, Func, Param, Range, Statement,
         Stmt, Struct, Ty, Type, TypeEquality, UnOp, Val, Value, Var, DUMMY,
     },
     error::Error,
@@ -137,9 +137,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         self.curr_fn.take();
     }
 
-    fn visit_adt(&mut self, struc: &'ast Struct) {
-        if self.struct_fields.insert(struc.ident.clone(), struc.fields.clone()).is_some() {
-            self.errors.push(Error::error_with_span(self, struc.span, "duplicate struct names"));
+    fn visit_adt(&mut self, adt: &'ast Adt) {
+        match adt {
+            Adt::Struct(struc) => {
+                if self.struct_fields.insert(struc.ident.clone(), struc.fields.clone()).is_some() {
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        struc.span,
+                        "duplicate struct names",
+                    ));
+                }
+            }
+            Adt::Enum(en) => todo!(),
         }
     }
 
@@ -363,9 +372,51 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         ));
                     }
                 }
-                if self.expr_ty.insert(expr, Ty::Adt(name.clone())).is_some() {
+                if self
+                    .expr_ty
+                    .insert(expr, Ty::Struct { ident: name.clone(), gen: None })
+                    .is_some()
+                {
                     unimplemented!("No duplicates")
                 }
+            }
+            Expr::StructInit { name, fields } => {
+                let field_tys =
+                    self.struct_fields.get(name).expect("initialized undefined struct").clone();
+
+                for FieldInit { ident, init, .. } in fields {
+                    self.visit_expr(init);
+
+                    let fty = field_tys.iter().find_map(|f| {
+                        if f.ident == *ident {
+                            Some(&f.ty.val)
+                        } else {
+                            None
+                        }
+                    });
+                    let exprty = self.expr_ty.get(&*init);
+                    if !exprty.is_ty_eq(&fty) {
+                        self.errors.push(Error::error_with_span(
+                            self,
+                            init.span,
+                            &format!(
+                                "field initialized with mismatched type {} == {}",
+                                exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                fty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        ));
+                    }
+                }
+                if self
+                    .expr_ty
+                    .insert(expr, Ty::Struct { ident: name.clone(), gen: None })
+                    .is_some()
+                {
+                    unimplemented!("No duplicates")
+                }
+            }
+            Expr::EnumInit { ident, variant, items } => {
+                todo!()
             }
             Expr::ArrayInit { items } => {
                 for item in items {
@@ -440,8 +491,8 @@ fn check_field_access<'ast>(
 ) -> Option<Ty> {
     let lhs_ty = tcxt.expr_ty.get(lhs);
 
-    let (name, fields) = if let Some(Ty::Adt(name)) = lhs_ty.and_then(|t| t.resolve()) {
-        (name.clone(), tcxt.struct_fields.get(&name).expect("no struct definition found"))
+    let (name, fields) = if let Some(Ty::Struct { ident, .. }) = lhs_ty.and_then(|t| t.resolve()) {
+        (ident.clone(), tcxt.struct_fields.get(&ident).expect("no struct definition found"))
     } else {
         // TODO: this is unrecoverable ??
         panic!("{}", Error::error_with_span(tcxt, lhs.span, "not valid field access"));
@@ -520,6 +571,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
         | Expr::Parens(_)
         | Expr::Call { .. }
         | Expr::StructInit { .. }
+        | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
         | Expr::Value(_) => todo!(),
     }
@@ -611,6 +663,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
                 self.visit_stmt(stmt);
             }
+            Stmt::Match { expr, arms } => todo!("type check match whaaaaa"),
             Stmt::Read(id) => {
                 // TODO: writable trait
                 // id must be something that can be from_string or something
@@ -675,6 +728,7 @@ fn resolve_ty(expr: &Expression, ty: Ty) -> Option<Ty> {
         | Expr::Call { .. }
         | Expr::FieldAccess { .. }
         | Expr::StructInit { .. }
+        | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
         | Expr::Value(_) => Some(ty),
     }
@@ -707,7 +761,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
             }
         },
         Expr::FieldAccess { lhs, rhs } => {
-            if let Some(Ty::Adt(name)) = tcxt.expr_ty.get(&**lhs) {
+            if let Some(Ty::Struct { ident: name, .. }) = tcxt.expr_ty.get(&**lhs) {
                 let fields = tcxt.struct_fields.get(name).cloned().unwrap_or_default();
 
                 walk_field_access(tcxt, &fields, rhs)
@@ -731,6 +785,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
         | Expr::Parens(_)
         | Expr::Call { .. }
         | Expr::StructInit { .. }
+        | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
         | Expr::Value(_) => {
             panic!(
@@ -776,7 +831,7 @@ fn walk_field_access(
         },
         Expr::FieldAccess { lhs, rhs } => {
             let id = lhs.val.as_ident_string();
-            if let Some(Ty::Adt(name)) = tcxt.type_of_ident(&id, expr.span).and_then(|t| t.resolve()) {
+            if let Some(Ty::Struct { ident: name, .. }) = tcxt.type_of_ident(&id, expr.span).and_then(|t| t.resolve()) {
                 // TODO: this is kinda ugly because of the clone but it complains about tcxt otherwise
                 // or default not being impl'ed \o/
                 let fields = tcxt.struct_fields.get(&name).cloned().unwrap_or_default();
@@ -797,6 +852,7 @@ fn walk_field_access(
         | Expr::Parens(_)
         | Expr::Call { .. }
         | Expr::StructInit { .. }
+        | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
         | Expr::Value(_) => {
             panic!(
@@ -837,12 +893,14 @@ fn fold_ty(lhs: Option<&Ty>, rhs: Option<&Ty>, op: &BinOp) -> Option<Ty> {
         },
         (Ty::Bool, _) => None,
         // TODO: deal with structs expr will need field access
-        (Ty::Adt(_), _) => todo!(""),
+        (Ty::Struct { .. }, _) => todo!(""),
+        (Ty::Enum { .. }, _) => todo!(""),
         // TODO: we should NOT get here (I think...)??
         (Ty::Ptr(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
         (r @ Ty::Ref(_), t @ Ty::Ref(_)) => fold_ty(r.resolve().as_ref(), t.resolve().as_ref(), op),
         (r @ Ty::Ref(_), t) => fold_ty(r.resolve().as_ref(), Some(t), op),
         (r, t @ Ty::Ref(_)) => fold_ty(Some(r), t.resolve().as_ref(), op),
+        (Ty::Generic { .. }, _) => todo!("GENERICS yikes"),
     };
     // println!("fold result: {:?}", res);
     res
