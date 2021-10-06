@@ -432,16 +432,14 @@ fn parse_match_arm_pat(pat: Pair<'_, Rule>) -> Pattern {
     }
 }
 
-fn parse_generics(generics: Pair<Rule>) -> Vec<Generic> {
+fn parse_generics(generics: Pair<Rule>) -> Vec<Type> {
     let span = to_span(&generics);
     generics
         .into_inner()
         .map(|g| (g.as_rule(), g))
         .filter_map(|(r, g)| match r {
             Rule::CM => None,
-            Rule::ident => {
-                Some(Generic { ident: g.as_str().to_string(), bound: (), span: to_span(&g) })
-            }
+            Rule::type_ => Some(parse_ty(g)),
             _ => unreachable!("malformed generic type in declaration"),
         })
         .collect()
@@ -468,7 +466,7 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
             let indirection = addr.as_str().matches('*').count();
             build_recursive_pointer_ty(
                 indirection,
-                Ty::Struct { ident: ident.as_str().to_string(), gen: None }
+                Ty::Struct { ident: ident.as_str().to_string(), gen: parse_generics(gen.clone()) }
                     .into_spanned(s.as_span().start()..addr.as_span().end()),
                 (s.as_span().start()..addr.as_span().end()).into(),
             )
@@ -478,7 +476,7 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
             let indirection = addr.as_str().matches('*').count();
             build_recursive_pointer_ty(
                 indirection,
-                Ty::Enum { ident: ident.as_str().to_string(), gen: None }
+                Ty::Enum { ident: ident.as_str().to_string(), gen: parse_generics(gen.clone()) }
                     .into_spanned(s.as_span().start()..addr.as_span().end()),
                 (s.as_span().start()..addr.as_span().end()).into(),
             )

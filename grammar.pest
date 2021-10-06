@@ -103,7 +103,7 @@ op = {
     | AND
 }
 
-generic = { ("<" ~ ident ~ (CM ~ ident)* ~ ">")? }
+generic = { ("<" ~ type_ ~ (CM ~ type_)* ~ ">")? }
 
 deref = { AMP | (MUL)* }
 

@@ -177,12 +177,12 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     Generic { ident: String, bound: () },
     Array { size: usize, ty: Box<Type> },
-    Struct { ident: String, gen: Option<Generic> },
-    Enum { ident: String, gen: Option<Generic> },
+    Struct { ident: String, gen: Vec<Type> },
+    Enum { ident: String, gen: Vec<Type> },
     Ptr(Box<Type>),
     Ref(Box<Type>),
     String,
@@ -279,8 +279,24 @@ impl fmt::Display for Ty {
                 }
             }
             Ty::Generic { ident, .. } => write!(f, "<{}>", ident),
-            Ty::Struct { ident, .. } => write!(f, "struct {}", ident),
-            Ty::Enum { ident, .. } => write!(f, "enum {}", ident),
+            Ty::Struct { ident, gen, .. } => write!(
+                f,
+                "struct {}{}",
+                ident,
+                format!(
+                    "<{}>",
+                    gen.iter().map(|g| g.val.to_string()).collect::<Vec<_>>().join(", ")
+                )
+            ),
+            Ty::Enum { ident, gen, .. } => write!(
+                f,
+                "enum {}{}",
+                ident,
+                format!(
+                    "<{}>",
+                    gen.iter().map(|g| g.val.to_string()).collect::<Vec<_>>().join(", ")
+                )
+            ),
             Ty::Ptr(t) => write!(f, "&{}", t.val),
             Ty::Ref(t) => write!(f, "*{}", t.val),
             Ty::String => write!(f, "string"),
@@ -431,7 +447,7 @@ pub struct Field {
 pub struct Struct {
     pub ident: String,
     pub fields: Vec<Field>,
-    pub generics: Vec<Generic>,
+    pub generics: Vec<Type>,
     pub span: Range,
 }
 
@@ -450,7 +466,7 @@ pub struct Enum {
     pub ident: String,
     /// The variants of the enum `option::<some(type, type)>`.
     pub variants: Vec<Variant>,
-    pub generics: Vec<Generic>,
+    pub generics: Vec<Type>,
     pub span: Range,
 }
 
@@ -471,7 +487,7 @@ pub struct Generic {
 pub struct Func {
     pub ret: Type,
     pub ident: String,
-    pub generics: Vec<Generic>,
+    pub generics: Vec<Type>,
     pub params: Vec<Param>,
     pub stmts: Vec<Statement>,
     pub span: Range,

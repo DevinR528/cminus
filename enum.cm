@@ -10,7 +10,7 @@ enum thing {
 void main() {
     enum thing x;
     x = thing::a;
-    enum option opt;
+    enum option<thing> opt;
     opt = option::some(x);
     match opt {
         option::some(a) -> {

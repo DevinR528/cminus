@@ -30,9 +30,7 @@ pub trait Visit<'ast>: Sized {
         walk_params(self, params)
     }
 
-    fn visit_generics(&mut self, generics: &[Generic]) {
-        walk_generics(self, generics)
-    }
+    fn visit_generics(&mut self, generics: &[Type]) {}
 
     fn visit_ty(&mut self, ty: &Type) {
         // done
@@ -106,12 +104,6 @@ crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &Var) {
 crate fn walk_params<'ast, V: Visit<'ast>>(visit: &mut V, params: &[Param]) {
     for Param { ident, ty, .. } in params {
         visit.visit_ty(ty);
-    }
-}
-
-crate fn walk_generics<'ast, V: Visit<'ast>>(visit: &mut V, generics: &[Generic]) {
-    for Generic { ident, bound, .. } in generics {
-        // visit.visit_ty(ty);
     }
 }
 

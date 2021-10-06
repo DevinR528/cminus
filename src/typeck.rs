@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
 };
 
@@ -7,8 +7,8 @@ use pest::prec_climber::Operator;
 
 use crate::{
     ast::types::{
-        Adt, BinOp, Block, Decl, Expr, Expression, Field, FieldInit, Func, Param, Range, Statement,
-        Stmt, Struct, Ty, Type, TypeEquality, UnOp, Val, Value, Var, DUMMY,
+        Adt, BinOp, Block, Decl, Expr, Expression, Field, FieldInit, Func, Generic, Param, Range,
+        Statement, Stmt, Struct, Ty, Type, TypeEquality, UnOp, Val, Value, Var, Variant, DUMMY,
     },
     error::Error,
     visit::Visit,
@@ -32,6 +32,60 @@ impl VarInFunction {
 
     fn insert(&mut self, rng: Range, name: String) -> Option<String> {
         self.func_spans.insert(rng, name)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Node {
+    Func(String),
+    Enum(String),
+    Struct(String),
+}
+
+impl Node {
+    fn type_parent(ty: &Ty) -> Option<Node> {
+        match ty {
+            Ty::Generic { ident, bound } => None,
+            Ty::Array { size, ty } => todo!(),
+            Ty::Struct { ident, gen } => Some(Node::Struct(ident.clone())),
+            Ty::Enum { ident, gen } => Some(Node::Enum(ident.clone())),
+            Ty::Ptr(_)
+            | Ty::Ref(_)
+            | Ty::String
+            | Ty::Int
+            | Ty::Char
+            | Ty::Float
+            | Ty::Bool
+            | Ty::Void => None,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+crate struct GenericResolver {
+    node_generic: BTreeMap<Node, Vec<Ty>>,
+    node_resolved: BTreeMap<Node, Vec<Ty>>,
+}
+
+impl GenericResolver {
+    fn get_resolved(&self, node: &Node, idx: usize) -> Option<&Ty> {
+        if let Some(res) = self.node_resolved.get(node) {
+            res.get(idx)
+        } else {
+            None
+        }
+    }
+
+    fn insert_generic(&mut self, node: Node, gen: Ty) {
+        self.node_generic.entry(node).or_default().push(gen);
+    }
+
+    fn push_resolved(&mut self, node: &Node, gen: Ty) -> bool {
+        if let Some(res) = self.node_resolved.get_mut(node) {
+            res.push(gen);
+            return true;
+        }
+        false
     }
 }
 
@@ -60,6 +114,10 @@ crate struct TyCheckRes<'ast, 'input> {
     stmt_func: HashMap<&'ast Stmt, String>,
     /// A mapping of struct name to the fields of that struct.
     struct_fields: HashMap<String, Vec<Field>>,
+    /// A mapping of enum name to the variants of that enum.
+    enum_fields: HashMap<String, (Vec<Type>, Vec<Variant>)>,
+    /// Resolve generic types at the end of type checking.
+    generic_res: GenericResolver,
     /// Errors collected during parsing and type checking.
     errors: Vec<Error<'input>>,
     // TODO:
@@ -96,13 +154,68 @@ impl<'input> TyCheckRes<'_, 'input> {
         Ok(())
     }
 
-    // TODO: struct declarations
     fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
         self.var_func
             .get(span)
             .and_then(|f| self.func_refs.get(f).and_then(|s| s.get(id)))
             .or_else(|| self.global.get(id))
             .cloned()
+    }
+}
+
+fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str) -> Option<Ty> {
+    Some(match id {
+        "bool" => Ty::Bool,
+        "int" => Ty::Int,
+        "char" => Ty::Char,
+        "float" => Ty::Float,
+        "string" => Ty::String,
+        s => tcxt
+            .struct_fields
+            .get(s)
+            .map(|fields| Ty::Struct {
+                ident: s.to_owned(),
+                gen: fields.iter().map(|f| f.ty.clone()).collect(),
+            })
+            .or_else(|| {
+                tcxt.enum_fields.get(s).map(|variants| Ty::Enum {
+                    ident: s.to_owned(),
+                    gen: {
+                        let set: HashSet<Ty> = variants
+                            .iter()
+                            .map(|v| v.types.iter().map(|t| t.val.clone()))
+                            .flatten()
+                            .collect();
+                        // TODO: this could be out of order
+                        set.into_iter().map(|t| t.into_spanned(DUMMY)).collect()
+                    },
+                })
+            })?,
+    })
+}
+
+fn collect_generics(tcxt: &mut TyCheckRes<'_, '_>, ty: &Type, parent: Option<Node>) -> Ty {
+    match &ty.val {
+        Ty::Generic { ident, bound } => {
+            let res = check_type_arg(tcxt, ident).expect("no type found for generic argument");
+            // TODO: add to generic resolver
+            res
+        }
+        Ty::Array { size, ty } => Ty::Array {
+            size: *size,
+            ty: box collect_generics(tcxt, ty, parent).into_spanned(DUMMY),
+        },
+        Ty::Struct { ident, gen } => todo!(),
+        Ty::Enum { ident, gen } => Ty::Enum {
+            ident: ident.clone(),
+            gen: gen
+                .iter()
+                .map(|t| collect_generics(tcxt, t, parent.clone()).into_spanned(DUMMY))
+                .collect(),
+        },
+        Ty::Ptr(t) => collect_generics(tcxt, t, parent),
+        Ty::Ref(t) => collect_generics(tcxt, t, parent),
+        _ => ty.val.clone(),
     }
 }
 
@@ -123,6 +236,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     func.span,
                     "multiple function return types",
                 ));
+            }
+            for gen in &func.generics {
+                self.generic_res.insert_generic(Node::Func(func.ident.clone()), gen.val.clone());
             }
         } else {
             panic!(
@@ -147,13 +263,33 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         "duplicate struct names",
                     ));
                 }
+                for gen in &struc.generics {
+                    self.generic_res
+                        .insert_generic(Node::Struct(struc.ident.clone()), gen.val.clone());
+                }
             }
-            Adt::Enum(en) => todo!(),
+            Adt::Enum(en) => {
+                if self
+                    .enum_fields
+                    .insert(en.ident.clone(), (en.generics.clone(), en.variants.clone()))
+                    .is_some()
+                {
+                    self.errors.push(Error::error_with_span(
+                        self,
+                        en.span,
+                        "duplicate struct names",
+                    ));
+                }
+                for gen in &en.generics {
+                    self.generic_res.insert_generic(Node::Enum(en.ident.clone()), gen.val.clone());
+                }
+            }
         }
     }
 
     fn visit_var(&mut self, var: &Var) {
         if let Some(fn_id) = self.curr_fn.clone() {
+            let ty = collect_generics(self, &var.ty, Node::type_parent(&var.ty.val));
             if self
                 .func_refs
                 .entry(fn_id)
@@ -170,8 +306,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         } else if self.global.insert(var.ident.clone(), var.ty.val.clone()).is_some() {
             self.errors.push(Error::error_with_span(self, var.span, "global variable name error"));
         }
-
-        crate::visit::walk_var(self, var)
     }
 
     fn visit_params(&mut self, params: &[Param]) {
@@ -372,51 +506,49 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         ));
                     }
                 }
+                // TODO: generics
                 if self
                     .expr_ty
-                    .insert(expr, Ty::Struct { ident: name.clone(), gen: None })
-                    .is_some()
-                {
-                    unimplemented!("No duplicates")
-                }
-            }
-            Expr::StructInit { name, fields } => {
-                let field_tys =
-                    self.struct_fields.get(name).expect("initialized undefined struct").clone();
-
-                for FieldInit { ident, init, .. } in fields {
-                    self.visit_expr(init);
-
-                    let fty = field_tys.iter().find_map(|f| {
-                        if f.ident == *ident {
-                            Some(&f.ty.val)
-                        } else {
-                            None
-                        }
-                    });
-                    let exprty = self.expr_ty.get(&*init);
-                    if !exprty.is_ty_eq(&fty) {
-                        self.errors.push(Error::error_with_span(
-                            self,
-                            init.span,
-                            &format!(
-                                "field initialized with mismatched type {} == {}",
-                                exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                                fty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                            ),
-                        ));
-                    }
-                }
-                if self
-                    .expr_ty
-                    .insert(expr, Ty::Struct { ident: name.clone(), gen: None })
+                    .insert(expr, Ty::Struct { ident: name.clone(), gen: vec![] })
                     .is_some()
                 {
                     unimplemented!("No duplicates")
                 }
             }
             Expr::EnumInit { ident, variant, items } => {
-                todo!()
+                let variant_tys =
+                    self.enum_fields.get(ident).expect("initialized undefined enum").clone();
+                let found_variant = variant_tys
+                    .iter()
+                    .find(|v| v.ident == *variant)
+                    .expect("no variant found by that name");
+
+                for (idx, item) in items.iter().enumerate() {
+                    self.visit_expr(item);
+
+                    let exprty = self.expr_ty.get(&*item);
+                    let variant_ty = found_variant.types.get(idx).map(|t| &t.val);
+                    if !exprty.is_ty_eq(&variant_ty) {
+                        self.errors.push(Error::error_with_span(
+                            self,
+                            item.span,
+                            &format!(
+                                "enum tuple initialized with mismatched type {} == {}",
+                                exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                variant_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        ));
+                    }
+                }
+
+                // TODO: generics
+                if self
+                    .expr_ty
+                    .insert(expr, Ty::Enum { ident: ident.clone(), gen: vec![] })
+                    .is_some()
+                {
+                    unimplemented!("No duplicates")
+                }
             }
             Expr::ArrayInit { items } => {
                 for item in items {
@@ -663,7 +795,19 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
                 self.visit_stmt(stmt);
             }
-            Stmt::Match { expr, arms } => todo!("type check match whaaaaa"),
+            Stmt::Match { expr, arms } => {
+                let match_ty = self.tcxt.expr_ty.get(expr);
+                if !matches!(match_ty, Some(Ty::Enum { .. })) {
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        &format!(
+                            "must match a valid enum found: {}",
+                            match_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
+                        ),
+                    ));
+                }
+            }
             Stmt::Read(id) => {
                 // TODO: writable trait
                 // id must be something that can be from_string or something
