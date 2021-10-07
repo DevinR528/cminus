@@ -198,6 +198,17 @@ impl Ty {
         Spanned { val: self, span: span.into() }
     }
 
+    /// Returns the name of the generic `T`.
+    ///
+    /// Will panic if called for non generic type.
+    crate fn generic_id(&self) -> &str {
+        if let Self::Generic { ident, .. } = self {
+            ident
+        } else {
+            unreachable!("called for non generic type")
+        }
+    }
+
     crate fn reference(&self, mut deref: usize) -> Option<Self> {
         let mut indirection = Some(self);
         let mut stop = false;
@@ -283,19 +294,27 @@ impl fmt::Display for Ty {
                 f,
                 "struct {}{}",
                 ident,
-                format!(
-                    "<{}>",
-                    gen.iter().map(|g| g.val.to_string()).collect::<Vec<_>>().join(", ")
-                )
+                if gen.is_empty() {
+                    "".to_owned()
+                } else {
+                    format!(
+                        "<{}>",
+                        gen.iter().map(|g| g.val.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                },
             ),
             Ty::Enum { ident, gen, .. } => write!(
                 f,
                 "enum {}{}",
                 ident,
-                format!(
-                    "<{}>",
-                    gen.iter().map(|g| g.val.to_string()).collect::<Vec<_>>().join(", ")
-                )
+                if gen.is_empty() {
+                    "".to_owned()
+                } else {
+                    format!(
+                        "<{}>",
+                        gen.iter().map(|g| g.val.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                }
             ),
             Ty::Ptr(t) => write!(f, "&{}", t.val),
             Ty::Ref(t) => write!(f, "*{}", t.val),

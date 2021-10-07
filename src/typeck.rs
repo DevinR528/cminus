@@ -65,6 +65,7 @@ impl Node {
 crate struct GenericResolver {
     node_generic: BTreeMap<Node, Vec<Ty>>,
     node_resolved: BTreeMap<Node, Vec<Ty>>,
+    res_stack: Vec<BTreeMap<String, Ty>>,
 }
 
 impl GenericResolver {
@@ -163,8 +164,8 @@ impl<'input> TyCheckRes<'_, 'input> {
     }
 }
 
-fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str) -> Option<Ty> {
-    Some(match id {
+fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str) -> Ty {
+    match id {
         "bool" => Ty::Bool,
         "int" => Ty::Int,
         "char" => Ty::Char,
@@ -178,26 +179,19 @@ fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str) -> Option<Ty> {
                 gen: fields.iter().map(|f| f.ty.clone()).collect(),
             })
             .or_else(|| {
-                tcxt.enum_fields.get(s).map(|variants| Ty::Enum {
+                tcxt.enum_fields.get(s).map(|(generics, _variants)| Ty::Enum {
                     ident: s.to_owned(),
-                    gen: {
-                        let set: HashSet<Ty> = variants
-                            .iter()
-                            .map(|v| v.types.iter().map(|t| t.val.clone()))
-                            .flatten()
-                            .collect();
-                        // TODO: this could be out of order
-                        set.into_iter().map(|t| t.into_spanned(DUMMY)).collect()
-                    },
+                    gen: generics.clone(),
                 })
-            })?,
-    })
+            })
+            .unwrap_or(Ty::Generic { ident: s.to_string(), bound: () }),
+    }
 }
 
 fn collect_generics(tcxt: &mut TyCheckRes<'_, '_>, ty: &Type, parent: Option<Node>) -> Ty {
     match &ty.val {
         Ty::Generic { ident, bound } => {
-            let res = check_type_arg(tcxt, ident).expect("no type found for generic argument");
+            let res = check_type_arg(tcxt, ident);
             // TODO: add to generic resolver
             res
         }
@@ -222,7 +216,10 @@ fn collect_generics(tcxt: &mut TyCheckRes<'_, '_>, ty: &Type, parent: Option<Nod
 impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
+            // Current function scope (also the name)
             self.curr_fn = Some(func.ident.clone());
+
+            //
             if self.var_func.insert(func.span, func.ident.clone()).is_some() {
                 self.errors.push(Error::error_with_span(
                     self,
@@ -230,6 +227,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     "function takes up same span as other function",
                 ));
             }
+
             if self.func_ret.insert(func.ident.clone(), func.ret.val.clone()).is_some() {
                 self.errors.push(Error::error_with_span(
                     self,
@@ -237,9 +235,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     "multiple function return types",
                 ));
             }
+
+            let mut generics = BTreeMap::new();
             for gen in &func.generics {
+                generics.insert(gen.val.generic_id().to_owned(), gen.val.clone());
                 self.generic_res.insert_generic(Node::Func(func.ident.clone()), gen.val.clone());
             }
+            self.generic_res.res_stack.push(generics);
         } else {
             panic!(
                 "{}",
@@ -516,8 +518,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::EnumInit { ident, variant, items } => {
-                let variant_tys =
+                let (generics, variant_tys) =
                     self.enum_fields.get(ident).expect("initialized undefined enum").clone();
+
                 let found_variant = variant_tys
                     .iter()
                     .find(|v| v.ident == *variant)
