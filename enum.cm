@@ -7,7 +7,7 @@ enum thing {
     a, b, c, d, e, f, g
 };
 
-void foo<T>(T it) {
+enum option<T> foo<T>(T it) {
     enum option<T> opt;
     opt = option::some(it);
 }
@@ -15,14 +15,19 @@ void foo<T>(T it) {
 void main() {
     enum thing x;
     x = thing::a;
+    
     enum option<thing> opt;
     opt = option::some(x);
-    match opt {
-        option::some(a) -> {
-            write(a);
-        },
-        option::none -> {
-            exit;
-        }
-    }
+
+    enum option<int> num;
+    num = foo::<int>(10);
+
+    // match opt {
+    //     option::some(a) -> {
+    //         write(a);
+    //     },
+    //     option::none -> {
+    //         exit;
+    //     }
+    // }
 }

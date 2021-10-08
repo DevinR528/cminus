@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::{
     ast::types::{Expr, Ty, Type, Var, DUMMY},
@@ -39,19 +39,6 @@ impl Node {
 }
 
 #[derive(Debug)]
-crate struct GenericParam {
-    ident: String,
-    owner: Ty,
-}
-
-#[derive(Debug)]
-crate struct GenericParamStack {
-    stack: Vec<Ty>,
-    owner: Ty,
-    name: String,
-}
-
-#[derive(Debug)]
 crate enum SubsTy<'ast> {
     /// The parent type will always be `Ty::Generic`
     Parent(Ty, Vec<SubsTy<'ast>>),
@@ -62,12 +49,24 @@ crate enum SubsTy<'ast> {
 }
 
 #[derive(Debug, Default)]
+struct GenericParam {
+    generics: BTreeSet<String>,
+    children: BTreeMap<Node, GenericParam>,
+}
+
+impl GenericParam {
+    fn insert_generic(&mut self, id: &str) {
+        self.generics.insert(id.to_owned());
+    }
+}
+
+#[derive(Debug, Default)]
 crate struct GenericResolver<'ast> {
     /// Mapping of region name (function or struct/enum) to the substitution types that
     /// represent each generic.
     node_generic: BTreeMap<Node, BTreeMap<String, SubsTy<'ast>>>,
     node_resolved: BTreeMap<Node, Vec<Ty>>,
-    item_generics: Vec<GenericParamStack>,
+    item_generics: BTreeMap<Node, GenericParam>,
 }
 
 impl<'ast> GenericResolver<'ast> {
@@ -79,43 +78,32 @@ impl<'ast> GenericResolver<'ast> {
         }
     }
 
-    crate fn has_generics(&self, id: &str) -> bool {
-        self.item_generics.iter().any(|g| g.name == id)
+    crate fn has_generics(&self, node: &Node) -> bool {
+        self.item_generics.contains_key(node)
     }
 
-    crate fn walk_generic_arg_type(&mut self, node: &Node, ty: &Ty) {
+    crate fn collect_generic_params(&mut self, node: &Node, ty: &Ty) {
         match ty {
             Ty::Generic { ident, bound } => {
-                if let Some(item) = self.item_generics.last_mut() {
-                    item.stack.push(ty.clone())
-                }
+                self.item_generics.entry(node.clone()).or_default().insert_generic(ident);
             }
             Ty::Array { size, ty } => todo!(),
             Ty::Struct { ident, gen } => {
-                let stack =
-                    GenericParamStack { stack: vec![], owner: ty.clone(), name: ident.clone() };
-                self.item_generics.push(stack);
                 for t in gen {
-                    self.walk_generic_arg_type(node, &t.val);
+                    self.collect_generic_params(node, &t.val);
                 }
             }
             Ty::Enum { ident, gen } => {
-                let stack =
-                    GenericParamStack { stack: vec![], owner: ty.clone(), name: ident.clone() };
-                self.item_generics.push(stack);
                 for t in gen {
-                    self.walk_generic_arg_type(node, &t.val);
+                    self.collect_generic_params(node, &t.val);
                 }
             }
             Ty::Func { ident, ret, params } => {
-                let mut stack =
-                    GenericParamStack { stack: vec![], owner: ty.clone(), name: ident.clone() };
                 if let Ty::Generic { .. } = &**ret {
-                    stack.stack.push((**ret).clone());
+                    self.collect_generic_params(node, ret);
                 }
-                self.item_generics.push(stack);
                 for t in params {
-                    self.walk_generic_arg_type(node, t);
+                    self.collect_generic_params(node, t);
                 }
             }
             _ => {
@@ -124,42 +112,26 @@ impl<'ast> GenericResolver<'ast> {
         }
     }
 
-    crate fn insert_generic(&mut self, node: Node, gen: Ty) {
-        self.walk_generic_arg_type(&node, &gen);
-    }
+    fn push_generic_child(
+        &mut self,
+        stack: &[Node],
+        expr: &TyRegion<'ast>,
+        id: &str,
+    ) -> Option<GenericParam> {
+        println!("GEN STACK {:?} {:?}\n", stack, expr);
+        let mut iter = stack.iter();
+        let mut gp = self.item_generics.get_mut(iter.next()?)?;
 
-    crate fn push_generic_child(&mut self, stack: &[Node], expr: &TyRegion<'ast>) {
-        // if let Some(linked) = self.node_generic.get_mut(node) {
-        //     if let Some(sub) = linked.get_mut(id) {
-        //         match sub {
-        //             SubsTy::Parent(gen, kids) => {
-        //                 // TODO: type error
-        //                 assert!(gen.generic_id() == id);
-
-        //                 kids.push(SubsTy::UnSubed(
-        //                     Ty::Generic { ident: id.to_owned(), bound: () },
-        //                     expr.clone(),
-        //                 ))
-        //             }
-        //             SubsTy::UnSubed(_, ex) => todo!(),
-        //             SubsTy::Resolved(_) => todo!(),
-        //         }
-        //     }
-        // }
+        let mut generics = BTreeSet::new();
+        generics.insert(id.to_owned());
+        gp.children
+            .insert(iter.next()?.clone(), GenericParam { generics, children: BTreeMap::default() })
     }
 
     crate fn push_resolved_child(&mut self, stack: &[Node], ty: &Ty) {
         for node in stack.iter().rev() {
             self.node_resolved.entry(node.clone()).or_default().push(ty.clone());
         }
-    }
-
-    crate fn push_resolved(&mut self, node: &Node, gen: Ty) -> bool {
-        if let Some(res) = self.node_resolved.get_mut(node) {
-            res.push(gen);
-            return true;
-        }
-        false
     }
 }
 
@@ -188,15 +160,6 @@ crate fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str) -> Ty {
     }
 }
 
-crate fn generic_usage(
-    tcxt: &mut TyCheckRes<'_, '_>,
-    ty: Option<&Ty>,
-    expr: &Expr,
-    expected: Option<&Ty>,
-) -> Ty {
-    todo!()
-}
-
 crate fn collect_generic_usage<'ast>(
     tcxt: &mut TyCheckRes<'ast, '_>,
     ty: &Ty,
@@ -209,7 +172,7 @@ crate fn collect_generic_usage<'ast>(
             let res = check_type_arg(tcxt, outer_name);
             match &res {
                 Ty::Generic { ident, bound } => {
-                    tcxt.generic_res.push_generic_child(stack, expr);
+                    tcxt.generic_res.push_generic_child(stack, expr, ident);
                 }
                 Ty::Array { size, ty } => todo!(),
                 Ty::Struct { ident, gen } => todo!(),
@@ -218,7 +181,7 @@ crate fn collect_generic_usage<'ast>(
 
                     // TODO: whaaaaat hmm what do I do.
                     assert!(gen.is_empty());
-                    tcxt.generic_res.push_resolved_child(stack, ty);
+                    tcxt.generic_res.push_resolved_child(stack, &res);
                 }
                 Ty::Ptr(_) => todo!(),
                 Ty::Ref(_) => todo!(),

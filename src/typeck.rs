@@ -11,7 +11,7 @@ use crate::{
         Statement, Stmt, Struct, Ty, Type, TypeEquality, UnOp, Val, Value, Var, Variant, DUMMY,
     },
     error::Error,
-    typeck::generic::{generic_usage, TyRegion},
+    typeck::generic::TyRegion,
     visit::Visit,
 };
 
@@ -140,9 +140,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
 
             if !func.generics.is_empty() {
-                self.generic_res.insert_generic(
-                    Node::Func(func.ident.clone()),
-                    Ty::Func {
+                self.generic_res.collect_generic_params(
+                    &Node::Func(func.ident.clone()),
+                    &Ty::Func {
                         ident: func.ident.clone(),
                         ret: box func.ret.val.clone(),
                         params: func.generics.iter().map(|t| t.val.clone()).collect(),
@@ -174,9 +174,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 if !struc.generics.is_empty() {
-                    self.generic_res.insert_generic(
-                        Node::Struct(struc.ident.clone()),
-                        Ty::Struct { ident: struc.ident.to_string(), gen: struc.generics.clone() },
+                    self.generic_res.collect_generic_params(
+                        &Node::Struct(struc.ident.clone()),
+                        &Ty::Struct { ident: struc.ident.to_string(), gen: struc.generics.clone() },
                     );
                 }
             }
@@ -194,9 +194,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 if !en.generics.is_empty() {
-                    self.generic_res.insert_generic(
-                        Node::Enum(en.ident.clone()),
-                        Ty::Enum { ident: en.ident.to_string(), gen: en.generics.clone() },
+                    self.generic_res.collect_generic_params(
+                        &Node::Enum(en.ident.clone()),
+                        &Ty::Enum { ident: en.ident.to_string(), gen: en.generics.clone() },
                     );
                 }
             }
@@ -205,21 +205,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_var(&mut self, var: &'ast Var) {
         if let Some(fn_id) = self.curr_fn.clone() {
-            let mut stack = if self.generic_res.has_generics(&fn_id) {
-                vec![Node::Func(fn_id.clone())]
-            } else {
-                vec![]
-            };
+            let node = Node::Func(fn_id.clone());
+            let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
 
             let ty = collect_generic_usage(self, &var.ty.val, &TyRegion::VarDecl(var), &mut stack);
             println!("ty from collect {:?}", ty);
-            if self
-                .func_refs
-                .entry(fn_id)
-                .or_default()
-                .insert(var.ident.clone(), var.ty.val.clone())
-                .is_some()
-            {
+
+            if self.func_refs.entry(fn_id).or_default().insert(var.ident.clone(), ty).is_some() {
                 self.errors.push(Error::error_with_span(
                     self,
                     var.span,
