@@ -120,7 +120,7 @@ pub enum Expr {
     /// An expression wrapped in parantheses (expr).
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
-    Call { ident: String, args: Vec<Expression> },
+    Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
     /// An ADT is initialized with field values.

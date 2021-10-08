@@ -205,9 +205,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_var(&mut self, var: &'ast Var) {
         if let Some(fn_id) = self.curr_fn.clone() {
+            //
+
             let node = Node::Func(fn_id.clone());
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
-
             let ty = collect_generic_usage(self, &var.ty.val, &TyRegion::VarDecl(var), &mut stack);
             println!("ty from collect {:?}", ty);
 
@@ -357,10 +358,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     ));
                 }
             }
-            Expr::Call { ident, args } => {
+            Expr::Call { ident, args, type_args } => {
                 for arg in args {
                     self.visit_expr(arg);
                 }
+
+                // TODO: check type_args agrees
                 if let Some(ret) = self.func_ret.get(ident) {
                     if self.expr_ty.insert(expr, ret.clone()).is_some() {
                         unimplemented!("NOT SURE TODO")
@@ -408,6 +411,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             None
                         }
                     });
+
+                    // TODO: generics
+
                     let exprty = self.expr_ty.get(&*init);
                     if !exprty.is_ty_eq(&fty) {
                         self.errors.push(Error::error_with_span(
@@ -421,7 +427,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         ));
                     }
                 }
-                // TODO: generics
+
                 if self
                     .expr_ty
                     .insert(expr, Ty::Struct { ident: name.clone(), gen: vec![] })

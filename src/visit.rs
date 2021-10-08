@@ -210,7 +210,7 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
             visit.visit_expr(lhs);
             visit.visit_expr(rhs)
         }
-        Expr::Call { ident, args } => {
+        Expr::Call { ident, args, type_args } => {
             for expr in args {
                 visit.visit_expr(expr);
             }
@@ -747,7 +747,7 @@ impl<'ast> Visit<'ast> for DotWalker {
                     },
                 );
             }
-            Expr::Call { ident, args } => {
+            Expr::Call { ident, args, type_args } => {
                 self.walk_deeper(
                     |this| {
                         writeln!(

@@ -20,7 +20,7 @@ void main() {
     opt = option::some(x);
 
     enum option<int> num;
-    num = foo::<int>(10);
+    num = foo[int](10);
 
     // match opt {
     //     option::some(a) -> {

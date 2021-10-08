@@ -37,7 +37,7 @@ stmt = {
 
 assing = { expr ~ ASSIGN ~ (struct_assign | arr_init | enum_init | expr) ~ SC }
 
-call_stmt = { ident ~ LP ~ (arg_list)? ~ RP ~ SC }
+call_stmt = { ident ~ type_args ~ LP ~ (arg_list)? ~ RP ~ SC }
 
 if_stmt = { IF ~ LP ~ expr ~ RP ~ block_stmt ~ (ELSE ~ block_stmt)? }
 
@@ -70,10 +70,12 @@ term = {
     variable ~ !LP
     | const_
     | enum_init
-    | ident ~ LP ~ (arg_list)? ~ RP
+    | ident ~ type_args ~ LP ~ (arg_list)? ~ RP
     | NOT ~ expr
     | LP ~ expr ~ RP
 }
+
+type_args = { ("[" ~ type_ ~ (CM ~ type_)* ~ "]")? }
 
 arr_init = { (LBR ~ expr ~ (CM ~ expr)* ~ CM? ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ CM? ~ RBR }
 

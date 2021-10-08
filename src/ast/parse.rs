@@ -768,8 +768,9 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                     }
                     .into_spanned(span)
                 }
-                // call()
-                [(Rule::ident, ident), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] => {
+                // call() | call::<type>()
+                [(Rule::ident, ident), (Rule::type_args, type_args), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
+                {
                     Expr::Call {
                         ident: ident.as_str().to_string(),
                         args: if let [(Rule::arg_list, args)] = arg_list {
@@ -789,6 +790,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                         } else {
                             vec![]
                         },
+                        type_args: parse_type_arguments(type_args.clone()),
                     }
                     .into_spanned(span)
                 }
@@ -890,6 +892,10 @@ fn parse_field_init(field: Pair<Rule>) -> FieldInit {
         },
         _ => unreachable!("malformed struct fields {}", field.to_json()),
     }
+}
+
+fn parse_type_arguments(args: Pair<Rule>) -> Vec<Type> {
+    parse_generics(args)
 }
 
 fn to_span(p: &Pair<Rule>) -> Range {
