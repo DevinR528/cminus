@@ -22,7 +22,7 @@ pub trait Visit<'ast>: Sized {
         walk_adt(self, adt)
     }
 
-    fn visit_var(&mut self, var: &Var) {
+    fn visit_var(&mut self, var: &'ast Var) {
         walk_var(self, var)
     }
 
@@ -96,7 +96,7 @@ crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, adt: &'ast Adt) {
     }
 }
 
-crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &Var) {
+crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &'ast Var) {
     // visit.visit_ident(&var.ident);
     visit.visit_ty(&var.ty);
 }

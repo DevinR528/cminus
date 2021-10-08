@@ -7,6 +7,11 @@ enum thing {
     a, b, c, d, e, f, g
 };
 
+void foo<T>(T it) {
+    enum option<T> opt;
+    opt = option::some(it);
+}
+
 void main() {
     enum thing x;
     x = thing::a;

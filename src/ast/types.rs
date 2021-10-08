@@ -179,10 +179,22 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
-    Generic { ident: String, bound: () },
-    Array { size: usize, ty: Box<Type> },
-    Struct { ident: String, gen: Vec<Type> },
-    Enum { ident: String, gen: Vec<Type> },
+    Generic {
+        ident: String,
+        bound: (),
+    },
+    Array {
+        size: usize,
+        ty: Box<Type>,
+    },
+    Struct {
+        ident: String,
+        gen: Vec<Type>,
+    },
+    Enum {
+        ident: String,
+        gen: Vec<Type>,
+    },
     Ptr(Box<Type>),
     Ref(Box<Type>),
     String,
@@ -191,6 +203,12 @@ pub enum Ty {
     Float,
     Bool,
     Void,
+    /// This type is only used in resolving rank-1 polymorphism.
+    Func {
+        ident: String,
+        ret: Box<Ty>,
+        params: Vec<Ty>,
+    },
 }
 
 impl Ty {
@@ -324,6 +342,13 @@ impl fmt::Display for Ty {
             Ty::Float => write!(f, "float"),
             Ty::Bool => write!(f, "bool"),
             Ty::Void => write!(f, "void"),
+            Ty::Func { ident, ret, params } => write!(
+                f,
+                "func {}({}) -> {}",
+                ident,
+                params.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                ret
+            ),
         }
     }
 }
@@ -357,10 +382,9 @@ impl TypeEquality for Ty {
             (Ty::Bool, _) => false,
             (Ty::Void, Ty::Void) => true,
             (Ty::Void, _) => false,
-            (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => {
-                todo!("both generic ident match? = {}", i1.eq(i2))
-            }
+            (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => i1.eq(i2),
             (Ty::Generic { .. }, _) => todo!("mismatch types one is generic"),
+            (Ty::Func { .. }, _) => unreachable!("Func type should never be checked"),
         }
     }
 }
@@ -512,6 +536,9 @@ pub struct Func {
     pub span: Range,
 }
 
+/// A variable declaration.
+///
+/// `struct foo x;` or int x[]
 #[derive(Clone, Debug)]
 pub struct Var {
     pub ty: Type,
