@@ -11,8 +11,9 @@ use crate::{
 
 #[derive(Debug, Default)]
 crate struct TraitSolve<'ast> {
-    traits: BTreeMap<String, &'ast Trait>,
+    crate traits: BTreeMap<String, &'ast Trait>,
     impls: BTreeMap<String, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
+    proof_stack: BTreeMap<String, Vec<Vec<&'ast Ty>>>,
 }
 
 impl<'ast> TraitSolve<'ast> {
@@ -32,29 +33,24 @@ impl<'ast> TraitSolve<'ast> {
         Ok(())
     }
 
-    crate fn solve(
-        &self,
-        tcxt: &TyCheckRes<'_, '_>,
-        trait_: &str,
-        types: &[&Ty],
-        span: Range,
-    ) -> Result<&[Func], String> {
-        self.impls
-            .get(trait_)
-            .and_then(|map| map.get(types).map(|meth| meth.methods.as_slice()))
-            .ok_or_else(|| {
-                format!(
-                    "{}",
-                    Error::error_with_span(
-                        tcxt,
-                        span,
-                        &format!(
-                            "no implementation `{}` found for {}",
-                            trait_,
-                            types.iter().map(|t| format!("`{}`", t)).collect::<Vec<_>>().join(", ")
-                        )
-                    )
-                )
-            })
+    crate fn to_solve(&mut self, trait_: &str, types: Vec<&'ast Ty>) {
+        self.proof_stack.entry(trait_.to_owned()).or_default().push(types);
+        // self.impls
+        //     .get(trait_)
+        //     .and_then(|map| map.get(types).map(|meth| meth.methods.as_slice()))
+        //     .ok_or_else(|| {
+        //         format!(
+        //             "{}",
+        //             Error::error_with_span(
+        //                 tcxt,
+        //                 span,
+        //                 &format!(
+        //                     "no implementation `{}` found for {}",
+        //                     trait_,
+        //                     types.iter().map(|t| format!("`{}`", t)).collect::<Vec<_>>().join(",
+        // ")                 )
+        //             )
+        //         )
+        //     })
     }
 }

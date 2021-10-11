@@ -519,13 +519,53 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::TraitMeth { trait_, args, type_args } => {
-                //
-                self.trait_solve.solve(
-                    self,
-                    trait_,
-                    &type_args.iter().map(|t| &t.val).collect::<Vec<_>>(),
-                    expr.span,
-                )
+                // TODO: probably do stuff for generic args
+                for expr in args {
+                    self.visit_expr(expr);
+                }
+
+                let generics = self
+                    .trait_solve
+                    .traits
+                    .get(trait_)
+                    .map(|t| &t.generics)
+                    .expect("trait is defined");
+
+                let mut stack = self
+                    .curr_fn
+                    .as_ref()
+                    .map(|f| Node::Func(f.to_string()))
+                    .into_iter()
+                    .chain(Some(Node::Func(trait_.to_string())))
+                    .collect::<Vec<_>>();
+
+                for arg in args {
+                    let exprty = self.expr_ty.get(&*arg).cloned();
+                    // Collect the generic parameter `struct list<T> vec;` (this has to be a
+                    // dependent parameter) or a type argument `struct list<int> vec;`
+                    if let Some(Ty::Generic { ident, .. }) = &exprty {
+                        if generics
+                            .iter()
+                            .any(|t| matches!(&t.val, Ty::Generic { ident: i, .. } if i == ident))
+                        {
+                            // TODO: refine the pushing of dependent `GenericParams`
+                            let ty = collect_generic_usage(
+                                self,
+                                exprty.as_ref().unwrap(),
+                                &[TyRegion::Expr(&expr.val)],
+                                &mut stack,
+                            );
+                            if exprty.as_ref().is_ty_eq(&Some(&ty)) {
+                                continue;
+                            }
+                        } else {
+                            panic!("undefined generic type used")
+                        }
+                    }
+                }
+
+                self.trait_solve
+                    .to_solve(trait_, type_args.iter().map(|t| &t.val).collect::<Vec<_>>())
             }
             Expr::Value(val) => {
                 if self.expr_ty.insert(expr, lit_to_type(&val.val)).is_some() {
