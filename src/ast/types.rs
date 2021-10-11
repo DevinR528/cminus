@@ -5,11 +5,19 @@ crate trait TypeEquality {
     fn is_ty_eq(&self, other: &Self) -> bool;
 }
 
+crate trait Spany: Sized {
+    /// All enums implement `Spanned` to carry span info.
+    fn into_spanned<R: Into<Range>>(self, range: R) -> Spanned<Self> {
+        Spanned { val: self, span: range.into() }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Val {
     Float(f64),
     Int(isize),
     Char(char),
+    Bool(bool),
     Str(String),
 }
 
@@ -19,6 +27,7 @@ impl hash::Hash for Val {
             Val::Float(f) => format!("float{}", f).hash(state),
             Val::Int(i) => format!("int{}", i).hash(state),
             Val::Char(c) => format!("char{}", c).hash(state),
+            Val::Bool(b) => format!("bool{}", b).hash(state),
             Val::Str(s) => format!("str{}", s).hash(state),
         }
     }
@@ -35,6 +44,8 @@ impl PartialEq for Val {
             (Val::Char(_), _) => false,
             (Val::Str(a), Val::Str(b)) => a.eq(b),
             (Val::Str(_), _) => false,
+            (Val::Bool(a), Val::Bool(b)) => a.eq(b),
+            (Val::Bool(_), _) => false,
         }
     }
 }
@@ -47,51 +58,68 @@ impl fmt::Display for Value {
             Val::Float(v) => write!(f, "float {}", v),
             Val::Int(v) => write!(f, "int {}", v),
             Val::Char(v) => write!(f, "char {}", v),
+            Val::Bool(v) => write!(f, "bool {}", v),
             Val::Str(v) => write!(f, "string '{}'", v),
         }
     }
 }
 
-impl Val {
-    crate fn into_spanned(self, span: Range) -> Value {
-        Spanned { val: self, span }
-    }
-}
+impl Spany for Val {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnOp {
     Not,
-    // Inc,
+    OnesComp,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BinOp {
-    /// The `+` operator
-    Add,
-    /// The `-` operator
-    Sub,
-    /// The `*` operator
+    /// The `*` operator.
     Mul,
-    /// The `/` operator
+    /// The `/` operator.
     Div,
-    /// The `%` operator
+    /// The `%` operator.
     Rem,
-    /// The `&&` operator
-    And,
-    /// The `||` operator
-    Or,
-    /// The `==` operator
-    Eq,
-    /// The `<` operator
+    /// The `+` operator.
+    Add,
+    /// The `-` operator.
+    Sub,
+
+    /// The `<<` left shift operator.
+    LeftShift,
+    /// The `>>` right shift operator.
+    RightShift,
+
+    /// The `<` operator.
     Lt,
-    /// The `<=` operator
+    /// The `<=` operator.
     Le,
-    /// The `!=` operator
-    Ne,
-    /// The `>=` operator
+    /// The `>=` operator.
     Ge,
-    /// The `>` operator
+    /// The `>` operator.
     Gt,
+
+    /// The `==` operator.
+    Eq,
+    /// The `!=` operator.
+    Ne,
+
+    /// The `&` bitwise and operator.
+    BitAnd,
+    /// The `^` bitwise and operator.
+    BitXor,
+    /// The `|` bitwise and operator.
+    BitOr,
+
+    /// The `&&` operator.
+    And,
+    /// The `||` operator.
+    Or,
+
+    /// The `+=` operator.
+    AddAssign,
+    /// The `-=` operator.
+    SubAssign,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -121,6 +149,8 @@ pub enum Expr {
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
     Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
+    /// A call to a trait method with possible expression arguments `<T::trait>(expr)`.
+    TraitMeth { trait_: String, args: Vec<Expression>, type_args: Vec<Type> },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
     /// An ADT is initialized with field values.
@@ -133,11 +163,9 @@ pub enum Expr {
     Value(Value),
 }
 
-impl Expr {
-    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Expression {
-        Spanned { val: self, span: span.into() }
-    }
+impl Spany for Expr {}
 
+impl Expr {
     crate fn deref_count(&self) -> usize {
         if let Self::Deref { indir, .. } = self {
             *indir
@@ -168,6 +196,7 @@ impl Expr {
             }
             Expr::StructInit { .. }
             | Expr::EnumInit { .. }
+            | Expr::TraitMeth { .. }
             | Expr::Urnary { .. }
             | Expr::Binary { .. }
             | Expr::Parens(..)
@@ -181,7 +210,7 @@ impl Expr {
 pub enum Ty {
     Generic {
         ident: String,
-        bound: (),
+        bound: Option<String>,
     },
     Array {
         size: usize,
@@ -212,18 +241,19 @@ pub enum Ty {
 }
 
 impl Ty {
-    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Type {
-        Spanned { val: self, span: span.into() }
-    }
-
-    /// Returns the name of the generic `T`.
-    ///
-    /// Will panic if called for non generic type.
-    crate fn generic_id(&self) -> &str {
-        if let Self::Generic { ident, .. } = self {
-            ident
-        } else {
-            unreachable!("called for non generic type")
+    /// Returns `true` if the type contains a generic parameter.
+    crate fn has_generics(&self) -> bool {
+        match self {
+            Ty::Generic { ident, bound } => true,
+            Ty::Array { size, ty } => ty.val.has_generics(),
+            Ty::Struct { ident, gen } => !gen.is_empty(),
+            Ty::Enum { ident, gen } => !gen.is_empty(),
+            Ty::Ptr(ty) => ty.val.has_generics(),
+            Ty::Ref(ty) => ty.val.has_generics(),
+            Ty::Func { ident, ret, params } => {
+                ret.has_generics() | params.iter().any(|t| t.has_generics())
+            }
+            Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
         }
     }
 
@@ -353,6 +383,8 @@ impl fmt::Display for Ty {
     }
 }
 
+impl Spany for Ty {}
+
 impl TypeEquality for Ty {
     fn is_ty_eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -383,7 +415,7 @@ impl TypeEquality for Ty {
             (Ty::Void, Ty::Void) => true,
             (Ty::Void, _) => false,
             (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => i1.eq(i2),
-            (Ty::Generic { .. }, _) => todo!("mismatch types one is generic"),
+            (Ty::Generic { .. }, _) => false,
             (Ty::Func { .. }, _) => unreachable!("Func type should never be checked"),
         }
     }
@@ -402,6 +434,16 @@ pub struct Block {
     pub span: Range,
 }
 
+impl fmt::Display for Block {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "}}");
+        for stmt in &self.stmts {
+            write!(f, "..;")?;
+        }
+        write!(f, "}}")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Binding {
     Wild(String),
@@ -418,23 +460,46 @@ impl fmt::Display for Binding {
 }
 
 #[derive(Clone, Debug)]
-pub struct Pattern {
-    pub ident: String,
-    pub variant: String,
-    pub items: Vec<Binding>,
-    pub span: Range,
+pub enum Pat {
+    /// Match an enum variant `option::some(bind)`
+    Enum {
+        ident: String,
+        variant: String,
+        items: Vec<Pat>,
+    },
+    Array {
+        size: usize,
+        items: Vec<Pat>,
+    },
+    Bind(Binding),
 }
 
-impl fmt::Display for Pattern {
+impl Spany for Pat {}
+
+impl fmt::Display for Pat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Pattern { ident, variant, items, .. } = self;
-        write!(
-            f,
-            "{}::{}{}",
-            ident,
-            variant,
-            items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
-        )
+        match self {
+            Self::Enum { ident, variant, items } => write!(
+                f,
+                "{}::{}{}",
+                ident,
+                variant,
+                if items.is_empty() {
+                    "".to_owned()
+                } else {
+                    format!(
+                        "({})",
+                        items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                },
+            ),
+            Self::Array { size, items } => write!(
+                f,
+                "[{}]",
+                items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
+            ),
+            Self::Bind(b) => write!(f, "{}", b),
+        }
     }
 }
 
@@ -445,6 +510,12 @@ pub struct MatchArm {
     pub span: Range,
 }
 
+impl fmt::Display for MatchArm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} => {}", self.pat.val, self.blk)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
@@ -452,7 +523,7 @@ pub enum Stmt {
     /// Assignment `lval = rval;`
     Assign { lval: Expression, rval: Expression },
     /// A call statement `call(arg1, arg2)`
-    Call { ident: String, args: Vec<Expression> },
+    Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
     /// If statement `if (expr) { stmts }`
     If { cond: Expression, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
@@ -473,11 +544,7 @@ pub enum Stmt {
     Block(Block),
 }
 
-impl Stmt {
-    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Statement {
-        Spanned { val: self, span: span.into() }
-    }
-}
+impl Spany for Stmt {}
 
 #[derive(Clone, Debug)]
 pub struct Field {
@@ -536,6 +603,28 @@ pub struct Func {
     pub span: Range,
 }
 
+#[derive(Clone, Debug)]
+pub enum TraitMethod {
+    Default(Func),
+    NoBody(Func),
+}
+
+#[derive(Clone, Debug)]
+pub struct Trait {
+    pub ident: String,
+    pub generics: Vec<Type>,
+    pub methods: Vec<TraitMethod>,
+    pub span: Range,
+}
+
+#[derive(Clone, Debug)]
+pub struct Impl {
+    pub ident: String,
+    pub type_arguments: Vec<Type>,
+    pub methods: Vec<Func>,
+    pub span: Range,
+}
+
 /// A variable declaration.
 ///
 /// `struct foo x;` or int x[]
@@ -550,14 +639,12 @@ pub struct Var {
 pub enum Decl {
     Adt(Adt),
     Func(Func),
+    Trait(Trait),
+    Impl(Impl),
     Var(Var),
 }
 
-impl Decl {
-    crate fn into_spanned<R: Into<Range>>(self, span: R) -> Declaration {
-        Spanned { val: self, span: span.into() }
-    }
-}
+impl Spany for Decl {}
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct Spanned<T> {
@@ -617,3 +704,4 @@ pub type Statement = Spanned<Stmt>;
 pub type Expression = Spanned<Expr>;
 pub type Type = Spanned<Ty>;
 pub type Value = Spanned<Val>;
+pub type Pattern = Spanned<Pat>;

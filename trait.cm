@@ -1,3 +1,20 @@
-trait Add<T> {
+trait add<T> {
     T add(T a, T b);
-};
+}
+
+impl add<int> {
+    int add(int a, int b) {
+        return a + b;
+    }
+}
+
+T foo<T: add>(T a, T b,) {
+    return <<T>::add>(a, b);
+}
+
+void main() {
+    int x, y;
+    x = 0; y = 1;
+    write(<<int>::add>(x, y));
+    write(foo::<int>(x, y));
+}

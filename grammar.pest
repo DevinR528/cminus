@@ -1,18 +1,27 @@
 program = { SOI ~ "\n"* ~ (decl)* ~ EOI }
 
-decl = { (func_decl | var_decl | adt_decl) }
+decl = { (func_decl | trait_decl | trait_impl | var_decl | adt_decl) }
 
 func_decl = { type_ ~ ident ~ generic ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
 
-param_list = { param ~ (CM ~ param)* }
+trait_decl = { TRAIT ~ ident ~ generic ~ LBR ~ trait_item* ~ RBR }
 
-param = { type_ ~ var_name }
+trait_impl = { IMPL ~ ident ~ generic ~ LBR ~ func_decl* ~ RBR }
 
 var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 
 adt_decl = {
-    (STRUCT ~ ident ~ generic ~ LBR ~ (field)+ ~ RBR ~ SC)
-    | (ENUM ~ ident ~ generic ~ LBR ~ (variant ~ (CM ~ variant)* ~ CM?)+ ~ RBR ~ SC)
+    (STRUCT ~ ident ~ generic ~ LBR ~ (field)+ ~ RBR)
+    | (ENUM ~ ident ~ generic ~ LBR ~ (variant ~ (CM ~ variant)* ~ CM?)+ ~ RBR)
+}
+
+param_list = { param ~ (CM ~ param)* ~ CM?}
+
+param = { type_ ~ var_name }
+
+trait_item = {
+    (type_ ~ ident ~ generic ~ LP ~ (param_list)? ~ RP ~ SC)
+    | func_decl
 }
 
 field = { param ~ SC }
@@ -21,21 +30,22 @@ variant = { ident ~ (LP ~ (type_ ~ (CM ~ type_)* ~ CM?)? ~ RP)? }
 
 var_name = { addrof? ~ ident ~ (LBK ~ integer ~ RBK)* }
 
-type_ = { (INT | CHAR | FLOAT | VOID | STRUCT ~ ident ~ generic | ENUM ~ ident ~ generic | (!keyword ~ ident)) ~ addrof? }
-
 stmt = {
-    assing
-    | io_stmt
+    io_stmt
     | call_stmt
+    | ret_stmt
+    | exit_stmt
+    | math_assign
+    | assign
     | if_stmt
     | while_stmt
     | match_stmt
-    | ret_stmt
-    | exit_stmt
     | block_stmt
 }
 
-assing = { expr ~ ASSIGN ~ (struct_assign | arr_init | enum_init | expr) ~ SC }
+math_assign = { expr ~ SC }
+
+assign = { expr ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
 
 call_stmt = { ident ~ type_args ~ LP ~ (arg_list)? ~ RP ~ SC }
 
@@ -56,7 +66,7 @@ exit_stmt = { EXIT ~ SC }
 
 block_stmt = { LBR ~ (stmt)* ~ RBR }
 
-arm = { enum_init ~ ARROW ~ block_stmt ~ CM? }
+arm = {  (struct_assign | arr_init | expr) ~ ARROW ~ block_stmt ~ CM? }
 
 enum_init = { ident ~ "::" ~ ident ~ (LP ~ (expr ~ (CM ~ expr)* ~ CM?)? ~ RP)? }
 
@@ -67,15 +77,16 @@ field_expr = { ident ~ COLON ~ (struct_assign | arr_init | expr) }
 expr = { term ~ (op ~ term)* }
 
 term = {
-    variable ~ !LP
+    ident ~ type_args ~ LP ~ (arg_list)? ~ RP
+    | "<" ~ generic ~ "::" ~ ident ~ ">" ~ LP ~ (arg_list)? ~ RP
     | const_
     | enum_init
-    | ident ~ type_args ~ LP ~ (arg_list)? ~ RP
-    | NOT ~ expr
+    | variable ~ !LP
+    | logic_bit ~ expr
     | LP ~ expr ~ RP
 }
 
-type_args = { ("[" ~ type_ ~ (CM ~ type_)* ~ "]")? }
+type_args = { ("::<" ~ type_ ~ (CM ~ type_)* ~ ">")? }
 
 arr_init = { (LBR ~ expr ~ (CM ~ expr)* ~ CM? ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ CM? ~ RBR }
 
@@ -86,30 +97,49 @@ variable = {
     | deref? ~ ident
 }
 
-const_ = { decimal | charstr | integer }
+const_ = { decimal | charstr | integer | TRUE | FALSE }
 
 op = {
-    ARROW
-    |DOT
-    | PLUS
-    | SUB
-    | MUL
-    | DIV
-    | EQ
-    | NE
-    | LE
-    | LT
-    | GE
-    | GT
-    | OR
-    | AND
+    ARROW | DOT
+
+    | ADDASSIGN | SUBASSIGN
+
+    | MUL | DIV | REM
+    | PLUS| SUB
+
+    | BLSF | BRSF
+
+    | LE | LT | GE | GT
+
+    | EQ | NE
+
+    | BAND | BXOR | BOR
+
+    | OR | AND
+}
+
+type_ = {
+    (
+        INT
+        | CHAR
+        | FLOAT
+        | VOID
+        | STRUCT ~ ident ~ generic
+        | ENUM ~ ident ~ generic
+        | bound
+        | (!keyword ~ ident)
+    ) ~ addrof?
 }
 
 generic = { ("<" ~ type_ ~ (CM ~ type_)* ~ ">")? }
 
+bound = { ((!keyword ~ ident) ~ ":" ~ (!keyword ~ ident)) }
+
 deref = { AMP | (MUL)* }
 
 addrof = { (MUL)* }
+
+logic_bit = { NOT | BNOT }
 
 integer = @{ ASCII_DIGIT+ }
 
@@ -122,7 +152,7 @@ charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
 string = @{ DQ ~ ( DQ ~ DQ | (!DQ ~ ANY) )* ~ DQ }
 
 keyword = {
-    CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | VOID | WHILE | WRITE | MATCH
+    CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | TRAIT | IMPL | STRUCT | ENUM | VOID | WHILE | WRITE | MATCH | TRUE | FALSE
 }
 
 // keywords
@@ -136,17 +166,24 @@ READ = { "read" }
 RETURN = { "return" }
 STRUCT = { "struct" }
 ENUM = { "enum" }
+TRAIT = { "trait" }
+IMPL = { "impl" }
 VOID = { "void" }
 WHILE = { "while" }
-MATCH = { "match" }
 WRITE = { "write" }
+MATCH = { "match" }
+TRUE = { "true" }
+FALSE = { "false" }
 
 // operations
 PLUS = { "+" }
 SUB = { "-" }
 MUL = { "*" }
 DIV = { "/" }
+REM = { "%" }
 ASSIGN = { "=" }
+ADDASSIGN = { "+=" }
+SUBASSIGN = { "-=" }
 
 // logical
 EQ = { "==" }
@@ -158,6 +195,14 @@ LT = { "<" }
 NOT = { "!" }
 AND = { "&&" }
 OR = { "||" }
+
+// bitwise
+BAND = { "&" }
+BOR = { "|" }
+BXOR = { "^" }
+BNOT = { "~" }
+BLSF = { "<<" }
+BRSF = { ">>" }
 
 // misc
 AMP = { "&" }

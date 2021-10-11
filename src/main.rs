@@ -5,7 +5,7 @@
     try_blocks,
     crate_visibility_modifier,
     stmt_expr_attributes,
-    array_chunks
+    btree_drain_filter
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -77,19 +77,6 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     tyck.report_errors().unwrap();
 
     println!("\n\n{:?}", tyck);
-
-    // let mut dot = visit::DotWalker::new();
-    // dot.visit_prog(&items);
-
-    // let input_path = Path::new(path);
-    // let dot_path = format!("{}.dot", input_path.file_name().unwrap().to_string_lossy());
-    // let pdf_path = format!("{}.pdf", dot_path);
-    // fs::write(&dot_path, dot.to_string());
-
-    // std::process::Command::new("dot")
-    //     .args(["-Tpdf", &format!("-o{}", pdf_path), &dot_path])
-    //     .status()
-    //     .expect("failed to execute `dot -Tpdf ...`");
 
     Ok(())
 }

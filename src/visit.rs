@@ -1,8 +1,9 @@
 use std::fmt::{self, Display, Write};
 
 use crate::ast::types::{
-    Adt, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic,
-    MatchArm, Param, Statement, Stmt, Struct, Ty, Type, Value, Var, Variant, DUMMY,
+    Adt, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic, Impl,
+    MatchArm, Param, Statement, Stmt, Struct, Trait, TraitMethod, Ty, Type, Value, Var, Variant,
+    DUMMY,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -16,6 +17,14 @@ pub trait Visit<'ast>: Sized {
 
     fn visit_func(&mut self, func: &'ast Func) {
         walk_func(self, func)
+    }
+
+    fn visit_trait(&mut self, item: &'ast Trait) {
+        walk_trait(self, item)
+    }
+
+    fn visit_impl(&mut self, item: &'ast Impl) {
+        walk_impl(self, item)
     }
 
     fn visit_adt(&mut self, adt: &'ast Adt) {
@@ -63,6 +72,8 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
         Decl::Var(var) => {
             visit.visit_var(var);
         }
+        Decl::Trait(trait_) => visit.visit_trait(trait_),
+        Decl::Impl(imp) => visit.visit_impl(imp),
         Decl::Adt(struc) => visit.visit_adt(struc),
     }
 }
@@ -70,11 +81,36 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
 crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
     let Func { ident, params, stmts, ret, generics, span: _ } = func;
     // visit.visit_ident(ident);
-    visit.visit_generics(generics);
+    // visit.visit_generics(generics);
     visit.visit_params(params);
-    visit.visit_ty(ret);
+    // visit.visit_ty(ret);
     for stmt in stmts {
         visit.visit_stmt(stmt);
+    }
+}
+
+crate fn walk_trait<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Trait) {
+    let Trait { ident, methods, generics, span: _ } = tr;
+    // visit.visit_ident(ident);
+    visit.visit_generics(generics);
+    // visit.visit_ty(ret);
+    for meth in methods {
+        // match meth {
+        //     TraitMethod::Default(f) => visit.visit_func(f),
+        //     TraitMethod::NoBody(f) => visit.visit_func(f),
+        // }
+    }
+}
+
+crate fn walk_impl<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Impl) {
+    let Impl { ident, methods, type_arguments, span: _ } = tr;
+    // visit.visit_ident(ident);
+    // for ty in type_arguments {
+    //     visit.visit_ty(ty);
+    // }
+    // visit.visit_ty(ret);
+    for func in methods {
+        // visit.visit_func(func)
     }
 }
 
@@ -127,7 +163,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
             visit.visit_expr(lval);
             visit.visit_expr(rval);
         }
-        Stmt::Call { ident, args } => {
+        Stmt::Call { ident, args, type_args } => {
             // visit.visit_ident(ident);
             for expr in args {
                 visit.visit_expr(expr);
@@ -215,12 +251,18 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
                 visit.visit_expr(expr);
             }
         }
+        Expr::TraitMeth { trait_, args, type_args } => {
+            for expr in args {
+                visit.visit_expr(expr);
+            }
+        }
         Expr::Value(_) => {
             // visit.visit_value(val);
         }
     }
 }
 
+/*
 #[derive(Default, Debug)]
 crate struct DotWalker {
     buf: String,
@@ -777,3 +819,4 @@ impl<'ast> Visit<'ast> for DotWalker {
         }
     }
 }
+*/

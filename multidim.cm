@@ -1,13 +1,13 @@
 struct name {
     int field[2][1];
-};
+}
 
 void main() {
-    // int a[2][1];
+    int a[2][1];
     struct name x;
-    // x = name { field: 10 };
+    x = name { field: 10 };
     x = name { field: {{0}, {1}} };
-    // a = { {1}, {2}, };
-    // a[0][1] = 2;
-    // x.field[0][0] = a[0][1];
+    a = { {1}, {2}, };
+    a[0][1] = 2;
+    x.field[0][0] = a[0][1];
 }
