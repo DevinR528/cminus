@@ -13,7 +13,7 @@ use crate::{
         UnOp, Val, Value, Var, Variant, DUMMY,
     },
     error::Error,
-    typeck::generic::TyRegion,
+    typeck::generic::{check_type_arg, TyRegion},
     visit::Visit,
 };
 
@@ -99,6 +99,7 @@ impl fmt::Debug for TyCheckRes<'_, '_> {
             // .field("struct_fields", &self.struct_fields)
             // .field("enum_fields", &self.enum_fields)
             .field("generic_res", &self.generic_res)
+            .field("trait_solve", &self.trait_solve)
             .finish()
     }
 }
@@ -489,7 +490,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .into_iter()
                     .chain(Some(Node::Func(ident.to_string())))
                     .collect::<Vec<_>>();
-
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     let func =
                         self.var_func.name_func.get(ident).expect("all functions are collected");
@@ -501,9 +501,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
-                    println!("CALL IN CALL {:?} == {:?}", type_args, stack);
+                    println!("CALL IN CALL {:?} == {:?} {:?}", type_args, gen, stack);
 
                     let ty = collect_generic_usage(self, &ty_arg.val, &params, &mut stack);
+                    // TODO: actually compare
                 }
 
                 if let Some(ret) = self.var_func.name_func.get(ident).map(|f| &f.ret.val) {
@@ -536,13 +537,35 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .as_ref()
                     .map(|f| Node::Func(f.to_string()))
                     .into_iter()
-                    .chain(Some(Node::Func(trait_.to_string())))
+                    .chain(Some(Node::Trait(trait_.to_string())))
                     .collect::<Vec<_>>();
 
+                for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
+                    let func = self
+                        .trait_solve
+                        .traits
+                        .get(trait_)
+                        .map(|t| t.method.function())
+                        .expect("trait is defined");
+                    let gen = &generics[gen_arg_idx];
+                    let params = func
+                        .params
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
+                        .map(|(i, _)| TyRegion::Expr(&args[i].val))
+                        .collect::<Vec<_>>();
+                    println!("TRAIT CALL IN CALL {:?} == {:?} {:?}", type_args, gen, stack);
+
+                    let ty = collect_generic_usage(self, &ty_arg.val, &params, &mut stack);
+                }
+
+                // TODO: is this needed still after ^^
+                let mut has_generic = false;
                 for arg in args {
                     let exprty = self.expr_ty.get(&*arg).cloned();
-                    // Collect the generic parameter `struct list<T> vec;` (this has to be a
-                    // dependent parameter) or a type argument `struct list<int> vec;`
+                    // Collect the generic parameter `<<T>::trait>()` (this has to be a
+                    // dependent parameter)
                     if let Some(Ty::Generic { ident, .. }) = &exprty {
                         if generics
                             .iter()
@@ -556,6 +579,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 &mut stack,
                             );
                             if exprty.as_ref().is_ty_eq(&Some(&ty)) {
+                                has_generic = true;
                                 continue;
                             }
                         } else {
@@ -564,8 +588,15 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
                 }
 
-                self.trait_solve
-                    .to_solve(trait_, type_args.iter().map(|t| &t.val).collect::<Vec<_>>())
+                let generic_dependence = if has_generic { Some(stack) } else { None };
+                self.trait_solve.to_solve(
+                    trait_,
+                    type_args.iter().map(|t| &t.val).collect::<Vec<_>>(),
+                    generic_dependence,
+                );
+
+                let def_fn = self.trait_solve.traits.get(trait_).expect("trait is defined");
+                self.expr_ty.insert(expr, def_fn.method.return_ty().val.clone());
             }
             Expr::Value(val) => {
                 if self.expr_ty.insert(expr, lit_to_type(&val.val)).is_some() {
@@ -891,6 +922,11 @@ crate struct StmtCheck<'v, 'ast, 'input> {
 }
 
 impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
+    fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
+        crate::visit::walk_items(self, items);
+        // TODO: monomorphize and check results?
+    }
+
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
             // Nothing to do here, TODO: could maybe record for dead code?
@@ -917,6 +953,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             Stmt::Call { ident, args, type_args } => {
                 // TODO: check if args/params need
                 // .and_then(|t| resolve_ty(rval, t));
+
                 println!("CALL {:?}", self.tcxt.var_func.get(stmt.span));
                 let mut gen_arg_idx = 0;
                 let func = self.tcxt.var_func.name_func.get(ident).map(|f| &f.params);
@@ -934,15 +971,21 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             )
                         })
                         .get(idx)
-                        .map(|p| &p.ty.val);
-                    let arg_ty = self.tcxt.expr_ty.get(arg);
+                        .map(|p| p.ty.val.clone());
+                    let arg_ty = self.tcxt.expr_ty.get(arg).cloned();
 
                     if let Some(Ty::Generic { ident, .. }) = param_ty {
-                        param_ty = type_args.get(gen_arg_idx).map(|t| &t.val);
+                        param_ty = type_args.get(gen_arg_idx).map(|t| {
+                            if let Ty::Generic { ident: id, bound: bd } = &t.val {
+                                check_type_arg(self.tcxt, id, bd)
+                            } else {
+                                t.val.clone()
+                            }
+                        });
                         gen_arg_idx += 1;
                     }
 
-                    if !param_ty.is_ty_eq(&arg_ty) {
+                    if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
                         self.tcxt.errors.push(Error::error_with_span(
                             self.tcxt,
                             stmt.span,
@@ -954,6 +997,41 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         ));
                     }
                 }
+
+                // TODO: check type_args agrees
+                let mut stack = self
+                    .tcxt
+                    .curr_fn
+                    .as_ref()
+                    .map(|f| Node::Func(f.to_string()))
+                    .into_iter()
+                    .chain(Some(Node::Func(ident.to_string())))
+                    .collect::<Vec<_>>();
+                for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
+                    let func = self
+                        .tcxt
+                        .var_func
+                        .name_func
+                        .get(ident)
+                        .expect("all functions are collected");
+                    let gen = &func.generics[gen_arg_idx];
+                    let params = func
+                        .params
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
+                        .map(|(i, _)| TyRegion::Expr(&args[i].val))
+                        .collect::<Vec<_>>();
+                    println!("CALL IN CALL {:?} == {:?} {:?}", type_args, gen, stack);
+
+                    let ty = collect_generic_usage(self.tcxt, &ty_arg.val, &params, &mut stack);
+                    // TODO: actually compare
+                }
+                // TODO: Check return?
+            }
+            Stmt::TraitMeth(e) => {
+                self.tcxt.visit_expr(e);
+                // TODO:
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
                 // TODO: check if expr needs .and_then(|t| resolve_ty(rval, t));
@@ -1007,7 +1085,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         let mut bound_vars = BTreeMap::new();
                         for arm in arms {
                             check_pattern_type(
-                                &self.tcxt,
+                                self.tcxt,
                                 &arm.pat.val,
                                 match_ty.as_ref(),
                                 arm.span,
@@ -1052,7 +1130,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         let mut bound_vars = BTreeMap::new();
                         for arm in arms {
                             check_pattern_type(
-                                &self.tcxt,
+                                self.tcxt,
                                 &arm.pat.val,
                                 match_ty.as_ref(),
                                 arm.span,
@@ -1127,7 +1205,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "call with wrong argument type\nfound {} expected {}",
+                            "call with wrong return type\nfound {} expected {}",
                             ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),

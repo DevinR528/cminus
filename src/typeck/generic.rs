@@ -14,6 +14,7 @@ crate enum TyRegion<'ast> {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 crate enum Node {
     Func(String),
+    Trait(String),
     Enum(String),
     Struct(String),
 }
@@ -173,6 +174,9 @@ crate fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str, bound: &Option<
     }
 }
 
+/// Collect all the generics to track resolved and dependent sites/uses.
+///
+/// This also converts any type arguments to their correct type.
 crate fn collect_generic_usage<'ast>(
     tcxt: &mut TyCheckRes<'ast, '_>,
     ty: &Ty,
@@ -204,7 +208,9 @@ crate fn collect_generic_usage<'ast>(
                 Ty::Int => todo!(),
                 Ty::Char => todo!(),
                 Ty::Float => todo!(),
-                Ty::Bool => todo!(),
+                Ty::Bool => {
+                    tcxt.generic_res.push_resolved_child(stack, &res, exprs.to_vec());
+                }
                 Ty::Void => todo!(),
                 Ty::Func { ident, ret, params } => todo!(),
             }

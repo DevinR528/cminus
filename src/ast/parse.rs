@@ -151,35 +151,39 @@ fn parse_variant_decl(variant: Pair<Rule>) -> Variant {
 
 fn parse_trait(trait_: Pairs<Rule>, span: Range) -> Trait {
     match trait_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::TRAIT, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), items @ .., (Rule::RBR, _)] => {
+        [(Rule::TRAIT, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), (Rule::trait_item, item), (Rule::RBR, _)] => {
             Trait {
                 ident: ident.as_str().to_string(),
-                methods: items
-                    .iter()
-                    .map(|(r, p)| match r {
-                        Rule::trait_item => match p.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-                            [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen),
-                                (Rule::LP, _), (Rule::param_list, params), (Rule::RP, _), (Rule::SC, sc)
-                            ] => {
-                                TraitMethod::NoBody(Func {
-                                    ret: parse_ty(ty.clone()),
-                                    ident: ident.as_str().to_string(),
-                                    params: params.clone().into_inner().filter_map(|param| match param.as_rule() {
-                                        Rule::param => Some(parse_param(param)),
-                                        Rule::CM => None,
-                                        _ => unreachable!("malformed call statement"),
-                                    }).collect(),
-                                    stmts: vec![],
-                                    generics: parse_generics(gen.clone()),
-                                    span: (ty.as_span().start()..sc.as_span().end()).into(),
+                method: match item
+                    .clone()
+                    .into_inner()
+                    .map(|p| (p.as_rule(), p))
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
+                    [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen), (Rule::LP, _), (Rule::param_list, params), (Rule::RP, _), (Rule::SC, sc)] => {
+                        TraitMethod::NoBody(Func {
+                            ret: parse_ty(ty.clone()),
+                            ident: ident.as_str().to_string(),
+                            params: params
+                                .clone()
+                                .into_inner()
+                                .filter_map(|param| match param.as_rule() {
+                                    Rule::param => Some(parse_param(param)),
+                                    Rule::CM => None,
+                                    _ => unreachable!("malformed call statement"),
                                 })
-                            }
-                            [(Rule::func_decl, func)] => TraitMethod::Default(parse_func(func.clone().into_inner())),
-                            _ => unreachable!("malformed trait item"),
-                        },
-                        _ => unreachable!("malformed trait item"),
-                    })
-                    .collect(),
+                                .collect(),
+                            stmts: vec![],
+                            generics: parse_generics(gen.clone()),
+                            span: (ty.as_span().start()..sc.as_span().end()).into(),
+                        })
+                    }
+                    [(Rule::func_decl, func)] => {
+                        TraitMethod::Default(parse_func(func.clone().into_inner()))
+                    }
+                    _ => unreachable!("malformed trait item"),
+                },
                 generics: parse_generics(gen.clone()),
                 span,
             }
@@ -190,16 +194,10 @@ fn parse_trait(trait_: Pairs<Rule>, span: Range) -> Trait {
 
 fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
     match trait_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::IMPL, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), items @ .., (Rule::RBR, _)] => {
+        [(Rule::IMPL, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), (Rule::func_decl, func), (Rule::RBR, _)] => {
             Impl {
                 ident: ident.as_str().to_string(),
-                methods: items
-                    .iter()
-                    .map(|(r, p)| match r {
-                        Rule::func_decl => parse_func(p.clone().into_inner()),
-                        _ => unreachable!("malformed trait item"),
-                    })
-                    .collect(),
+                method: parse_func(func.clone().into_inner()),
                 type_arguments: parse_generics(gen.clone()),
                 span,
             }
@@ -296,10 +294,11 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                                     lhs,
                                     rhs,
                                 }.into_spanned(rhs_span),
-                            }.into_spanned(span)
+                            }
                         },
+                        meth @ Expr::TraitMeth { .. } => Stmt::TraitMeth(meth.into_spanned(to_span(expr))),
                         _ => todo!("{}", stmt.to_json()),
-                    }
+                    }.into_spanned(span)
                 }
                 _ => unreachable!("malformed expression statement {}", stmt.to_json()),
             }

@@ -4,9 +4,9 @@ decl = { (func_decl | trait_decl | trait_impl | var_decl | adt_decl) }
 
 func_decl = { type_ ~ ident ~ generic ~ LP ~ (param_list)? ~ RP ~ LBR ~ ( (var_decl) | (stmt) )* ~ RBR }
 
-trait_decl = { TRAIT ~ ident ~ generic ~ LBR ~ trait_item* ~ RBR }
+trait_decl = { TRAIT ~ ident ~ generic ~ LBR ~ trait_item ~ RBR }
 
-trait_impl = { IMPL ~ ident ~ generic ~ LBR ~ func_decl* ~ RBR }
+trait_impl = { IMPL ~ ident ~ generic ~ LBR ~ func_decl ~ RBR }
 
 var_decl = { type_ ~ var_name ~ (CM ~ var_name)* ~ SC }
 

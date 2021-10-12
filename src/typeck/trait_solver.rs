@@ -6,14 +6,26 @@ use std::{
 use crate::{
     ast::types::{Expr, Func, Impl, Range, Spany, Trait, TraitMethod, Ty, Type, Var, DUMMY},
     error::Error,
-    typeck::TyCheckRes,
+    typeck::{generic::Node, TyCheckRes},
 };
 
 #[derive(Debug, Default)]
+crate struct ToUnify<'ast> {
+    /// All the types that have to be unified and proven.
+    solution_stack: Vec<&'ast Ty>,
+    /// The dependence chain and location of each trait use.
+    chain: Vec<Node>,
+}
+
+#[derive(Debug, Default)]
 crate struct TraitSolve<'ast> {
+    /// The name of the trait to the declaration.
     crate traits: BTreeMap<String, &'ast Trait>,
+    /// The name of the trait to each type implementation.
+    ///
+    /// This would consider `trait foo<int, bool>` distinct from `trait foo<bool, int>`.
     impls: BTreeMap<String, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
-    proof_stack: BTreeMap<String, Vec<Vec<&'ast Ty>>>,
+    proof_stack: BTreeMap<String, Vec<ToUnify<'ast>>>,
 }
 
 impl<'ast> TraitSolve<'ast> {
@@ -26,31 +38,26 @@ impl<'ast> TraitSolve<'ast> {
             return Err("no trait".to_owned());
         }
         let set = t.type_arguments.iter().map(|t| &t.val).collect();
-        let mut map = iter::once((set, t)).collect();
-        if self.impls.insert(t.ident.to_string(), map).is_some() {
+        if self.impls.entry(t.ident.to_string()).or_default().insert(set, t).is_some() {
             return Err("found duplicate impl".to_owned());
         }
         Ok(())
     }
 
-    crate fn to_solve(&mut self, trait_: &str, types: Vec<&'ast Ty>) {
-        self.proof_stack.entry(trait_.to_owned()).or_default().push(types);
-        // self.impls
-        //     .get(trait_)
-        //     .and_then(|map| map.get(types).map(|meth| meth.methods.as_slice()))
-        //     .ok_or_else(|| {
-        //         format!(
-        //             "{}",
-        //             Error::error_with_span(
-        //                 tcxt,
-        //                 span,
-        //                 &format!(
-        //                     "no implementation `{}` found for {}",
-        //                     trait_,
-        //                     types.iter().map(|t| format!("`{}`", t)).collect::<Vec<_>>().join(",
-        // ")                 )
-        //             )
-        //         )
-        //     })
+    #[allow(clippy::wrong_self_convention)]
+    crate fn to_solve(
+        &mut self,
+        trait_: &str,
+        solution_stack: Vec<&'ast Ty>,
+        chain: Option<Vec<Node>>,
+    ) {
+        self.proof_stack
+            .entry(trait_.to_owned())
+            .or_default()
+            .push(ToUnify { solution_stack, chain: chain.into_iter().flatten().collect() });
+    }
+
+    crate fn unify(&self, tcxt: &TyCheckRes<'_, '_>, bound_generic: &Ty, to_unify: &Ty) -> bool {
+        true
     }
 }

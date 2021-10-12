@@ -90,28 +90,24 @@ crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
 }
 
 crate fn walk_trait<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Trait) {
-    let Trait { ident, methods, generics, span: _ } = tr;
+    let Trait { ident, method, generics, span: _ } = tr;
     // visit.visit_ident(ident);
     visit.visit_generics(generics);
     // visit.visit_ty(ret);
-    for meth in methods {
-        // match meth {
-        //     TraitMethod::Default(f) => visit.visit_func(f),
-        //     TraitMethod::NoBody(f) => visit.visit_func(f),
-        // }
-    }
+    // match method {
+    //     TraitMethod::Default(f) => visit.visit_func(f),
+    //     TraitMethod::NoBody(f) => visit.visit_func(f),
+    // }
 }
 
 crate fn walk_impl<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Impl) {
-    let Impl { ident, methods, type_arguments, span: _ } = tr;
+    let Impl { ident, method, type_arguments, span: _ } = tr;
     // visit.visit_ident(ident);
     // for ty in type_arguments {
     //     visit.visit_ty(ty);
     // }
     // visit.visit_ty(ret);
-    for func in methods {
-        // visit.visit_func(func)
-    }
+    visit.visit_func(method)
 }
 
 crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, adt: &'ast Adt) {
@@ -169,6 +165,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
                 visit.visit_expr(expr);
             }
         }
+        Stmt::TraitMeth(expr) => visit.visit_expr(expr),
         Stmt::If { cond, blk: Block { stmts, .. }, els } => {
             visit.visit_expr(cond);
             for stmt in stmts {

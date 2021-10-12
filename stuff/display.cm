@@ -1,0 +1,26 @@
+trait display<T> {
+    void display(T item);
+}
+
+impl display<int> {
+    void display(int item) {
+        // print int
+    }
+}
+
+impl display<bool> {
+    void display(bool item) {
+        // print bool
+    }
+}
+
+void show<T: display>(T item) {
+    <<T>::display>(item);
+}
+
+void main() {
+    int x, y;
+    x = 0; y = 1;
+    show::<int>(y);
+    show::<bool>(x > y);
+}

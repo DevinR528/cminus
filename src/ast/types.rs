@@ -149,7 +149,7 @@ pub enum Expr {
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
     Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
-    /// A call to a trait method with possible expression arguments `<T::trait>(expr)`.
+    /// A call to a trait method with possible expression arguments `<<T>::trait>(expr)`.
     TraitMeth { trait_: String, args: Vec<Expression>, type_args: Vec<Type> },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
@@ -524,6 +524,8 @@ pub enum Stmt {
     Assign { lval: Expression, rval: Expression },
     /// A call statement `call(arg1, arg2)`
     Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
+    /// A trait method call `<<T>::trait>(args)`
+    TraitMeth(Expression),
     /// If statement `if (expr) { stmts }`
     If { cond: Expression, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
@@ -609,11 +611,25 @@ pub enum TraitMethod {
     NoBody(Func),
 }
 
+impl TraitMethod {
+    crate fn return_ty(&self) -> &Type {
+        match self {
+            Self::Default(func) | Self::NoBody(func) => &func.ret,
+        }
+    }
+
+    crate fn function(&self) -> &Func {
+        match self {
+            Self::Default(func) | Self::NoBody(func) => func,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Trait {
     pub ident: String,
     pub generics: Vec<Type>,
-    pub methods: Vec<TraitMethod>,
+    pub method: TraitMethod,
     pub span: Range,
 }
 
@@ -621,7 +637,7 @@ pub struct Trait {
 pub struct Impl {
     pub ident: String,
     pub type_arguments: Vec<Type>,
-    pub methods: Vec<Func>,
+    pub method: Func,
     pub span: Range,
 }
 
