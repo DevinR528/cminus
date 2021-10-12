@@ -59,46 +59,66 @@ fn calc_snippet_around(span: Range, input: &str, row: usize) -> String {
         .take_while(|c| {
             if *c == '\n' && !first {
                 first = true;
-                true
-            } else {
-                *c != '\n'
+                return true;
+            } else if *c != '\n' {
+                return true;
             }
+            false
         })
         .collect::<String>();
     // flip it back
-    let pre = pre.chars().rev().collect::<String>();
+    let mut pre = pre.chars().rev().collect::<String>();
+
+    let error_seg = &input[span.start..span.end];
+
+    if error_seg.lines().count() <= 1 {
+        pre.push_str(&input[span.start..span.end]);
+    }
+
     // reset flag
     first = false;
+    let mut added_to_pre = 0;
     let post = input[span.end..]
         .chars()
         .take_while(|c| {
             if *c == '\n' && !first {
                 first = true;
                 true
+            } else if *c != '\n' && !first {
+                pre.push(*c);
+                added_to_pre += 1;
+                true
             } else {
                 *c != '\n'
             }
         })
         .collect::<String>();
-    let area = &input[span.start..span.end];
-    let error_area = if area.lines().count() <= 1 {
-        let pre_pad = pre.chars().rev().take_while(|c| *c != '\n').count();
-        let pad = area.chars().filter(|c| c.is_whitespace()).count() + pre_pad;
+    let post = &post[added_to_pre..];
+
+    let error_area = if error_seg.lines().count() <= 1 {
+        let pad = input[..span.start].lines().last().map_or(0, |l| l.len());
         let underline = span.end - span.start;
-        format!("{}\n{}{}", area, " ".repeat(pre_pad), "^".repeat(underline))
+        format!("\n{}{}", " ".repeat(pad), "^".repeat(underline))
     } else {
-        area.to_owned()
+        error_seg.to_owned()
     };
+
     // TODO: bad/wrong algorithm
     let mut adjusted = row - 1;
-    format!("{}{}{}", pre, error_area, post)
-        .lines()
+    let mut past_problem = false;
+    let s = format!("{}{}{}", pre, error_area, post);
+    let num_pad = (adjusted + 2).to_string().len() + 1;
+    s.lines()
         .enumerate()
         .map(|(i, l)| {
-            if row + 1 == adjusted + i {
-                format!("  |{}\n", l)
+            if (row + 1 == adjusted + i) && !past_problem {
+                adjusted -= 1;
+                past_problem = true;
+                format!("{}|{}\n", " ".repeat(num_pad), l)
             } else {
-                format!("{} |{}\n", i + adjusted, l)
+                let line = adjusted + i;
+                let pad = num_pad - line.to_string().len();
+                format!("{}{}|{}\n", line, " ".repeat(pad), l)
             }
         })
         .collect::<String>()

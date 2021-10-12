@@ -1,14 +1,26 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
+    fmt,
+};
 
 use crate::{
     ast::types::{Expr, Spany, Ty, Type, Var, DUMMY},
     typeck::TyCheckRes,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 crate enum TyRegion<'ast> {
     Expr(&'ast Expr),
     VarDecl(&'ast Var),
+}
+
+impl fmt::Debug for TyRegion<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Expr(e) => write!(f, "Expr(..)"),
+            Self::VarDecl(e) => write!(f, "VarDecl({})", e.ident),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]

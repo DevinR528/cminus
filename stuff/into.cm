@@ -1,0 +1,19 @@
+// Can I remove implicit casting and type promotion via generic and traits
+
+trait into<T, U> {
+    U into(T in);
+}
+
+impl into<bool, int> {
+    int into(bool in) {
+        if (in) {
+            return 1;
+        }
+        return 0;
+    }
+}
+
+void main() {
+    int x;
+    x = <<bool, int>::into>(false);
+}

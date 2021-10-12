@@ -159,12 +159,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
             visit.visit_expr(lval);
             visit.visit_expr(rval);
         }
-        Stmt::Call { ident, args, type_args } => {
-            // visit.visit_ident(ident);
-            for expr in args {
-                visit.visit_expr(expr);
-            }
-        }
+        Stmt::Call(expr) => visit.visit_expr(expr),
         Stmt::TraitMeth(expr) => visit.visit_expr(expr),
         Stmt::If { cond, blk: Block { stmts, .. }, els } => {
             visit.visit_expr(cond);

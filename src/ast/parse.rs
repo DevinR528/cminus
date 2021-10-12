@@ -348,17 +348,19 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                 [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _),
                     args @ ..,
                 (Rule::RP, _), (Rule::SC, _)] => {
-                    Stmt::Call {
-                        ident: name.as_str().to_string(),
-                        args: args.iter().map(|(_, p)| p.clone().into_inner()
-                            .filter_map(|arg| match arg.as_rule() {
-                                Rule::expr => Some(parse_expr(arg)),
-                                Rule::CM => None,
-                                _ => unreachable!("malformed call statement"),
-                            })
-                            .collect::<Vec<_>>()).flatten().collect(),
-                        type_args: parse_type_arguments(type_args.clone()),
-                    }.into_spanned(span)
+                    Stmt::Call(
+                        Expr::Call {
+                            ident: name.as_str().to_string(),
+                            args: args.iter().map(|(_, p)| p.clone().into_inner()
+                                .filter_map(|arg| match arg.as_rule() {
+                                    Rule::expr => Some(parse_expr(arg)),
+                                    Rule::CM => None,
+                                    _ => unreachable!("malformed call statement"),
+                                })
+                                .collect::<Vec<_>>()).flatten().collect(),
+                            type_args: parse_type_arguments(type_args.clone()),
+                        }.into_spanned(span)
+                    ).into_spanned(span)
                 }
                 // foo();
                 // [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _), (Rule::RP, _), (Rule::SC, _)] => {

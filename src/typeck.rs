@@ -93,7 +93,7 @@ impl fmt::Debug for TyCheckRes<'_, '_> {
         f.debug_struct("TyCheckResult")
             // .field("global", &self.global)
             // .field("curr_fn", &self.curr_fn)
-            .field("func_refs", &self.var_func.func_refs)
+            // .field("func_refs", &self.var_func.func_refs)
             // .field("func_params", &self.func_params)
             // .field("expr_ty", &self.expr_ty)
             // .field("struct_fields", &self.struct_fields)
@@ -444,6 +444,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let lhs_ty = self.expr_ty.get(&**lhs);
                 let rhs_ty = self.expr_ty.get(&**rhs);
 
+                println!("BINOP {:?} == {:?}", lhs_ty, rhs_ty);
                 if let Some(ty) = fold_ty(
                     self,
                     resolve_ty(lhs, lhs_ty).as_ref(),
@@ -482,7 +483,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.visit_expr(arg);
                 }
 
-                // TODO: check type_args agrees
+                // Check type_args agrees
                 let mut stack = self
                     .curr_fn
                     .as_ref()
@@ -490,21 +491,58 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .into_iter()
                     .chain(Some(Node::Func(ident.to_string())))
                     .collect::<Vec<_>>();
+
+                let mut gen_arg_map = HashMap::new();
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     let func =
                         self.var_func.name_func.get(ident).expect("all functions are collected");
                     let gen = &func.generics[gen_arg_idx];
-                    let params = func
+                    let arguments = func
                         .params
                         .iter()
                         .enumerate()
                         .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
-                    println!("CALL IN CALL {:?} == {:?} {:?}", type_args, gen, stack);
 
-                    let ty = collect_generic_usage(self, &ty_arg.val, &params, &mut stack);
-                    // TODO: actually compare
+                    let ty = collect_generic_usage(self, &ty_arg.val, &arguments, &mut stack);
+                    println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
+
+                    gen_arg_map.insert(gen.val.generic().to_string(), ty);
+                }
+
+                let func_params = self.var_func.name_func.get(ident).map(|f| &f.params);
+                for (idx, arg) in args.iter().enumerate() {
+                    let mut param_ty = func_params
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{}",
+                                Error::error_with_span(
+                                    self,
+                                    arg.span,
+                                    &format!("undefined parameter for `{}` function", ident)
+                                )
+                            )
+                        })
+                        .get(idx)
+                        .map(|p| p.ty.val.clone());
+                    let arg_ty = self.expr_ty.get(arg).cloned();
+
+                    if let Some(Ty::Generic { ident, .. }) = &param_ty {
+                        param_ty = gen_arg_map.get(ident).cloned();
+                    }
+
+                    if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
+                        self.errors.push(Error::error_with_span(
+                            self,
+                            arg.span,
+                            &format!(
+                                "call with wrong argument type\nfound {} expected {}",
+                                arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        ));
+                    }
                 }
 
                 if let Some(ret) = self.var_func.name_func.get(ident).map(|f| &f.ret.val) {
@@ -520,17 +558,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::TraitMeth { trait_, args, type_args } => {
-                // TODO: probably do stuff for generic args
                 for expr in args {
                     self.visit_expr(expr);
                 }
 
-                let generics = self
-                    .trait_solve
-                    .traits
-                    .get(trait_)
-                    .map(|t| &t.generics)
-                    .expect("trait is defined");
+                let trait_def =
+                    self.trait_solve.traits.get(trait_).expect("trait is defined").clone();
 
                 let mut stack = self
                     .curr_fn
@@ -540,51 +573,47 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .chain(Some(Node::Trait(trait_.to_string())))
                     .collect::<Vec<_>>();
 
+                let mut gen_arg_map = HashMap::new();
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
-                    let func = self
-                        .trait_solve
-                        .traits
-                        .get(trait_)
-                        .map(|t| t.method.function())
-                        .expect("trait is defined");
-                    let gen = &generics[gen_arg_idx];
-                    let params = func
+                    let gen = &trait_def.generics[gen_arg_idx];
+
+                    let arguments = trait_def
+                        .method
+                        .function()
                         .params
                         .iter()
                         .enumerate()
                         .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
-                    println!("TRAIT CALL IN CALL {:?} == {:?} {:?}", type_args, gen, stack);
 
-                    let ty = collect_generic_usage(self, &ty_arg.val, &params, &mut stack);
+                    let ty = collect_generic_usage(self, &ty_arg.val, &arguments, &mut stack);
+                    println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
+
+                    gen_arg_map.insert(gen.val.generic().to_string(), ty);
                 }
 
-                // TODO: is this needed still after ^^
                 let mut has_generic = false;
-                for arg in args {
-                    let exprty = self.expr_ty.get(&*arg).cloned();
-                    // Collect the generic parameter `<<T>::trait>()` (this has to be a
-                    // dependent parameter)
-                    if let Some(Ty::Generic { ident, .. }) = &exprty {
-                        if generics
-                            .iter()
-                            .any(|t| matches!(&t.val, Ty::Generic { ident: i, .. } if i == ident))
-                        {
-                            // TODO: refine the pushing of dependent `GenericParams`
-                            let ty = collect_generic_usage(
-                                self,
-                                exprty.as_ref().unwrap(),
-                                &[TyRegion::Expr(&expr.val)],
-                                &mut stack,
-                            );
-                            if exprty.as_ref().is_ty_eq(&Some(&ty)) {
-                                has_generic = true;
-                                continue;
-                            }
-                        } else {
-                            panic!("undefined generic type used")
-                        }
+                let func_params = &trait_def.generics;
+                for (idx, arg) in args.iter().enumerate() {
+                    let mut param_ty = func_params.get(idx).map(|ty| ty.val.clone());
+                    let arg_ty = self.expr_ty.get(arg).cloned();
+
+                    if let Some(Ty::Generic { ident, .. }) = &param_ty {
+                        has_generic = true;
+                        param_ty = gen_arg_map.get(ident).cloned();
+                    }
+
+                    if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
+                        self.errors.push(Error::error_with_span(
+                            self,
+                            arg.span,
+                            &format!(
+                                "call with wrong argument type\nfound {} expected {}",
+                                arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        ));
                     }
                 }
 
@@ -950,87 +979,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     ));
                 }
             }
-            Stmt::Call { ident, args, type_args } => {
-                // TODO: check if args/params need
-                // .and_then(|t| resolve_ty(rval, t));
-
-                println!("CALL {:?}", self.tcxt.var_func.get(stmt.span));
-                let mut gen_arg_idx = 0;
-                let func = self.tcxt.var_func.name_func.get(ident).map(|f| &f.params);
-
-                for (idx, arg) in args.iter().enumerate() {
-                    let mut param_ty = func
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{}",
-                                Error::error_with_span(
-                                    self.tcxt,
-                                    stmt.span,
-                                    &format!("undefined parameter for {} function", ident)
-                                )
-                            )
-                        })
-                        .get(idx)
-                        .map(|p| p.ty.val.clone());
-                    let arg_ty = self.tcxt.expr_ty.get(arg).cloned();
-
-                    if let Some(Ty::Generic { ident, .. }) = param_ty {
-                        param_ty = type_args.get(gen_arg_idx).map(|t| {
-                            if let Ty::Generic { ident: id, bound: bd } = &t.val {
-                                check_type_arg(self.tcxt, id, bd)
-                            } else {
-                                t.val.clone()
-                            }
-                        });
-                        gen_arg_idx += 1;
-                    }
-
-                    if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
-                        self.tcxt.errors.push(Error::error_with_span(
-                            self.tcxt,
-                            stmt.span,
-                            &format!(
-                                "call with wrong argument type\nfound {} expected {}",
-                                arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                                param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                            ),
-                        ));
-                    }
-                }
-
-                // TODO: check type_args agrees
-                let mut stack = self
-                    .tcxt
-                    .curr_fn
-                    .as_ref()
-                    .map(|f| Node::Func(f.to_string()))
-                    .into_iter()
-                    .chain(Some(Node::Func(ident.to_string())))
-                    .collect::<Vec<_>>();
-                for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
-                    let func = self
-                        .tcxt
-                        .var_func
-                        .name_func
-                        .get(ident)
-                        .expect("all functions are collected");
-                    let gen = &func.generics[gen_arg_idx];
-                    let params = func
-                        .params
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
-                        .map(|(i, _)| TyRegion::Expr(&args[i].val))
-                        .collect::<Vec<_>>();
-                    println!("CALL IN CALL {:?} == {:?} {:?}", type_args, gen, stack);
-
-                    let ty = collect_generic_usage(self.tcxt, &ty_arg.val, &params, &mut stack);
-                    // TODO: actually compare
-                }
-                // TODO: Check return?
+            Stmt::Call(expr) => {
+                // Hmm we need something here?
             }
             Stmt::TraitMeth(e) => {
-                self.tcxt.visit_expr(e);
                 // TODO:
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
@@ -1211,6 +1163,8 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         ),
                     ));
                 }
+                // TODO: if there is no return but the fn sig says there is we don't catch this
+                // `int add(int x) { x + 2; }` would not be caught
             }
             Stmt::Exit => {
                 let func_ret_ty =
@@ -1559,6 +1513,7 @@ fn walk_field_access(
     }
 }
 
+// TODO: finish the type folding
 fn fold_ty(
     tcxt: &TyCheckRes<'_, '_>,
     lhs: Option<&Ty>,
@@ -1569,10 +1524,16 @@ fn fold_ty(
     // println!("fold: {:?} {:?}", lhs, rhs);
     let res = match (lhs?, rhs?) {
         (Ty::Int, Ty::Int) => match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => Some(Ty::Int),
-            BinOp::LeftShift | BinOp::RightShift | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
-                Some(Ty::Int)
-            }
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::LeftShift
+            | BinOp::RightShift
+            | BinOp::BitAnd
+            | BinOp::BitXor
+            | BinOp::BitOr => Some(Ty::Int),
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
             BinOp::AddAssign | BinOp::SubAssign => {
                 panic!(
@@ -1588,7 +1549,21 @@ fn fold_ty(
                 panic!("{}", Error::error_with_span(tcxt, span, "not a legal operation for `int`"))
             }
         },
-        (Ty::Int, _) => None,
+        (Ty::Ptr(t), Ty::Int) => match op {
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::LeftShift
+            | BinOp::RightShift
+            | BinOp::BitAnd
+            | BinOp::BitXor
+            | BinOp::BitOr => Some(Ty::Ptr(t.clone())),
+            _ => panic!("illegal operation"),
+        },
+        // swap left and write so the above arm catches
+        (l @ Ty::Int, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
         (Ty::Char, Ty::Char) => match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => Some(Ty::Int),
             BinOp::LeftShift | BinOp::RightShift | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
@@ -1609,42 +1584,32 @@ fn fold_ty(
                 panic!("{}", Error::error_with_span(tcxt, span, "not a legal operation for `char`"))
             }
         },
-        (Ty::Char, _) => None,
         (Ty::String, Ty::String) => todo!(),
-        (Ty::String, _) => None,
         (Ty::Float, Ty::Float) => todo!(),
-        (Ty::Float, _) => None,
         (Ty::Array { size, ty: t1 }, Ty::Array { size: s, ty: t2 }) if size == s => {
             Some(Ty::Array {
                 size: *size,
                 ty: box fold_ty(tcxt, Some(&t1.val), Some(&t2.val), op, span)?.into_spanned(DUMMY),
             })
         }
-        (Ty::Array { .. }, _) => None,
         (Ty::Void, Ty::Void) => Some(Ty::Void),
-        (Ty::Void, _) => None,
         (Ty::Bool, Ty::Bool) => match op {
             BinOp::And | BinOp::Or => Some(Ty::Bool),
             _ => panic!("illegal boolean operation"),
         },
-        (Ty::Bool, _) => None,
         // TODO: deal with structs expr will need field access
         (Ty::Struct { .. }, _) => todo!(""),
         (Ty::Enum { .. }, _) => todo!(""),
-        (Ty::Ptr(t), Ty::Int) => match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                Some(Ty::Ptr(t.clone()))
-            }
-            _ => panic!("illegal operation"),
-        },
         (Ty::Ptr(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
         (r @ Ty::Ref(_), t @ Ty::Ref(_)) => {
             fold_ty(tcxt, r.resolve().as_ref(), t.resolve().as_ref(), op, span)
         }
         (r @ Ty::Ref(_), t) => fold_ty(tcxt, r.resolve().as_ref(), Some(t), op, span),
         (r, t @ Ty::Ref(_)) => fold_ty(tcxt, Some(r), t.resolve().as_ref(), op, span),
-        (Ty::Generic { .. }, _) => todo!("GENERICS yikes"),
+
+        (Ty::Generic { .. }, _) => unreachable!("since no bar generic item will ever be in maths"),
         (Ty::Func { .. }, _) => unreachable!("Func should never be folded"),
+        _ => None,
     };
     // println!("fold result: {:?}", res);
     res

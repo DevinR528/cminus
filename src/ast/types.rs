@@ -241,6 +241,18 @@ pub enum Ty {
 }
 
 impl Ty {
+    /// Returns `Ty::Generic { .. }` as a string `T`.
+    ///
+    /// ## Panics
+    /// if `Self` is not a `Ty::Generic`.
+    crate fn generic(&self) -> &str {
+        if let Self::Generic { ident, .. } = self {
+            ident
+        } else {
+            panic!("type was not a Generic {:?}", self)
+        }
+    }
+
     /// Returns `true` if the type contains a generic parameter.
     crate fn has_generics(&self) -> bool {
         match self {
@@ -523,7 +535,7 @@ pub enum Stmt {
     /// Assignment `lval = rval;`
     Assign { lval: Expression, rval: Expression },
     /// A call statement `call(arg1, arg2)`
-    Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
+    Call(Expression),
     /// A trait method call `<<T>::trait>(args)`
     TraitMeth(Expression),
     /// If statement `if (expr) { stmts }`
@@ -597,10 +609,15 @@ pub struct Generic {
 
 #[derive(Clone, Debug)]
 pub struct Func {
+    /// The return type `int name() { stmts }`
     pub ret: Type,
+    /// Name of the function.
     pub ident: String,
+    /// The generic parameters listed for a function.
     pub generics: Vec<Type>,
+    /// the type and identifier of each parameter.
     pub params: Vec<Param>,
+    /// All the crap the function does.
     pub stmts: Vec<Statement>,
     pub span: Range,
 }
