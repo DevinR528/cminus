@@ -566,6 +566,7 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
                 Rule::INT => Ty::Int,
                 Rule::FLOAT => Ty::Float,
                 Rule::CHAR => Ty::Char,
+                Rule::BOOL => Ty::Bool,
                 Rule::VOID if addr.as_str().is_empty() => Ty::Void,
                 Rule::ident => Ty::Generic { ident: ty.as_str().to_string(), bound: None },
                 Rule::bound => match ty.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {

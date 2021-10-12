@@ -120,7 +120,8 @@ op = {
 
 type_ = {
     (
-        INT
+        BOOL
+        | INT
         | CHAR
         | FLOAT
         | VOID
@@ -174,6 +175,7 @@ WRITE = { "write" }
 MATCH = { "match" }
 TRUE = { "true" }
 FALSE = { "false" }
+BOOL = { "bool" }
 
 // operations
 PLUS = { "+" }
