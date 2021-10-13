@@ -69,14 +69,15 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("{:?}", items);
+    // println!("{:?}", items);
 
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
 
     tyck.visit_prog(&items);
-    tyck.report_errors().unwrap();
+    let res = tyck.report_errors();
+    // res.unwrap();
 
-    println!("\n\n{:?}", tyck);
+    // println!("\n\n{:?}", tyck);
 
     Ok(())
 }

@@ -53,7 +53,7 @@ impl Node {
 
 #[derive(Debug)]
 crate struct GenericArgument<'ast> {
-    ty: Ty,
+    crate ty: Ty,
     exprs: Vec<TyRegion<'ast>>,
 }
 
@@ -216,17 +216,12 @@ crate fn collect_generic_usage<'ast>(
                 }
                 Ty::Ptr(_) => todo!(),
                 Ty::Ref(_) => todo!(),
-                Ty::String => todo!(),
-                Ty::Int => todo!(),
-                Ty::Char => todo!(),
-                Ty::Float => todo!(),
-                Ty::Bool => {
+                Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool => {
                     tcxt.generic_res.push_resolved_child(stack, &res, exprs.to_vec());
                 }
                 Ty::Void => todo!(),
                 Ty::Func { ident, ret, params } => todo!(),
             }
-            // TODO: add to generic resolver
             res
         }
         Ty::Array { size, ty } => Ty::Array {
@@ -272,7 +267,7 @@ crate fn collect_generic_usage<'ast>(
             Ty::Ref(box collect_generic_usage(tcxt, &t.val, exprs, stack).into_spanned(DUMMY))
         }
         _ => {
-            // println!("{:?}", ty);
+            println!("{:?}", ty);
             tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
             ty.clone()
         }

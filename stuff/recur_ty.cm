@@ -1,0 +1,15 @@
+enum option<T> {
+    some(T),
+    none,
+}
+
+enum option<T> foo<T>(T it) {
+    enum option<T> opt;
+    opt = option::some(it);
+    return opt;
+}
+
+void main() {
+    enum option<enum option<char>> num;
+    num = foo::<enum option<int>>(foo::<int>(10));
+}

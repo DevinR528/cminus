@@ -253,6 +253,22 @@ impl Ty {
         }
     }
 
+    /// Returns iterator of all generic parameters [`T`, `U`, ..].
+    crate fn generics(&self) -> Vec<&str> {
+        match self {
+            Ty::Generic { ident, bound } => vec![ident],
+            Ty::Array { size, ty } => ty.val.generics(),
+            Ty::Struct { ident, gen } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
+            Ty::Enum { ident, gen } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
+            Ty::Ptr(ty) => ty.val.generics(),
+            Ty::Ref(ty) => ty.val.generics(),
+            Ty::Func { ident, ret, params } => {
+                params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
+            }
+            Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => vec![],
+        }
+    }
+
     /// Returns `true` if the type contains a generic parameter.
     crate fn has_generics(&self) -> bool {
         match self {
@@ -266,6 +282,31 @@ impl Ty {
                 ret.has_generics() | params.iter().any(|t| t.has_generics())
             }
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
+        }
+    }
+
+    crate fn subst_generic(&mut self, generic: &str, subs: &Ty) {
+        match self {
+            t @ Ty::Generic { .. } if generic == t.generic() => {
+                *t = subs.clone();
+            }
+            Ty::Array { size, ty } => ty.val.subst_generic(generic, subs),
+            Ty::Struct { ident, gen } => {
+                for t in gen {
+                    t.val.subst_generic(generic, subs)
+                }
+            }
+            Ty::Enum { ident, gen } => {
+                for t in gen {
+                    t.val.subst_generic(generic, subs)
+                }
+            }
+            Ty::Ptr(ty) => ty.val.subst_generic(generic, subs),
+            Ty::Ref(ty) => ty.val.subst_generic(generic, subs),
+            Ty::Func { ident, ret, params } => {
+                todo!()
+            }
+            _ => {}
         }
     }
 
@@ -400,35 +441,26 @@ impl Spany for Ty {}
 impl TypeEquality for Ty {
     fn is_ty_eq(&self, other: &Self) -> bool {
         match (self, other) {
-            // TODO: does size matter? :)
+            // TODO: does size matter for all uses
             (Ty::Array { size: s1, ty: t1 }, Ty::Array { size: s2, ty: t2 }) => {
                 s1.eq(s2) && t1.is_ty_eq(t2)
             }
-            (Ty::Array { .. }, _) => false,
             // TODO: generic comparison
             (Ty::Struct { ident: n1, .. }, Ty::Struct { ident: n2, .. }) => n1 == n2,
-            (Ty::Struct { .. }, _) => false,
-            (Ty::Enum { ident: n1, .. }, Ty::Enum { ident: n2, .. }) => n1 == n2,
-            (Ty::Enum { .. }, _) => false,
+            (Ty::Enum { ident: n1, gen: g1 }, Ty::Enum { ident: n2, gen: g2 }) => {
+                n1 == n2 && g1.iter().zip(g2).all(|(a, b)| a.is_ty_eq(b))
+            }
             (Ty::Ptr(t1), Ty::Ptr(t2)) => t1.val.is_ty_eq(&t2.val),
-            (Ty::Ptr(_), _) => false,
             (Ty::Ref(t1), Ty::Ref(t2)) => t1.val.is_ty_eq(&t2.val),
-            (Ty::Ref(_), _) => false,
-            (Ty::String, Ty::String) => true,
-            (Ty::String, _) => false,
-            (Ty::Int, Ty::Int) => true,
-            (Ty::Int, _) => false,
-            (Ty::Char, Ty::Char) => true,
-            (Ty::Char, _) => false,
-            (Ty::Float, Ty::Float) => true,
-            (Ty::Float, _) => false,
-            (Ty::Bool, Ty::Bool) => true,
-            (Ty::Bool, _) => false,
-            (Ty::Void, Ty::Void) => true,
-            (Ty::Void, _) => false,
+            (Ty::String, Ty::String)
+            | (Ty::Int, Ty::Int)
+            | (Ty::Char, Ty::Char)
+            | (Ty::Float, Ty::Float)
+            | (Ty::Bool, Ty::Bool)
+            | (Ty::Void, Ty::Void) => true,
             (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => i1.eq(i2),
-            (Ty::Generic { .. }, _) => false,
             (Ty::Func { .. }, _) => unreachable!("Func type should never be checked"),
+            _ => false,
         }
     }
 }
