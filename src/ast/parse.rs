@@ -396,6 +396,15 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                         },
                     }.into_spanned(span)
                 }
+                [
+                    (Rule::IF, _), (Rule::LP, _), (Rule::expr, expr), (Rule::RP, _), (Rule::SC, sc)
+                ] => {
+                    Stmt::If {
+                        cond: parse_expr(expr.clone()),
+                        blk: Block { span: to_span(sc), stmts: vec![]},
+                        els: None,
+                    }.into_spanned(span)
+                }
                 _ => unreachable!("malformed assignment"),
             }
         }

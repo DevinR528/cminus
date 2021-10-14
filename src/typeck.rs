@@ -115,7 +115,7 @@ impl<'input> TyCheckRes<'_, 'input> {
             for e in &self.errors {
                 eprintln!("{}", e)
             }
-            println!("{:?}", self);
+            // println!("{:?}", self);
             return Err(());
         }
         Ok(())
@@ -283,7 +283,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
             let ty =
                 collect_generic_usage(self, &var.ty.val, &[TyRegion::VarDecl(var)], &mut stack);
-            println!("ty from collect {:?}", ty);
+
+            // println!("ty from collect {:?}", ty);
 
             if self
                 .var_func
@@ -385,6 +386,26 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::Array { ident, exprs } => {
+                for expr in exprs {
+                    self.visit_expr(expr);
+                }
+
+                for e in exprs {
+                    let ty = self.expr_ty.get(e);
+                    if !matches!(ty, Some(Ty::Int)) {
+                        panic!(
+                            "{}",
+                            Error::error_with_span(
+                                self,
+                                expr.span,
+                                &format!(
+                                    "cannot index array with {}",
+                                    ty.map_or("<unknown>".to_owned(), |t| t.to_string())
+                                )
+                            )
+                        );
+                    }
+                }
                 if let Some(ty) = self.type_of_ident(ident, expr.span) {
                     if self.expr_ty.insert(expr, ty).is_some() {
                         // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
@@ -450,11 +471,11 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let lhs_ty = self.expr_ty.get(&**lhs);
                 let rhs_ty = self.expr_ty.get(&**rhs);
 
-                println!("BINOP {:?} == {:?}", lhs_ty, rhs_ty);
+                // println!("BINOP {:?} == {:?}", lhs_ty, rhs_ty);
                 if let Some(ty) = fold_ty(
                     self,
-                    resolve_ty(lhs, lhs_ty).as_ref(),
-                    resolve_ty(rhs, rhs_ty).as_ref(),
+                    resolve_ty(self, lhs, lhs_ty).as_ref(),
+                    resolve_ty(self, rhs, rhs_ty).as_ref(),
                     op,
                     expr.span,
                 ) {
@@ -523,9 +544,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
 
-                    println!("{:?}", ty_arg);
                     let ty = collect_generic_usage(self, &ty_arg.val, &arguments, &mut stack);
-                    println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
+
+                    // println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
 
                     gen_arg_map.insert(gen.val.generic().to_string(), ty);
                 }
@@ -536,6 +557,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .get(ident)
                     .map(|f| &f.params)
                     .expect("function is known with params");
+
+                if args.len() != func_params.len() {
+                    panic!(
+                        "{}",
+                        Error::error_with_span(self, expr.span, "wrong number of arguments",)
+                    );
+                }
+
                 for (idx, arg) in args.iter().enumerate() {
                     let mut param_ty = func_params.get(idx).map(|p| p.ty.val.clone());
                     let arg_ty = self.expr_ty.get(arg).cloned();
@@ -608,7 +637,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .collect::<Vec<_>>();
 
                     let ty = collect_generic_usage(self, &ty_arg.val, &arguments, &mut stack);
-                    println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
+
+                    // println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
 
                     gen_arg_map.insert(gen.val.generic().to_string(), ty);
                 }
@@ -917,7 +947,7 @@ fn check_field_access<'ast>(
                 .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
                 .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name));
             tcxt.expr_ty.insert(rhs, rty.clone());
-            Some(rty.index_dim(exprs.len()))
+            rty.index_dim(&tcxt, exprs, rhs.span)
         }
         Expr::FieldAccess { lhs, rhs } => {
             let accty = check_field_access(tcxt, lhs, rhs);
@@ -957,9 +987,11 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
             check_dereference(tcxt, rhs);
         }
         Expr::Array { ident, exprs } => {
-            let ty = tcxt.type_of_ident(ident, expr.span).map(|ty| ty.index_dim(exprs.len()));
+            let ty = tcxt
+                .type_of_ident(ident, expr.span)
+                .and_then(|ty| ty.index_dim(tcxt, exprs, expr.span));
             if let Some(ty) = ty {
-                println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
+                // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
                 tcxt.errors.push(Error::error_with_span(
                     tcxt,
@@ -1004,17 +1036,17 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
         match &stmt.val {
             // Nothing to do here, TODO: could maybe record for dead code?
             Stmt::VarDecl(_) => {}
+            // TODO: rvalues take lvalue type
             Stmt::Assign { lval, rval } => {
                 let orig_lty = lvalue_type(self.tcxt, lval, stmt.span);
-                let lval_ty = resolve_ty(lval, orig_lty.as_ref());
+                let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
 
                 let orig_rty = self.tcxt.expr_ty.get(rval);
-                let rval_ty = resolve_ty(rval, orig_rty);
+                let rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
 
-                if rval_ty.as_ref().map_or(false, |t| t.has_generics()) {
-                    println!("Assing Gen {:?} == {:?}", rval_ty, lval_ty);
-                }
-                self.tcxt.inc += 1;
+                // if rval_ty.as_ref().map_or(false, |t| t.has_generics()) {
+                //     println!("Assing Gen {:?} == {:?}", rval_ty, lval_ty);
+                // }
 
                 if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
                     self.tcxt.errors.push(Error::error_with_span(
@@ -1035,7 +1067,8 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO:
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
-                let cond_ty = self.tcxt.expr_ty.get(cond).and_then(|t| resolve_ty(cond, Some(t)));
+                let cond_ty =
+                    self.tcxt.expr_ty.get(cond).and_then(|t| resolve_ty(self.tcxt, cond, Some(t)));
                 if !cond_ty.as_ref().is_ty_eq(&Some(&Ty::Bool)) {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
@@ -1069,7 +1102,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 self.visit_stmt(stmt);
             }
             Stmt::Match { expr, arms } => {
-                let match_ty = resolve_ty(expr, self.tcxt.expr_ty.get(expr));
+                let match_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
 
                 // TODO: more
                 match match_ty.as_ref().unwrap() {
@@ -1109,7 +1142,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                     .insert(variable.to_string(), ty.clone());
                             }
 
-                            println!("{} {:?} {}", fn_name, bound_vars, arm);
+                            // println!("{} {:?} {}", fn_name, bound_vars, arm);
 
                             for stmt in &arm.blk.stmts {
                                 self.tcxt.visit_stmt(stmt);
@@ -1153,7 +1186,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                     .insert(variable.to_string(), ty.clone());
                             }
 
-                            println!("{} {:?} {}", fn_name, bound_vars, arm);
+                            // println!("{} {:?} {}", fn_name, bound_vars, arm);
 
                             for stmt in &arm.blk.stmts {
                                 self.tcxt.visit_stmt(stmt);
@@ -1194,7 +1227,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO: display trait?
             }
             Stmt::Ret(expr) => {
-                let ret_ty = resolve_ty(expr, self.tcxt.expr_ty.get(expr));
+                let ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
                 let func_ret_ty =
                     self.tcxt.var_func.get(expr.span).and_then(|fname| {
                         self.tcxt.var_func.name_func.get(fname).map(|f| &f.ret.val)
@@ -1411,10 +1444,10 @@ fn check_val_pat(
     }
 }
 
-fn resolve_ty(expr: &Expression, ty: Option<&Ty>) -> Option<Ty> {
+fn resolve_ty(tcxt: &TyCheckRes<'_, '_>, expr: &Expression, ty: Option<&Ty>) -> Option<Ty> {
     match &expr.val {
         Expr::Deref { indir, expr } => ty.and_then(|t| t.resolve()),
-        Expr::Array { ident, exprs } => ty.map(|t| t.index_dim(exprs.len())),
+        Expr::Array { ident, exprs } => ty.and_then(|t| t.index_dim(tcxt, exprs, expr.span)),
         Expr::AddrOf(_) => ty.cloned(),
         Expr::Ident(_)
         | Expr::Urnary { .. }
@@ -1448,7 +1481,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     ));
                     None
                 } else {
-                    Some(ty.index_dim(dim))
+                    ty.index_dim(tcxt, exprs, stmt_span)
                 }
             } else {
                 panic!("{:?}", lval);
@@ -1569,54 +1602,13 @@ fn fold_ty(
     op: &BinOp,
     span: Range,
 ) -> Option<Ty> {
-    // println!("fold: {:?} {:?}", lhs, rhs);
     let res = match (lhs?, rhs?) {
-        (Ty::Int, Ty::Int) => match op {
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::LeftShift
-            | BinOp::RightShift
-            | BinOp::BitAnd
-            | BinOp::BitXor
-            | BinOp::BitOr => Some(Ty::Int),
-            BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
-            BinOp::AddAssign | BinOp::SubAssign => {
-                panic!(
-                    "{}",
-                    Error::error_with_span(
-                        tcxt,
-                        span,
-                        "cannot assign to a statement, this isn't Rust ;)"
-                    )
-                )
-            }
-            _ => {
-                panic!("{}", Error::error_with_span(tcxt, span, "not a legal operation for `int`"))
-            }
-        },
-        (Ty::Ptr(t), Ty::Int) => match op {
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::LeftShift
-            | BinOp::RightShift
-            | BinOp::BitAnd
-            | BinOp::BitXor
-            | BinOp::BitOr => Some(Ty::Ptr(t.clone())),
-            _ => panic!("illegal operation"),
-        },
-        // swap left and write so the above arm catches
-        (l @ Ty::Int, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
+        (Ty::Int, Ty::Int) => math_ops(tcxt, op, Ty::Int, span),
+        (Ty::Float, Ty::Float) => math_ops(tcxt, op, Ty::Float, span),
+        // TODO: remove Carr's rules
+        (Ty::Int, Ty::Float) => math_ops(tcxt, op, Ty::Float, span),
+        (Ty::Float, Ty::Int) => math_ops(tcxt, op, Ty::Float, span),
         (Ty::Char, Ty::Char) => match op {
-            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => Some(Ty::Int),
-            BinOp::LeftShift | BinOp::RightShift | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
-                todo!()
-            }
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
             BinOp::AddAssign | BinOp::SubAssign => {
                 panic!(
@@ -1633,7 +1625,21 @@ fn fold_ty(
             }
         },
         (Ty::String, Ty::String) => todo!(),
-        (Ty::Float, Ty::Float) => todo!(),
+        (Ty::Ptr(t), Ty::Int) => match op {
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::LeftShift
+            | BinOp::RightShift
+            | BinOp::BitAnd
+            | BinOp::BitXor
+            | BinOp::BitOr => Some(Ty::Ptr(t.clone())),
+            _ => panic!("illegal operation"),
+        },
+        // swap left and write so the above arm catches
+        (l @ Ty::Int, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
         (Ty::Array { size, ty: t1 }, Ty::Array { size: s, ty: t2 }) if size == s => {
             Some(Ty::Array {
                 size: *size,
@@ -1659,8 +1665,45 @@ fn fold_ty(
         (Ty::Func { .. }, _) => unreachable!("Func should never be folded"),
         _ => None,
     };
-    // println!("fold result: {:?}", res);
     res
+}
+
+fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> Option<Ty> {
+    match op {
+        BinOp::Add
+        | BinOp::Sub
+        | BinOp::Mul
+        | BinOp::Div
+        | BinOp::Rem
+        | BinOp::LeftShift
+        | BinOp::RightShift
+        | BinOp::BitAnd
+        | BinOp::BitXor
+        | BinOp::BitOr => Some(ret_ty),
+        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
+        // TODO: Carr's rules remove
+        BinOp::And | BinOp::Or => Some(Ty::Bool),
+        BinOp::AddAssign | BinOp::SubAssign => {
+            panic!(
+                "{}",
+                Error::error_with_span(
+                    tcxt,
+                    span,
+                    "cannot assign to a statement, this isn't Rust ;)"
+                )
+            )
+        }
+        _ => {
+            panic!(
+                "{}",
+                Error::error_with_span(
+                    tcxt,
+                    span,
+                    &format!("not a legal operation for {}", ret_ty)
+                )
+            )
+        }
+    }
 }
 
 fn lit_to_type(lit: &Val) -> Ty {

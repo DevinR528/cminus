@@ -93,11 +93,15 @@ fn main() {
         [_bin_name, file_names @ ..] => {
             let mut errors = 0;
             for f in file_names {
-                match process_file(f) {
-                    Ok(_) => {}
-                    Err(e) => {
+                match std::panic::catch_unwind(|| process_file(f)) {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(e)) => {
                         errors += 1;
                         eprintln!("{}", e)
+                    }
+                    Err(e) => {
+                        errors += 1;
+                        // eprintln!("{}", e.to_string())
                     }
                 }
             }
@@ -110,7 +114,7 @@ fn main() {
                 std::process::exit(1)
             }
         }
-    };
+    }
 }
 
 #[test]

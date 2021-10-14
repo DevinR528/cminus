@@ -144,7 +144,7 @@ impl<'ast> GenericResolver<'ast> {
         id: &str,
         bound: Option<String>,
     ) -> Option<GenericParam> {
-        println!("GEN STACK {:?} {:?}\n", stack, expr);
+        // println!("GEN STACK {:?} {:?}\n", stack, expr);
         let mut iter = stack.iter();
         let mut gp = self.item_generics.get_mut(iter.next()?)?;
 
@@ -195,7 +195,7 @@ crate fn collect_generic_usage<'ast>(
     exprs: &[TyRegion<'ast>],
     stack: &mut Vec<Node>,
 ) -> Ty {
-    println!("collect {:?} {:?}", ty, stack);
+    // println!("collect {:?} {:?}", ty, stack);
     match &ty {
         Ty::Generic { ident: outer_name, bound } => {
             let res = check_type_arg(tcxt, outer_name, bound);
@@ -267,7 +267,6 @@ crate fn collect_generic_usage<'ast>(
             Ty::Ref(box collect_generic_usage(tcxt, &t.val, exprs, stack).into_spanned(DUMMY))
         }
         _ => {
-            println!("{:?}", ty);
             tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
             ty.clone()
         }

@@ -1,5 +1,7 @@
 use std::{fmt, hash, ops};
 
+use crate::{error::Error, typeck::TyCheckRes};
+
 crate trait TypeEquality {
     /// If the two types are considered equal.
     fn is_ty_eq(&self, other: &Self) -> bool;
@@ -366,17 +368,29 @@ impl Ty {
         dim
     }
 
-    crate fn index_dim(&self, mut dim: usize) -> Self {
+    crate fn index_dim(
+        &self,
+        tcxt: &TyCheckRes<'_, '_>,
+        exprs: &[Expression],
+        span: Range,
+    ) -> Option<Self> {
         let mut new = self.clone();
-        while (dim > 0) {
-            if let Ty::Array { ty, .. } = new {
+        for expr in exprs {
+            if let Ty::Array { ty, size } = new {
+                if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
+                    if i >= &(size as isize) {
+                        panic!(
+                            "{}",
+                            Error::error_with_span(tcxt, span, "out of bound of static array")
+                        )
+                    }
+                }
                 new = ty.val;
-                dim -= 1;
             } else {
                 break;
             }
         }
-        new
+        Some(new)
     }
 }
 

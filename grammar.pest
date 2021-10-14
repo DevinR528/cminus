@@ -49,7 +49,7 @@ assign = { expr ~ ASSIGN ~ (struct_assign | arr_init | expr) ~ SC }
 
 call_stmt = { ident ~ type_args ~ LP ~ (arg_list)? ~ RP ~ SC }
 
-if_stmt = { IF ~ LP ~ expr ~ RP ~ block_stmt ~ (ELSE ~ block_stmt)? }
+if_stmt = { IF ~ LP ~ expr ~ RP ~ ((block_stmt ~ (ELSE ~ block_stmt)?) | SC) }
 
 while_stmt = { WHILE ~ LP ~ expr ~ RP ~ stmt }
 
@@ -113,7 +113,7 @@ op = {
 
     | EQ | NE
 
-    | BAND | BXOR | BOR
+    | BAND ~ " " | BXOR | BOR ~ " "
 
     | OR | AND
 }
@@ -146,7 +146,7 @@ integer = @{ ASCII_DIGIT+ }
 
 decimal = @{ ASCII_DIGIT+ ~ DOT ~ ASCII_DIGIT* }
 
-ident = @{ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
+ident = @{ !keyword ~ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
 
 charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
 

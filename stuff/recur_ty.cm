@@ -10,6 +10,6 @@ enum option<T> foo<T>(T it) {
 }
 
 void main() {
-    enum option<enum option<char>> num;
+    enum option<enum option<int>> num;
     num = foo::<enum option<int>>(foo::<int>(10));
 }
