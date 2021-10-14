@@ -25,5 +25,5 @@ void main() {
   write(decls());
   b = 10;
   write(foo());
-	exit;
+    exit;
 }

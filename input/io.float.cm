@@ -1,8 +1,8 @@
 void main() {
   float b;
 
-	read(b); write(b);
-	write(1.1);
-	write(110000.0);
-	exit;
+    read(b); write(b);
+    write(1.1);
+    write(110000.0);
+    exit;
 }

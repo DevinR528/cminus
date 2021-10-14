@@ -5,7 +5,7 @@ int* ptr(int x) {
 }
 
 void add(int* x) {
-    **x = *x + 1;
+    // **x = *x + 1; cannot deref an int
     int y;
     y = *x * *x;
     foo(&y);

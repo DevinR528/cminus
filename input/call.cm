@@ -9,5 +9,5 @@ float foo() {
 void main() {
   write(decls());
   write(foo());
-	exit;
+    exit;
 }

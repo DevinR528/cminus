@@ -1,4 +1,4 @@
 void main() {
-	write("Hello world!");
-	exit;
+    write("Hello world!");
+    exit;
 }

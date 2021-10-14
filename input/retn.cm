@@ -13,17 +13,18 @@ above error is tested in this file */
 
 void A(int b) {
    return 1;  /* error-A is assigned a value like
-	         a function but its been declared
-	         as a procedure */
+             a function but its been declared
+             as a procedure */
 }
 
 int B(int a[20]) {
      int c;
-     a[A(1)] = c; /* error-A is not a function and hence, does
-			 not return a value */
+     a[A(1)] = c;
+     /* error-A is not a function and hence, does
+             not return a value */
      B(a);  /* error-B is declared as function but
-		      used as a procedure */
-	      /* error, no return statement */
+              used as a procedure */
+          /* error, no return statement */
 }
 
 void main() {

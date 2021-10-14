@@ -1,7 +1,7 @@
 /*
 Test function calls as parameters
 
-Eric Johnson	ejohn
+Eric Johnson    ejohn
 */
 
 
@@ -27,9 +27,9 @@ void main()
 {
 read (i);
 while (i)
-	{
-	print (i);
-	print (inc (sqr (inc (i))));
-	read (i);
-	}
+    {
+    print (i);
+    print (inc (sqr (inc (i))));
+    read (i);
+    }
 }

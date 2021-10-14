@@ -3,11 +3,11 @@ void main() {
 
     write("enter a:");
     read(a);
-    if (a < 0) { 
-	write(1);
+    if (a < 0) {
+    write(1);
     }
     else {
-	write(0);
+    write(0);
     }
-	exit;
+    exit;
 }

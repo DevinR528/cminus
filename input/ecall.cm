@@ -10,22 +10,22 @@ above error is tested in this file */
  char b[2];
 
   void A(int a) {
-	   int x;
+       int x;
 
      x = A(B(100)); /* Function B is of type Character but parameter to A is of type integer */
-	}
+    }
 
-	char B(int a) {
+    char B(int a) {
       int d;
-	    d = C(1,1,1,1,1,1,1); /*last 3 args wrong type */
-	    return B(B(d)); /* B(d) returns a character-but parameter is of type integer */
-	}
+        d = C(1,1,1,1,1,1,1); /*last 3 args wrong type */
+        return B(B(d)); /* B(d) returns a character-but parameter is of type integer */
+    }
 
-	void C(int a, int b, int c, int d, float e, float f, float g) {
-	 a=b+c+d;
-	 e=f+g;
-	 g = C(1,1,1,1,1.1,1.1,1.1);
-	}
+    void C(int a, int b, int c, int d, float e, float f, float g) {
+     a=b+c+d;
+     e=f+g;
+     g = C(1,1,1,1,1.1,1.1,1.1);
+    }
 
 void main() {
  int a;
