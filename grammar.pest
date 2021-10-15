@@ -56,7 +56,7 @@ while_stmt = { WHILE ~ LP ~ expr ~ RP ~ stmt }
 match_stmt = { MATCH ~ expr ~ LBR ~ (arm)* ~ RBR ~ SC? }
 
 io_stmt = {
-    (READ ~ LP ~ variable ~ RP ~ SC)
+    (READ ~ LP ~ expr ~ RP ~ SC)
     | (WRITE ~ LP ~ (expr | string) ~ RP ~ SC)
 }
 

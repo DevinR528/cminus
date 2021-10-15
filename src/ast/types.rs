@@ -210,36 +210,47 @@ impl Expr {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
-    Generic {
-        ident: String,
-        bound: Option<String>,
-    },
-    Array {
-        size: usize,
-        ty: Box<Type>,
-    },
-    Struct {
-        ident: String,
-        gen: Vec<Type>,
-    },
-    Enum {
-        ident: String,
-        gen: Vec<Type>,
-    },
+    /// A generic type parameter `<T>`.
+    ///
+    /// N.B. This may be used as a type argument but should not be.
+    Generic { ident: String, bound: Option<String> },
+    /// A static array of `size` containing item of `ty`.
+    Array { size: usize, ty: Box<Type> },
+    /// A struct defined by the user.
+    ///
+    /// The `ident` is the name of the "type" and there are 'gen' generics.
+    Struct { ident: String, gen: Vec<Type> },
+    /// An enum defined by the user.
+    ///
+    /// The `ident` is the name of the "type" and there are 'gen' generics.
+    Enum { ident: String, gen: Vec<Type> },
+    /// A pointer to a type.
+    ///
+    /// This is equivalent to indirection, for each layer of `Ty::Ptr(..)` we have
+    /// to follow a reference to get at the value.
     Ptr(Box<Type>),
+    /// This represents the number of times a pointer has been followed.
+    ///
+    /// The number of dereferences represented as layers.
     Ref(Box<Type>),
+    /// A string of `char`'s.
+    ///
+    /// `"hello, world"`
     String,
+    /// A positive or negative number.
     Int,
+    /// An ascii character.
+    ///
+    /// todo: Could be bound to between 0-255
     Char,
+    /// A positive or negative number with a fractional component.
     Float,
+    /// A single bit representing true and false.
     Bool,
+    /// The empty/never/uninhabited type.
     Void,
     /// This type is only used in resolving rank-1 polymorphism.
-    Func {
-        ident: String,
-        ret: Box<Ty>,
-        params: Vec<Ty>,
-    },
+    Func { ident: String, ret: Box<Ty>, params: Vec<Ty> },
 }
 
 impl Ty {
@@ -591,7 +602,7 @@ pub enum Stmt {
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expression, arms: Vec<MatchArm> },
     /// Read statment `read(ident)`
-    Read(String),
+    Read(Expression),
     /// Write statement `write(expr)`
     Write { expr: Expression },
     /// Return statement `return expr`

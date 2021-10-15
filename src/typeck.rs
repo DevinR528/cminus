@@ -151,9 +151,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Adt(struc) => self.visit_adt(struc),
             }
         }
-        // stabilize order
+        // stabilize order which I'm not sure how it gets unordered
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
-
         for func in funcs {
             self.curr_fn = Some(func.ident.clone());
             crate::visit::walk_func(self, func);
@@ -161,7 +160,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
         // stabilize order
         impls.sort_by(|a, b| a.span.start.cmp(&b.span.start));
-
         for func in impls {
             self.curr_fn = Some(func.ident.clone());
             crate::visit::walk_impl(self, func);
@@ -345,7 +343,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 );
             }
         } else if self.global.insert(var.ident.clone(), var.ty.val.clone()).is_some() {
-            panic!("{}", Error::error_with_span(self, var.span, "global variable name error"));
+            panic!(
+                "{}",
+                Error::error_with_span(
+                    self,
+                    var.span,
+                    &format!("global variable `{}` is already declared", var.ident)
+                )
+            );
         }
         self.var_func.unsed_vars.insert(var.ident.clone(), (var.span, Cell::new(false)));
     }
@@ -421,11 +426,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.expr_ty.insert(expr, ty);
                     // Ok because of `x += 1;` turns into `x = x + 1;`
                 } else {
-                    self.errors.push(Error::error_with_span(
-                        self,
-                        expr.span,
-                        "no type found for ident expr",
-                    ));
+                    panic!(
+                        "{}",
+                        Error::error_with_span(self, expr.span, "no type found for ident expr",)
+                    );
                 }
             }
             Expr::Array { ident, exprs } => {
@@ -466,7 +470,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let ty = self.expr_ty.get(&**inner_expr);
                 match op {
                     UnOp::Not => {
-                        if let Some(Ty::Bool) = ty {
+                        if is_truthy(ty) {
                             self.expr_ty.insert(expr, Ty::Bool);
                         } else {
                             self.errors.push(Error::error_with_span(
@@ -631,11 +635,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 for (idx, arg) in args.iter().enumerate() {
                     let mut param_ty = func_params.get(idx).map(|p| p.ty.val.clone());
-                    let arg_ty = self.expr_ty.get(arg).cloned();
+                    let mut arg_ty = self.expr_ty.get(arg).cloned();
 
                     if let Some(Ty::Generic { ident, .. }) = &param_ty {
                         param_ty = gen_arg_map.get(ident).cloned();
                     }
+
+                    // TODO: remove
+                    coercion(param_ty.as_ref(), arg_ty.as_mut());
 
                     if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
                         self.errors.push(Error::error_with_span(
@@ -1133,11 +1140,11 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO:
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
-                // TODO: type coercions :( REMOVE
                 let cond_ty =
                     self.tcxt.expr_ty.get(cond).and_then(|t| resolve_ty(self.tcxt, cond, Some(t)));
 
-                if !cond_ty.as_ref().is_ty_eq(&Some(&Ty::Bool)) {
+                // TODO: type coercions :( REMOVE
+                if !is_truthy(cond_ty.as_ref()) {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
@@ -1156,8 +1163,11 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::While { cond, stmt } => {
-                let cond_ty = self.tcxt.expr_ty.get(cond);
-                if !cond_ty.is_ty_eq(&Some(&Ty::Bool)) {
+                let cond_ty =
+                    self.tcxt.expr_ty.get(cond).and_then(|t| resolve_ty(self.tcxt, cond, Some(t)));
+
+                // TODO: type coercions :( REMOVE
+                if !is_truthy(cond_ty.as_ref()) {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
@@ -1287,14 +1297,14 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     ),
                 }
             }
-            Stmt::Read(id) => {
-                if let Some(read_ty) = self.tcxt.type_of_ident(id, stmt.span) {
-                    // check for readable type
+            Stmt::Read(expr) => {
+                if let Some(read_ty) = self.tcxt.expr_ty.get(expr) {
+                    // TODO: check for readable type
                 } else {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
-                        &format!("variable {} not found", id),
+                        &format!("variable {} not found", expr.val.as_ident_string()),
                     ));
                 }
                 // TODO: writable trait
@@ -1346,10 +1356,27 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
     }
 }
 
+/// TODO: remove coercion
+fn is_truthy(ty: Option<&Ty>) -> bool {
+    if let Some(t) = ty {
+        match t {
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool => {
+                true
+            }
+            _ => false,
+        }
+    } else {
+        false
+    }
+}
+
 fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
     match lhs? {
         Ty::Int => match rhs? {
             r @ Ty::Float => {
+                *r = Ty::Int;
+            }
+            r @ Ty::Bool => {
                 *r = Ty::Int;
             }
             _ => return None,
@@ -1358,14 +1385,30 @@ fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
             r @ Ty::Int => {
                 *r = Ty::Float;
             }
+            r @ Ty::Bool => {
+                *r = Ty::Float;
+            }
             _ => return None,
         },
-        Ty::Bool => todo!(),
-        Ty::Ptr(_) => todo!(),
+        Ty::Bool => match rhs? {
+            r @ Ty::Int => {
+                // anything but 0 is true ..
+            }
+            r @ Ty::Float => {
+                // anything but 0 is true ..
+            }
+            _ => return None,
+        },
+        Ty::Ptr(_) => match rhs? {
+            r @ Ty::Int => {
+                // pointer maths
+            }
+            _ => return None,
+        },
         Ty::Ref(_) => todo!(),
         Ty::Generic { ident, bound } => todo!(),
-        Ty::Array { size, ty } => todo!(),
         // TODO: char has no coercion as of now
+        // array has no coercion
         _ => return None,
     }
     Some(())
@@ -1763,7 +1806,9 @@ fn fold_ty(
         (r @ Ty::Ref(_), t) => fold_ty(tcxt, r.resolve().as_ref(), Some(t), op, span),
         (r, t @ Ty::Ref(_)) => fold_ty(tcxt, Some(r), t.resolve().as_ref(), op, span),
 
-        (Ty::Generic { .. }, _) => unreachable!("since no bar generic item will ever be in maths"),
+        (Ty::Generic { .. }, _) => {
+            unreachable!("since no unresolved generic item will ever be in maths")
+        }
         (Ty::Func { .. }, _) => unreachable!("Func should never be folded"),
         _ => None,
     };

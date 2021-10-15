@@ -470,9 +470,9 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
             {
                 // read(var);
                 [(Rule::READ, _), (Rule::LP, _),
-                    (Rule::variable, var),
+                    (Rule::expr, expr),
                 (Rule::RP, _), (Rule::SC, _)] => {
-                    Stmt::Read (var.as_str().to_string())
+                    Stmt::Read(parse_expr(expr.clone()))
                 }
                 // write(expr);
                 [(Rule::WRITE, _), (Rule::LP, _),

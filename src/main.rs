@@ -5,7 +5,8 @@
     try_blocks,
     crate_visibility_modifier,
     stmt_expr_attributes,
-    btree_drain_filter
+    btree_drain_filter,
+    panic_info_message
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -87,6 +88,31 @@ fn main() {
     // Get arguments this is c's argv
     let args = env::args().collect::<Vec<_>>();
 
+    std::panic::set_hook(Box::new(|panic_info| {
+        let _: Option<()> = try {
+            let msg = format!("{}", panic_info.message()?);
+
+            if msg.contains("ICE") {
+                eprintln!("{}", msg);
+                let loc = panic_info.location()?;
+                eprintln!("ICE location: {}", loc);
+            } else if msg.contains("not yet implemented") {
+                eprintln!("ICE needs implementation (undone TODO item)");
+
+                eprintln!("{}", msg);
+
+                let loc = panic_info.location()?;
+                eprintln!("ICE location: {}", loc);
+            } else {
+                eprintln!("{}", msg);
+            }
+        };
+        let _: Option<()> = try {
+            let payload = panic_info.payload().downcast_ref::<&str>()?;
+            eprintln!("`{}`", payload);
+        };
+    }));
+
     match args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice() {
         [] => panic!("need to specify file to compile"),
         // ignore binary name and process all file names passed
@@ -105,6 +131,7 @@ fn main() {
                     }
                 }
             }
+
             if errors != 0 {
                 eprintln!(
                     "compilation stopped found {} error{}",
