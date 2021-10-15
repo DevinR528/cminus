@@ -112,7 +112,7 @@ fn calc_snippet_around(span: Range, input: &str, row: usize) -> String {
         .enumerate()
         .map(|(i, l)| {
             if (row + 1 == adjusted + i) && !past_problem {
-                adjusted -= 1;
+                adjusted = adjusted.saturating_sub(1);
                 past_problem = true;
                 format!("{}|{}\n", " ".repeat(num_pad), l)
             } else {

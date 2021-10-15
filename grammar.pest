@@ -113,7 +113,7 @@ op = {
 
     | EQ | NE
 
-    | BAND ~ " " | BXOR | BOR ~ " "
+    | BAND | BXOR | BOR
 
     | OR | AND
 }
@@ -146,7 +146,7 @@ integer = @{ ASCII_DIGIT+ }
 
 decimal = @{ ASCII_DIGIT+ ~ DOT ~ ASCII_DIGIT* }
 
-ident = @{ !keyword ~ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
+ident = @{ !("return"|"if") ~ ASCII_ALPHA+ ~ (ASCII_ALPHANUMERIC | "_")* }
 
 charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
 
@@ -199,8 +199,8 @@ AND = { "&&" }
 OR = { "||" }
 
 // bitwise
-BAND = { "&" }
-BOR = { "|" }
+BAND = { "& " }
+BOR = { "| " }
 BXOR = { "^" }
 BNOT = { "~" }
 BLSF = { "<<" }

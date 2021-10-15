@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
     slice::SliceIndex,
@@ -31,6 +32,8 @@ crate struct VarInFunction<'ast> {
     func_refs: HashMap<String, HashMap<String, Ty>>,
     /// Name to the function it represents.
     name_func: HashMap<String, &'ast Func>,
+    /// All of the variables in a scope that are used.
+    unsed_vars: HashMap<String, (Range, Cell<bool>)>,
 }
 
 impl VarInFunction<'_> {
@@ -60,9 +63,6 @@ crate struct TyCheckRes<'ast, 'input> {
     curr_fn: Option<String>,
     /// Global variables declared outside of functions.
     global: HashMap<String, Ty>,
-    // TODO: this
-    /// All of the variables in a scope that are used.
-    unsed_vars: HashMap<String, BTreeSet<String>>,
 
     /// All the info about variables local to a specific function.
     ///
@@ -84,9 +84,6 @@ crate struct TyCheckRes<'ast, 'input> {
 
     /// Errors collected during parsing and type checking.
     errors: Vec<Error<'input>>,
-    // TODO:
-    /// Unrecoverable error.
-    bail: Option<Error<'input>>,
 }
 
 impl fmt::Debug for TyCheckRes<'_, '_> {
@@ -122,6 +119,9 @@ impl<'input> TyCheckRes<'_, 'input> {
     }
 
     fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
+        if let Some((_, b)) = self.var_func.unsed_vars.get(id) {
+            b.set(true);
+        }
         self.var_func
             .get(span)
             .and_then(|f| self.var_func.func_refs.get(f).and_then(|s| s.get(id)))
@@ -131,6 +131,54 @@ impl<'input> TyCheckRes<'_, 'input> {
 }
 
 impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
+    fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
+        let mut funcs = vec![];
+        let mut impls = vec![];
+        for item in items {
+            match &item.val {
+                Decl::Func(func) => {
+                    self.visit_func(func);
+                    funcs.push(func);
+                }
+                Decl::Var(var) => {
+                    self.visit_var(var);
+                }
+                Decl::Trait(trait_) => self.visit_trait(trait_),
+                Decl::Impl(imp) => {
+                    self.visit_impl(imp);
+                    impls.push(imp);
+                }
+                Decl::Adt(struc) => self.visit_adt(struc),
+            }
+        }
+        // stabilize order
+        funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
+
+        for func in funcs {
+            self.curr_fn = Some(func.ident.clone());
+            crate::visit::walk_func(self, func);
+        }
+
+        // stabilize order
+        impls.sort_by(|a, b| a.span.start.cmp(&b.span.start));
+
+        for func in impls {
+            self.curr_fn = Some(func.ident.clone());
+            crate::visit::walk_impl(self, func);
+        }
+
+        // After all checking then we can check for unused vars
+        for (unused, (span, _)) in
+            self.var_func.unsed_vars.iter().filter(|(id, (_, used))| !used.get())
+        {
+            self.errors.push(Error::error_with_span(
+                self,
+                *span,
+                &format!("unused variable `{}`, remove or reference", unused),
+            ));
+        }
+    }
+
     fn visit_trait(&mut self, t: &'ast Trait) {
         if self.trait_solve.add_trait(t).is_some() {
             panic!(
@@ -221,9 +269,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Error::error_with_span(self, func.span, "function defined within function")
             )
         }
-
-        crate::visit::walk_func(self, func);
-
         // We have left this functions scope
         self.curr_fn.take();
     }
@@ -306,6 +351,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         } else if self.global.insert(var.ident.clone(), var.ty.val.clone()).is_some() {
             panic!("{}", Error::error_with_span(self, var.span, "global variable name error"));
         }
+        self.var_func.unsed_vars.insert(var.ident.clone(), (var.span, Cell::new(false)));
     }
 
     fn visit_params(&mut self, params: &[Param]) {
@@ -350,6 +396,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         &format!("duplicate param name `{}`", ident),
                     ));
                 }
+                self.var_func.unsed_vars.insert(ident.clone(), (*span, Cell::new(false)));
             }
         } else {
             panic!("{}", Error::error_with_span(self, DUMMY, &format!("{:?}", params)))
@@ -370,6 +417,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         check.visit_stmt(stmt);
     }
 
+    #[allow(clippy::if_then_panic)]
     fn visit_expr(&mut self, expr: &'ast Expression) {
         match &expr.val {
             Expr::Ident(var_name) => {
@@ -450,7 +498,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::Deref { indir, expr: inner_expr } => {
                 self.visit_expr(inner_expr);
 
-                let ty = self.expr_ty.get(&**inner_expr).expect(&format!("{:?}", expr));
+                let ty = self.expr_ty.get(&**inner_expr).expect("expression to be walked already");
                 let ty = ty.dereference(*indir);
 
                 check_dereference(self, inner_expr);
@@ -479,9 +527,19 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     op,
                     expr.span,
                 ) {
-                    // TODO: duplicate expression, should be impossible??
-                    if self.expr_ty.insert(expr, ty).is_some() {
-                        unimplemented!("NOT SURE TODO")
+                    if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
+                        assert!(
+                            ty.is_ty_eq(&t2),
+                            "{}",
+                            format!(
+                                "{}",
+                                Error::error_with_span(
+                                    self,
+                                    expr.span,
+                                    "ICE: something went wrong in the compiler",
+                                )
+                            )
+                        )
                     }
                 } else {
                     self.errors.push(Error::error_with_span(
@@ -494,8 +552,19 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::Parens(inner_expr) => {
                 self.visit_expr(inner_expr);
                 if let Some(ty) = self.expr_ty.get(&**inner_expr).cloned() {
-                    if self.expr_ty.insert(expr, ty).is_some() {
-                        unimplemented!("NOT SURE TODO")
+                    if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
+                        assert!(
+                            ty.is_ty_eq(&t2),
+                            "{}",
+                            format!(
+                                "{}",
+                                Error::error_with_span(
+                                    self,
+                                    expr.span,
+                                    "ICE: something went wrong in the compiler",
+                                )
+                            )
+                        )
                     }
                 } else {
                     self.errors.push(Error::error_with_span(
@@ -750,6 +819,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
                 }
 
+                // TODO: fix pushing type as still generic when it is type arguments now
                 if self
                     .expr_ty
                     .insert(expr, Ty::Struct { ident: name.clone(), gen: generics })
@@ -904,7 +974,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 /// Return a type that has been substituted as much as possible at this stage.
 ///
 /// If any generics are left it is because the variable/call they come from has a
-/// un-substituted/resolved generic parameter.
+/// un-substituted/unresolved generic parameter.
 fn subs_type_args(ty: &Ty, ty_args: &[Type], generics: &[Type]) -> Ty {
     let mut typ = ty.clone();
     for gen in ty.generics() {
@@ -947,7 +1017,7 @@ fn check_field_access<'ast>(
                 .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
                 .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name));
             tcxt.expr_ty.insert(rhs, rty.clone());
-            rty.index_dim(&tcxt, exprs, rhs.span)
+            rty.index_dim(tcxt, exprs, rhs.span)
         }
         Expr::FieldAccess { lhs, rhs } => {
             let accty = check_field_access(tcxt, lhs, rhs);
@@ -1034,7 +1104,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
-            // Nothing to do here, TODO: could maybe record for dead code?
             Stmt::VarDecl(_) => {}
             // TODO: rvalues take lvalue type
             Stmt::Assign { lval, rval } => {
@@ -1042,11 +1111,13 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
 
                 let orig_rty = self.tcxt.expr_ty.get(rval);
-                let rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
+                let mut rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
 
                 // if rval_ty.as_ref().map_or(false, |t| t.has_generics()) {
                 //     println!("Assing Gen {:?} == {:?}", rval_ty, lval_ty);
                 // }
+
+                coercion(lval_ty.as_ref(), rval_ty.as_mut());
 
                 if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
                     self.tcxt.errors.push(Error::error_with_span(
@@ -1067,8 +1138,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO:
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
+                // TODO: type coercions :( REMOVE
                 let cond_ty =
                     self.tcxt.expr_ty.get(cond).and_then(|t| resolve_ty(self.tcxt, cond, Some(t)));
+
                 if !cond_ty.as_ref().is_ty_eq(&Some(&Ty::Bool)) {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
@@ -1220,6 +1293,15 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::Read(id) => {
+                if let Some(read_ty) = self.tcxt.type_of_ident(id, stmt.span) {
+                    // check for readable type
+                } else {
+                    self.tcxt.errors.push(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        &format!("variable {} not found", id),
+                    ));
+                }
                 // TODO: writable trait
                 // id must be something that can be from_string or something
             }
@@ -1267,6 +1349,31 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             }
         }
     }
+}
+
+fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
+    match lhs? {
+        Ty::Int => match rhs? {
+            r @ Ty::Float => {
+                *r = Ty::Int;
+            }
+            _ => return None,
+        },
+        Ty::Float => match rhs? {
+            r @ Ty::Int => {
+                *r = Ty::Float;
+            }
+            _ => return None,
+        },
+        Ty::Bool => todo!(),
+        Ty::Ptr(_) => todo!(),
+        Ty::Ref(_) => todo!(),
+        Ty::Generic { ident, bound } => todo!(),
+        Ty::Array { size, ty } => todo!(),
+        // TODO: char has no coercion as of now
+        _ => return None,
+    }
+    Some(())
 }
 
 fn check_pattern_type(
@@ -1651,7 +1758,7 @@ fn fold_ty(
             BinOp::And | BinOp::Or => Some(Ty::Bool),
             _ => panic!("illegal boolean operation"),
         },
-        // TODO: deal with structs expr will need field access
+        // TODO: deal with structs/enums
         (Ty::Struct { .. }, _) => todo!(""),
         (Ty::Enum { .. }, _) => todo!(""),
         (Ty::Ptr(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
