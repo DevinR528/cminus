@@ -5,7 +5,7 @@ int main(int argc, char const *argv[])
 {
     int mod_by;
     int to_mod = 1;
-    printf("Please input number for moduli: ");
+    printf("Please enter number for moduli: ");
     scanf("%d", &mod_by);
     printf("Please enter number to be first operand: ");
     scanf("%d", &to_mod);

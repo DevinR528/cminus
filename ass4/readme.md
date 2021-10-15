@@ -11,3 +11,6 @@ Assignment 4
 
 Ubuntu 20
 vscode using GCC (`gcc -Wall <prog> -o <bin>`)
+
+## References
+http://www.c-jump.com/CIS77/MLabs/M11arithmetic/M11_0120_idiv_instruction.htm
