@@ -321,15 +321,11 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_var(&mut self, var: &'ast Var) {
         #[allow(clippy::if_then_panic)]
         if let Some(fn_id) = self.curr_fn.clone() {
-            //
-
             let node = Node::Func(fn_id.clone());
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
 
             let ty =
                 collect_generic_usage(self, &var.ty.val, &[TyRegion::VarDecl(var)], &mut stack);
-
-            // println!("ty from collect {:?}", ty);
 
             if self
                 .var_func
@@ -422,9 +418,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         match &expr.val {
             Expr::Ident(var_name) => {
                 if let Some(ty) = self.type_of_ident(var_name, expr.span) {
-                    if self.expr_ty.insert(expr, ty).is_some() {
-                        // Ok because of `x += 1;` turns into `x = x + 1;`
-                    }
+                    self.expr_ty.insert(expr, ty);
+                    // Ok because of `x += 1;` turns into `x = x + 1;`
                 } else {
                     self.errors.push(Error::error_with_span(
                         self,
