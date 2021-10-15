@@ -24,13 +24,13 @@ int E() {
     return 0;
 }
 
-    void D(int a)
-    {
-        char  b;
-      a=b; /*error no return statement */
-    }
+void D(int a)
+{
+    char  b;
+    a=b; /*error no return statement */
+}
 
 void main()
 {
-b=100 ;
+    b=100 ;
 }

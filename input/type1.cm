@@ -9,14 +9,13 @@ above error is tested in this file */
   char b[2];
 
 char  B(int a,char e){
-            int c ;
-        float d ;
-
+    int c ;
+    float d ;
     a= a + (c*d)*e; /*error-character used in right
                    hand side of assignment */
     B=c +c*d; /* error-character is being assigned
                a float value */
-        e= c<d ; /* character being assigned an integer*/
+    e= c<d ; /* character being assigned an integer*/
     c= !d; /*NOT only valid for integers*/
     c= !e; /*NOT only valid for integers*/
     c= a && d; /*AND&OR only defined for ints*/

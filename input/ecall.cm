@@ -30,8 +30,8 @@ above error is tested in this file */
 void main() {
  int a;
 
-  a = C(1,2,3,4.0,5.0,6.0); /*calling with 6 args instead of 7*/
-  a = C(1,2,3,4,5.0,6.0,7.0,'a'); /*calling with 8 args instead of 7*/
+  // a = C(1,2,3,4.0,5.0,6.0); /*calling with 6 args instead of 7*/
+  // a = C(1,2,3,4,5.0,6.0,7.0,'a'); /*calling with 8 args instead of 7*/
   a = C(1,2,3,4,5,6,7); /*last 3 args of wrong type*/
   a = C(1,2,3,4,5.0,6.0,b[1]); /*last arg of wrong type*/
   b[1] = B(b[2]); /* error-Parameter to B is of type integer but b[2] is of type character, 2 is out of bounds */
