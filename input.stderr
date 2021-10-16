@@ -1,0 +1,331 @@
+   Compiling cminus v0.1.0 (/home/devinr/aprog/school/compiler/cminus)
+    Finished dev [unoptimized + debuginfo] target(s) in 1.85s
+     Running `target/debug/cminus input/add.cm input/add.float.cm input/and.cm input/and.float.cm input/arith.cm input/arith2.cm input/array.cm input/array.float.cm input/bubble.cm input/bubble.float.cm input/call.cm input/constdim.cm input/dcs.cm input/decl1.cm input/decl2.cm input/decl3.cm input/dim.cm input/dimen.cm input/div.cm input/div.float.cm input/dynamic.cm input/ecall.cm input/ejohn1.cm input/ejohn2.cm input/eq.cm input/expr.cm input/expr.float.cm input/farray.cm input/func.cm input/func2.cm input/funcproc.cm input/func_no.cm input/f_noparams.cm input/gcd.cm input/gt.cm input/hello.cm input/if.cm input/if.float.cm input/if1.cm input/inv.cm input/io.cm input/io.float.cm input/log.cm input/lt.cm input/mul.cm input/mul.float.cm input/muldecl.cm input/newdyn.cm input/nodecl.cm input/nomeaning.cm input/not.cm input/or.cm input/or.float.cm input/param.cm input/proc2.cm input/procfunc.cm input/proc_no.cm input/p_noparams.cm input/qs.cm input/recurs.cm input/retn.cm input/simple.cm input/skeleton.cm input/sub.cm input/sub.float.cm input/swapper.cm input/sym.cm input/typ2.cm input/type1.cm input/var_multiple.cm input/var_multiple2.cm input/var_simple.cm input/while.cm input/while.float.cm input/while2.cm input/while2.float.cm input/while3.cm input/while_array.cm`
+error: unused variable `a`, remove or reference
+  --> input/add.cm:1:16
+0 |void main (int a) {
+1 |               ^
+  | int i,j,k,l;
+
+error: out of bound of static array
+  --> input/constdim.cm:14:8
+13 |    int c[100];
+14 |       c[100]=100; /*error-reference to element of c outside the range of c */
+   |       ^^^^^^^^^^^
+15 |       c[25]=c[101]+c[10000]; /* out of range (high) */
+
+error: no type found for ident expr
+  --> input/decl1.cm:14:11
+13 |    a = c  ;
+14 |    b=B(B(C)); /*C referenced  but not declared */
+   |          ^
+15 |    c = c+w[a]; /*okay*/
+
+error: global variable `b` is already declared
+  --> input/decl2.cm:13:8
+12 |  char d[2];
+13 |  int  b;
+   |       ^
+
+error: assign to expression of wrong type
+found `char` expected `int`
+  --> input/decl3.cm:30:5
+29 |    char  b;
+30 |    a=b; /*error no return statement */
+   |    ^^^^
+31 |}
+
+error: unused variable `b1`, remove or reference
+  --> input/decl3.cm:19:14
+18 |int E() {
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+   |             ^^^^^
+20 |    int f,g,h,i; /*all of these are referenced*/
+
+error: unused variable `g`, remove or reference
+  --> input/decl3.cm:20:11
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+20 |    int f,g,h,i; /*all of these are referenced*/
+   |          ^
+21 |    while (h<100)
+
+error: unused variable `f`, remove or reference
+  --> input/decl3.cm:20:9
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+20 |    int f,g,h,i; /*all of these are referenced*/
+   |        ^
+21 |    while (h<100)
+
+error: unused variable `c`, remove or reference
+  --> input/decl3.cm:19:20
+18 |int E() {
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+   |                   ^^^^
+20 |    int f,g,h,i; /*all of these are referenced*/
+
+error: unused variable `d`, remove or reference
+  --> input/decl3.cm:19:25
+18 |int E() {
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+   |                        ^^^^
+20 |    int f,g,h,i; /*all of these are referenced*/
+
+error: unused variable `e`, remove or reference
+  --> input/decl3.cm:19:30
+18 |int E() {
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+   |                             ^^^^
+20 |    int f,g,h,i; /*all of these are referenced*/
+
+error: assign to expression of wrong type
+found `int[2]` expected `float`
+  --> input/dim.cm:21:5
+20 |{
+21 |    b=e; /* error-e is an array */
+   |    ^^^^
+22 |}
+
+error: assign to expression of wrong type
+found `int` expected `int[10]`
+  --> input/dimen.cm:5:5
+4 |void main() {
+5 |    b = a[1];
+  |    ^^^^^^^^^
+6 |}
+
+error: call with wrong argument type
+found `char` expected `int`
+  --> input/ecall.cm:15:12
+14 |
+15 |     x = A(B(100)); /* Function B is of type Character but parameter to A is of type integer */
+   |           ^^^^^^
+16 |    }
+
+error: assign to expression of wrong type
+found `void` expected `int`
+  --> input/ecall.cm:15:6
+14 |
+15 |     x = A(B(100)); /* Function B is of type Character but parameter to A is of type integer */
+   |     ^^^^^^^^^^^^^^
+16 |    }
+
+error: assign to expression of wrong type
+found `void` expected `int`
+  --> input/ecall.cm:20:9
+19 |      int d;
+20 |        d = C(1,1,1,1,1,1,1); /*last 3 args wrong type */
+   |        ^^^^^^^^^^^^^^^^^^^^^
+21 |        return B(B(d)); /* B(d) returns a character-but parameter is of type integer */
+
+error: call with wrong argument type
+found `char` expected `int`
+  --> input/ecall.cm:21:18
+20 |        d = C(1,1,1,1,1,1,1); /*last 3 args wrong type */
+21 |        return B(B(d)); /* B(d) returns a character-but parameter is of type integer */
+   |                 ^^^^
+22 |    }
+
+error: assign to expression of wrong type
+found `void` expected `float`
+  --> input/ecall.cm:27:6
+26 |     e=f+g;
+27 |     g = C(1,1,1,1,1.1,1.1,1.1);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+28 |    }
+
+error: assign to expression of wrong type
+found `void` expected `int`
+  --> input/ecall.cm:35:3
+34 |  // a = C(1,2,3,4,5.0,6.0,7.0,'a'); /*calling with 8 args instead of 7*/
+35 |  a = C(1,2,3,4,5,6,7); /*last 3 args of wrong type*/
+   |  ^^^^^^^^^^^^^^^^^^^^^
+36 |  a = C(1,2,3,4,5.0,6.0,b[1]); /*last arg of wrong type*/
+
+error: call with wrong argument type
+found `char[2]` expected `float`
+  --> input/ecall.cm:36:25
+35 |  a = C(1,2,3,4,5,6,7); /*last 3 args of wrong type*/
+36 |  a = C(1,2,3,4,5.0,6.0,b[1]); /*last arg of wrong type*/
+   |                        ^^^^
+37 |  b[1] = B(b[2]); /* error-Parameter to B is of type integer but b[2] is of type character, 2 is out of bounds */
+
+error: assign to expression of wrong type
+found `void` expected `int`
+  --> input/ecall.cm:36:3
+35 |  a = C(1,2,3,4,5,6,7); /*last 3 args of wrong type*/
+36 |  a = C(1,2,3,4,5.0,6.0,b[1]); /*last arg of wrong type*/
+   |  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+37 |  b[1] = B(b[2]); /* error-Parameter to B is of type integer but b[2] is of type character, 2 is out of bounds */
+
+error: call with wrong argument type
+found `char[2]` expected `int`
+  --> input/ecall.cm:37:12
+36 |  a = C(1,2,3,4,5.0,6.0,b[1]); /*last arg of wrong type*/
+37 |  b[1] = B(b[2]); /* error-Parameter to B is of type integer but b[2] is of type character, 2 is out of bounds */
+   |           ^^^^
+38 |}
+
+error: call with wrong return type
+found `int` expected `void`
+  --> input/ejohn2.cm:13:5
+12 |    write (x);
+13 |    return 0;
+   |    ^^^^^^^^^
+14 |}
+
+error: not a legal operation for `char`
+  --> input/expr.cm:18:10
+17 |   if (c >= a) {
+18 |     b = b || b;
+   |         ^^^^^^
+19 |    }
+
+error: unused variable `z`, remove or reference
+  --> input/func2.cm:3:26
+2 |
+3 |int b(int x,int y, float z)
+  |                         ^
+4 |  {
+
+error: wrong number of arguments
+  --> input/inv.cm:16:3
+15 |  int c;
+16 |  b();
+   |  ^^^^
+17 |  // b(1);
+
+error: global variable `a` is already declared
+  --> input/muldecl.cm:2:8
+1 |  int a ;
+2 |  char a ;
+  |       ^
+
+error: no type found for ident expr
+  --> input/nodecl.cm:3:3
+2 |{
+3 |  x = 1 + y;
+  |  ^
+4 |  write(x);
+
+error: assign to expression of wrong type
+found `char` expected `int`
+  --> input/nomeaning.cm:16:5
+15 |    temp = a;
+16 |    a = b;
+   |    ^^^^^^
+17 |    b = temp;/* error, cannot assign a char an int value */
+
+error: assign to expression of wrong type
+found `int` expected `char`
+  --> input/nomeaning.cm:17:5
+16 |    a = b;
+17 |    b = temp;/* error, cannot assign a char an int value */
+   |    ^^^^^^^^^
+18 |}
+
+error: unused variable `c`, remove or reference
+  --> input/proc2.cm:1:5
+0 |int c;
+1 |    ^
+
+error: unused variable `c`, remove or reference
+  --> input/proc_no.cm:1:5
+0 |int c;
+1 |    ^
+
+error: duplicate variable name `r`
+  --> input/qs.cm:63:10
+62 |{
+63 |  int q, r;
+   |         ^
+64 |  if (p < r)
+
+error: cannot index array with void
+  --> input/retn.cm:22:6
+21 |     int c;
+22 |     a[A(1)] = c;
+   |     ^^^^^^^^
+23 |     /* error-A is not a function and hence, does
+
+error: assign to expression of wrong type
+found `void` expected `int`
+  --> input/swapper.cm:20:9
+19 |        read(j);
+20 |        a = swap(i,j);
+   |        ^^^^^^^^^^^^^^
+21 |        write(i);
+
+error: unused variable `x`, remove or reference
+  --> input/sym.cm:4:5
+3 |void decls(int a) {
+4 |int x;
+  |    ^
+5 |    a = 0;
+
+error: not a legal operation for `char`
+  --> input/typ2.cm:16:10
+15 |     i = j + C1;
+16 |     j = C1 + C2;
+   |         ^^^^^^^
+17 |     i = C1 || i;
+
+error: no type found for ident expr
+  --> input/type1.cm:16:5
+15 |                   hand side of assignment */
+16 |    B=c +c*d; /* error-character is being assigned
+   |    ^
+17 |               a float value */
+
+error: global variable `d` is already declared
+  --> input/var_multiple.cm:2:9
+1 |int a,b,c,d ;
+2 |  char  d,e ;
+  |        ^
+
+error: unused variable `c`, remove or reference
+  --> input/var_multiple2.cm:1:9
+0 |int a,b,c,d[10];
+1 |        ^
+
+error: unused variable `b`, remove or reference
+  --> input/var_multiple2.cm:1:7
+0 |int a,b,c,d[10];
+1 |      ^
+
+error: unused variable `a`, remove or reference
+  --> input/var_multiple2.cm:1:5
+0 |int a,b,c,d[10];
+1 |    ^
+
+error: unused variable `c`, remove or reference
+  --> input/var_simple.cm:3:11
+2 |int   a;
+3 |char      c;
+  |          ^
+4 |float      f;
+
+error: unused variable `f`, remove or reference
+  --> input/var_simple.cm:4:12
+3 |char      c;
+4 |float      f;
+  |           ^
+
+error: unused variable `b`, remove or reference
+  --> input/while.cm:2:8
+1 |void main() {
+2 | int a,b;
+  |       ^
+
+error: unused variable `b`, remove or reference
+  --> input/while.float.cm:2:10
+1 |void main() {
+2 | float a,b;
+  |         ^
+
+error: unused variable `b`, remove or reference
+  --> input/while2.float.cm:2:10
+1 |void main() {
+2 | float a,b;
+  |         ^
+
+compilation stopped found 12 errors

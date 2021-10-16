@@ -649,7 +649,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             arg.span,
                             &format!(
-                                "call with wrong argument type\nfound {} expected {}",
+                                "call with wrong argument type\nfound `{}` expected `{}`",
                                 arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
@@ -730,7 +730,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             arg.span,
                             &format!(
-                                "call with wrong argument type\nfound {} expected {}",
+                                "trait call with wrong argument type\nfound `{}` expected `{}`",
                                 arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
@@ -813,7 +813,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             init.span,
                             &format!(
-                                "field initialized with mismatched type {} == {}",
+                                "field initialized with mismatched type\nfound `{}` expected `{}`",
                                 exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 field_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
@@ -888,7 +888,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             item.span,
                             &format!(
-                                "enum tuple initialized with mismatched type {} == {}",
+                                "enum tuple initialized with mismatched type\nfound `{}` expected `{}`",
                                 exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 variant_ty.val.to_string(),
                             ),
@@ -1009,7 +1009,7 @@ fn check_field_access<'ast>(
             let rty = fields
                 .iter()
                 .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
-                .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name));
+                .unwrap_or_else(|| panic!("no field `{}` found for struct `{}`", ident, name));
             tcxt.expr_ty.insert(rhs, rty.clone());
             Some(rty)
         }
@@ -1017,7 +1017,7 @@ fn check_field_access<'ast>(
             let rty = fields
                 .iter()
                 .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
-                .unwrap_or_else(|| panic!("no field {} found for struct {}", ident, name));
+                .unwrap_or_else(|| panic!("no field `{}` found for struct `{}`", ident, name));
             tcxt.expr_ty.insert(rhs, rty.clone());
             rty.index_dim(tcxt, exprs, rhs.span)
         }
@@ -1046,7 +1046,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                     tcxt,
                     expr.span,
                     &format!(
-                        "cannot dereference {}",
+                        "cannot dereference `{}`",
                         ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                     ),
                 ));
@@ -1069,7 +1069,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                     tcxt,
                     expr.span,
                     &format!(
-                        "cannot dereference array {}",
+                        "cannot dereference array `{}`",
                         ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                     ),
                 ));
@@ -1126,7 +1126,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "assign to expression of wrong type\nfound {} expected {}",
+                            "assign to expression of wrong type\nfound `{}` expected `{}`",
                             orig_rty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             orig_lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
@@ -1172,7 +1172,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "condition of while must be of type bool, got {}",
+                            "condition of while must be of truthy, got `{}`",
                             cond_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                         ),
                     ));
@@ -1290,7 +1290,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             self.tcxt,
                             stmt.span,
                             &format!(
-                                "must match a valid enum found: {}",
+                                "must match a valid enum found: `{}`",
                                 match_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                             ),
                         )
@@ -1304,7 +1304,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
-                        &format!("variable {} not found", expr.val.as_ident_string()),
+                        &format!("variable `{}` not found", expr.val.as_ident_string()),
                     ));
                 }
                 // TODO: writable trait
@@ -1325,7 +1325,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "call with wrong return type\nfound {} expected {}",
+                            "call with wrong return type\nfound `{}` expected `{}`",
                             ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
@@ -1440,7 +1440,7 @@ fn check_pattern_type(
                         tcxt,
                         span,
                         &format!(
-                            "found array of different sizes, expected {} found {}",
+                            "found array of different sizes\nexpected `{}` found `{}`",
                             size, p_size
                         ),
                     )
@@ -1479,7 +1479,7 @@ fn check_pattern_type(
                             tcxt,
                             span,
                             &format!(
-                                "no enum variant `{}::{}` found for {}",
+                                "no enum variant `{}::{}` found for `{}`",
                                 pat_name, variant, ident
                             ),
                         )
@@ -1492,7 +1492,7 @@ fn check_pattern_type(
                                     tcxt,
                                     span,
                                     &format!(
-                                        "no enum variant `{}::{}` found for {}",
+                                        "no enum variant `{}::{}` found for `{}`",
                                         pat_name, variant, ident
                                     ),
                                 )
@@ -1540,7 +1540,7 @@ fn check_pattern_type(
                 tcxt,
                 span,
                 &format!(
-                    "must match a valid enum found: {}",
+                    "must match a valid enum found: `{}`",
                     ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                 ),
             )
@@ -1562,12 +1562,12 @@ fn check_val_pat(
             Error::error_with_span(
                 tcxt,
                 span,
-                &format!("expected {} found `{}::{}`", expected, ident, variant)
+                &format!("expected `{}` found `{}::{}`", expected, ident, variant)
             )
         ),
         Pat::Array { size, items } => panic!(
             "{}",
-            Error::error_with_span(tcxt, span, &format!("expected {} found `{}`", expected, pat))
+            Error::error_with_span(tcxt, span, &format!("expected `{}` found `{}`", expected, pat))
         ),
         Pat::Bind(bind) => match bind {
             Binding::Wild(id) => {
@@ -1581,7 +1581,7 @@ fn check_val_pat(
                     Error::error_with_span(
                         tcxt,
                         span,
-                        &format!("expected {} found `{}`", expected, val)
+                        &format!("expected `{}` found `{}`", expected, val)
                     )
                 );
             }
@@ -1622,7 +1622,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     tcxt.errors.push(Error::error_with_span(
                         tcxt,
                         stmt_span,
-                        &format!("mismatched array dimension found {} expected {}", exprs.len(), dim),
+                        &format!("mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
                     None
                 } else {
@@ -1644,7 +1644,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     tcxt,
                     stmt_span,
                     &format!(
-                        "no struct {} found",
+                        "no struct `{}` found",
                         tcxt.type_of_ident(&lhs.val.as_ident_string(), lhs.span)
                             .map_or("<unknown>".to_owned(), |t| t.to_string()),
                     ),
@@ -1693,7 +1693,7 @@ fn walk_field_access(
                     tcxt.errors.push(Error::error_with_span(
                         tcxt,
                         expr.span,
-                        &format!("mismatched array dimension found {} expected {}", exprs.len(), dim),
+                        &format!("mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
                     None
                 } else {
@@ -1715,7 +1715,7 @@ fn walk_field_access(
                 tcxt.errors.push(Error::error_with_span(
                     tcxt,
                     expr.span,
-                    &format!("no struct {} found", id),
+                    &format!("no struct `{}` found", id),
                 ));
                 None
             }
@@ -1846,7 +1846,7 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
                 Error::error_with_span(
                     tcxt,
                     span,
-                    &format!("not a legal operation for {}", ret_ty)
+                    &format!("not a legal operation for `{}`", ret_ty)
                 )
             )
         }
