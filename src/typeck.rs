@@ -165,13 +165,19 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             crate::visit::walk_impl(self, func);
         }
 
+        let mut unused = self
+            .var_func
+            .unsed_vars
+            .iter()
+            .filter(|(id, (_, used))| !used.get())
+            .map(|(id, (sp, _))| (id, *sp))
+            .collect::<Vec<_>>();
+        unused.sort_by(|a, b| a.1.cmp(&b.1));
         // After all checking then we can check for unused vars
-        for (unused, (span, _)) in
-            self.var_func.unsed_vars.iter().filter(|(id, (_, used))| !used.get())
-        {
+        for (unused, span) in unused {
             self.errors.push(Error::error_with_span(
                 self,
-                *span,
+                span,
                 &format!("unused variable `{}`, remove or reference", unused),
             ));
         }

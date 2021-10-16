@@ -1,5 +1,3 @@
-   Compiling cminus v0.1.0 (/home/devinr/aprog/school/compiler/cminus)
-    Finished dev [unoptimized + debuginfo] target(s) in 1.85s
      Running `target/debug/cminus input/add.cm input/add.float.cm input/and.cm input/and.float.cm input/arith.cm input/arith2.cm input/array.cm input/array.float.cm input/bubble.cm input/bubble.float.cm input/call.cm input/constdim.cm input/dcs.cm input/decl1.cm input/decl2.cm input/decl3.cm input/dim.cm input/dimen.cm input/div.cm input/div.float.cm input/dynamic.cm input/ecall.cm input/ejohn1.cm input/ejohn2.cm input/eq.cm input/expr.cm input/expr.float.cm input/farray.cm input/func.cm input/func2.cm input/funcproc.cm input/func_no.cm input/f_noparams.cm input/gcd.cm input/gt.cm input/hello.cm input/if.cm input/if.float.cm input/if1.cm input/inv.cm input/io.cm input/io.float.cm input/log.cm input/lt.cm input/mul.cm input/mul.float.cm input/muldecl.cm input/newdyn.cm input/nodecl.cm input/nomeaning.cm input/not.cm input/or.cm input/or.float.cm input/param.cm input/proc2.cm input/procfunc.cm input/proc_no.cm input/p_noparams.cm input/qs.cm input/recurs.cm input/retn.cm input/simple.cm input/skeleton.cm input/sub.cm input/sub.float.cm input/swapper.cm input/sym.cm input/typ2.cm input/type1.cm input/var_multiple.cm input/var_multiple2.cm input/var_simple.cm input/while.cm input/while.float.cm input/while2.cm input/while2.float.cm input/while3.cm input/while_array.cm`
 error: unused variable `a`, remove or reference
   --> input/add.cm:1:16
@@ -42,20 +40,6 @@ error: unused variable `b1`, remove or reference
    |             ^^^^^
 20 |    int f,g,h,i; /*all of these are referenced*/
 
-error: unused variable `g`, remove or reference
-  --> input/decl3.cm:20:11
-19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
-20 |    int f,g,h,i; /*all of these are referenced*/
-   |          ^
-21 |    while (h<100)
-
-error: unused variable `f`, remove or reference
-  --> input/decl3.cm:20:9
-19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
-20 |    int f,g,h,i; /*all of these are referenced*/
-   |        ^
-21 |    while (h<100)
-
 error: unused variable `c`, remove or reference
   --> input/decl3.cm:19:20
 18 |int E() {
@@ -76,6 +60,20 @@ error: unused variable `e`, remove or reference
 19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
    |                             ^^^^
 20 |    int f,g,h,i; /*all of these are referenced*/
+
+error: unused variable `f`, remove or reference
+  --> input/decl3.cm:20:9
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+20 |    int f,g,h,i; /*all of these are referenced*/
+   |        ^
+21 |    while (h<100)
+
+error: unused variable `g`, remove or reference
+  --> input/decl3.cm:20:11
+19 |    int a[2],b1[2],c[2],d[2],e[2]; /*only e referenced*/
+20 |    int f,g,h,i; /*all of these are referenced*/
+   |          ^
+21 |    while (h<100)
 
 error: assign to expression of wrong type
 found `int[2]` expected `float`
@@ -282,20 +280,20 @@ error: global variable `d` is already declared
 2 |  char  d,e ;
   |        ^
 
-error: unused variable `c`, remove or reference
-  --> input/var_multiple2.cm:1:9
+error: unused variable `a`, remove or reference
+  --> input/var_multiple2.cm:1:5
 0 |int a,b,c,d[10];
-1 |        ^
+1 |    ^
 
 error: unused variable `b`, remove or reference
   --> input/var_multiple2.cm:1:7
 0 |int a,b,c,d[10];
 1 |      ^
 
-error: unused variable `a`, remove or reference
-  --> input/var_multiple2.cm:1:5
+error: unused variable `c`, remove or reference
+  --> input/var_multiple2.cm:1:9
 0 |int a,b,c,d[10];
-1 |    ^
+1 |        ^
 
 error: unused variable `c`, remove or reference
   --> input/var_simple.cm:3:11
