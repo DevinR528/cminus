@@ -13,7 +13,7 @@ struct list<T> {
 }
 
 struct list<T> list<T>(int size) {
-    struct list x;
+    struct list<T> x;
     x = list {
         len: 0,
         cap: size,
@@ -30,4 +30,10 @@ void push<T>(struct list<T>* this, T item) {
         *this->buf = item;
         this->len += 1;
     }
+}
+
+void main() {
+    struct list<int> x;
+    x = list::<int>(3);
+    push::<int>(&x, 10);
 }

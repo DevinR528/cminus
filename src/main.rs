@@ -70,7 +70,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // println!("{:?}", items);
+    println!("{:?}", items);
 
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
 

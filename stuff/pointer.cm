@@ -5,12 +5,12 @@ int* ptr(int x) {
 }
 
 void add(int* x) {
-    foo();
-    **x = *x + 1; // cannot deref an int
+    // **x = *x + 1; // cannot deref an int
     int y;
     y = *x * *x;
     foo(&y);
     int a, *b;
     b = &y;
+    a = 1;
     // ptr(y) = b; this will be illegal (not lvalue)
 }

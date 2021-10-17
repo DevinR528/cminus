@@ -194,11 +194,24 @@ fn parse_trait(trait_: Pairs<Rule>, span: Range) -> Trait {
 
 fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
     match trait_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::IMPL, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), (Rule::func_decl, func), (Rule::RBR, _)] => {
+        [(Rule::IMPL, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), (Rule::func_decl, func), (Rule::RBR, _)] =>
+        {
+            let type_arguments = parse_generics(gen.clone());
             Impl {
                 ident: ident.as_str().to_string(),
-                method: parse_func(func.clone().into_inner()),
-                type_arguments: parse_generics(gen.clone()),
+                method: {
+                    let mut f = parse_func(func.clone().into_inner());
+                    f.ident.push_str(&format!(
+                        "<{}>",
+                        type_arguments
+                            .iter()
+                            .map(|t| t.val.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ));
+                    f
+                },
+                type_arguments,
                 span,
             }
         }

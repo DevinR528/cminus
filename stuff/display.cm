@@ -4,12 +4,14 @@ trait display<T> {
 
 impl display<int> {
     void display(int item) {
+        write(item);
         // print int
     }
 }
 
 impl display<bool> {
     void display(bool item) {
+        write(item);
         // print bool
     }
 }
