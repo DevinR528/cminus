@@ -32,6 +32,8 @@ crate struct VarInFunction<'ast> {
     func_refs: HashMap<String, HashMap<String, Ty>>,
     /// Name to the function it represents.
     name_func: HashMap<String, &'ast Func>,
+    /// Does this function have any return statements.
+    func_return: HashSet<String>,
     /// All of the variables in a scope that are used.
     unsed_vars: HashMap<String, (Range, Cell<bool>)>,
 }
@@ -158,7 +160,23 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for func in funcs {
             self.curr_fn = Some(func.ident.clone());
+
             crate::visit::walk_func(self, func);
+
+            if !matches!(func.ret.val, Ty::Void) && !self.var_func.func_return.contains(&func.ident)
+            {
+                panic!(
+                    "{}",
+                    Error::error_with_span(
+                        self,
+                        func.span,
+                        &format!(
+                            "function `{}` has return type `{}` but no return statement",
+                            func.ident, func.ret.val
+                        ),
+                    )
+                )
+            }
             self.curr_fn.take();
         }
 
@@ -443,7 +461,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.expr_ty.insert(expr, ty);
                     // Ok because of `x += 1;` turns into `x = x + 1;`
                 } else {
-                    panic!("{:?}", self.var_func.name_func.get("add"));
                     panic!(
                         "{}",
                         Error::error_with_span(self, expr.span, "no type found for ident expr",)
@@ -1149,10 +1166,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 let orig_rty = self.tcxt.expr_ty.get(rval);
                 let mut rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
 
-                // if rval_ty.as_ref().map_or(false, |t| t.has_generics()) {
-                //     println!("Assing Gen {:?} == {:?}", rval_ty, lval_ty);
-                // }
-
                 coercion(lval_ty.as_ref(), rval_ty.as_mut());
 
                 if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
@@ -1179,11 +1192,14 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                 // TODO: type coercions :( REMOVE
                 if !is_truthy(cond_ty.as_ref()) {
-                    self.tcxt.errors.push(Error::error_with_span(
-                        self.tcxt,
-                        stmt.span,
-                        "condition of if must be of type bool",
-                    ));
+                    panic!(
+                        "{}",
+                        Error::error_with_span(
+                            self.tcxt,
+                            stmt.span,
+                            "condition of if must be of type bool",
+                        )
+                    );
                 }
 
                 for stmt in stmts {
@@ -1202,14 +1218,17 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                 // TODO: type coercions :( REMOVE
                 if !is_truthy(cond_ty.as_ref()) {
-                    self.tcxt.errors.push(Error::error_with_span(
-                        self.tcxt,
-                        stmt.span,
-                        &format!(
-                            "condition of while must be of truthy, got `{}`",
-                            cond_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
-                        ),
-                    ));
+                    panic!(
+                        "{}",
+                        Error::error_with_span(
+                            self.tcxt,
+                            stmt.span,
+                            &format!(
+                                "condition of while must be of truthy, got `{}`",
+                                cond_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
+                            ),
+                        )
+                    );
                 }
                 self.visit_stmt(stmt);
             }
@@ -1219,7 +1238,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO: more
                 match match_ty.as_ref().unwrap() {
                     Ty::Array { size, ty } => todo!(),
-                    Ty::Struct { ident, gen } => todo!(),
                     Ty::Enum { ident, gen } => {
                         let (generics, variant_tys) = self
                             .tcxt
@@ -1254,11 +1272,11 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                     .insert(variable.to_string(), ty.clone());
                             }
 
-                            // println!("{} {:?} {}", fn_name, bound_vars, arm);
+                            println!("{} {:?} {}", fn_name, bound_vars, arm);
 
                             for stmt in &arm.blk.stmts {
                                 self.tcxt.visit_stmt(stmt);
-                                self.visit_stmt(stmt);
+                                // self.visit_stmt(stmt);
                             }
 
                             // Remove the bound locals after the arm leaves scope
@@ -1302,7 +1320,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                             for stmt in &arm.blk.stmts {
                                 self.tcxt.visit_stmt(stmt);
-                                self.visit_stmt(stmt);
+                                // self.visit_stmt(stmt);
                             }
 
                             // Remove the bound locals after the arm leaves scope
@@ -1324,7 +1342,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             self.tcxt,
                             stmt.span,
                             &format!(
-                                "must match a valid enum found: `{}`",
+                                "not a valid match type found: `{}`",
                                 match_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                             ),
                         )
@@ -1349,10 +1367,12 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             }
             Stmt::Ret(expr) => {
                 let ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
-                let func_ret_ty =
-                    self.tcxt.var_func.get(expr.span).and_then(|fname| {
-                        self.tcxt.var_func.name_func.get(fname).map(|f| &f.ret.val)
-                    });
+                let mut name = String::new();
+                let func_ret_ty = self.tcxt.var_func.get(expr.span).and_then(|fname| {
+                    name = fname.to_string();
+                    self.tcxt.var_func.name_func.get(fname).map(|f| &f.ret.val)
+                });
+                self.tcxt.var_func.func_return.insert(name);
 
                 if !ret_ty.as_ref().is_ty_eq(&func_ret_ty) {
                     self.tcxt.errors.push(Error::error_with_span(
@@ -1365,6 +1385,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         ),
                     ));
                 }
+
                 // TODO: if there is no return but the fn sig says there is we don't catch this
                 // `int add(int x) {  }` would not be caught
             }
@@ -1628,13 +1649,13 @@ fn resolve_ty(tcxt: &TyCheckRes<'_, '_>, expr: &Expression, ty: Option<&Ty>) -> 
         Expr::Deref { indir, expr } => ty.and_then(|t| t.resolve()),
         Expr::Array { ident, exprs } => ty.and_then(|t| t.index_dim(tcxt, exprs, expr.span)),
         Expr::AddrOf(_) => ty.cloned(),
+        Expr::FieldAccess { lhs, rhs } => resolve_ty(tcxt, rhs, ty),
         Expr::Ident(_)
         | Expr::Urnary { .. }
         | Expr::Binary { .. }
         | Expr::Parens(_)
         | Expr::Call { .. }
         | Expr::TraitMeth { .. }
-        | Expr::FieldAccess { .. }
         | Expr::StructInit { .. }
         | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
@@ -1721,7 +1742,7 @@ fn walk_field_access(
             }
         }
         Expr::Array { ident, exprs } => {
-            if let arr @ Some(ty @ Ty::Array { .. }) = &tcxt.type_of_ident(ident, expr.span) {
+            if let arr @ Some(ty @ Ty::Array { .. }) = fields.iter().find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None }) {
                 let dim = ty.array_dim();
                 if exprs.len() != dim {
                     tcxt.errors.push(Error::error_with_span(
@@ -1731,9 +1752,14 @@ fn walk_field_access(
                     ));
                     None
                 } else {
-                    arr.clone()
+                    arr.cloned()
                 }
             } else {
+                tcxt.errors.push(Error::error_with_span(
+                    tcxt,
+                    expr.span,
+                    &format!("ident `{}` not array", ident),
+                ));
                 // TODO: specific error here?
                 None
             }

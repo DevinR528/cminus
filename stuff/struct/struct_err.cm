@@ -14,15 +14,9 @@ struct recur {
 }
 
 void main() {
-    int a;
+    int a; // unused
     struct name x;
     struct recur one;
     one = recur { a: &one, b: foo { x: 1 } };
-    x = name { field: 0, field_two: 'a', };
-    a = x.y[1];
-    a = x.field + 1;
-    x.field = 10;
-    *x.a = 5;
-    a = *x.a;
-    // x->a = 10; // this is hard error
+    x = name { field: 0, field_two: 'a', y: {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10} }; // error: 11 ele array y[10]
 }

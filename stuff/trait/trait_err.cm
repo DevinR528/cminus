@@ -11,6 +11,8 @@ impl display<int> {
 
 impl display<bool> {
     void display(bool item) {
+        char x;
+        x = item; // error: type mismatch, since it is known here
         write(item);
         // print bool
     }
@@ -25,4 +27,5 @@ void main() {
     x = 0; y = 1;
     show::<int>(y);
     show::<bool>(x > y);
+    <<char>::display>('c'); // TODO: this should error
 }

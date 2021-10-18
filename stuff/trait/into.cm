@@ -1,4 +1,4 @@
-// Can I remove implicit casting and type promotion via generic and traits
+// Can I remove implicit casting and type promotion via generics and traits
 
 trait into<T, U> {
     U into(T in);

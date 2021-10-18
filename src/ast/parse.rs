@@ -653,28 +653,28 @@ fn valid_lval(ex: &Expr) -> Result<(), String> {
             // Valid expressions that are not recursive
             Expr::Ident(..) | Expr::Array { .. } => {}
             Expr::Call { .. } => {
-                return Err("no call expression".to_owned());
+                return Err("call expression is not a valid lvalue".to_owned());
             }
             Expr::TraitMeth { .. } => {
-                return Err("no call expression".to_owned());
+                return Err("call expression is not a valid lvalue".to_owned());
             }
             Expr::Urnary { .. } => {
-                return Err("no urnary expression".to_owned());
+                return Err("urnary expression is not a valid lvalue".to_owned());
             }
             Expr::Binary { .. } => {
-                return Err("no binary expression".to_owned());
+                return Err("binary expression is not a valid lvalue".to_owned());
             }
             Expr::StructInit { .. } => {
-                return Err("no struct init".to_owned());
+                return Err("struct init expression is not a valid lvalue".to_owned());
             }
             Expr::EnumInit { .. } => {
-                return Err("no enum init".to_owned());
+                return Err("enum init expression is not a valid lvalue".to_owned());
             }
             Expr::ArrayInit { .. } => {
-                return Err("no array init".to_owned());
+                return Err("array init expression is not a valid lvalue".to_owned());
             }
             Expr::Value(_) => {
-                return Err("no values".to_owned());
+                return Err("value is not a valid lvalue".to_owned());
             }
         }
     }

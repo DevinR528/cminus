@@ -1,0 +1,16 @@
+void main() {
+    int x; char y;
+
+    x = 10;
+    y = ' ';
+    match x - 5 {
+        2 -> {}
+        a -> {
+            y = a; // error: assign pattern to wrong type
+        }
+    }
+    if (y == 'c') {
+        write("== c");
+    }
+}
+

@@ -12,4 +12,5 @@ enum option<T> foo<T>(T it) {
 void main() {
     enum option<enum option<int>> num;
     num = foo::<enum option<int>>(foo::<int>(10));
+    num = foo::<enum option<char>>(foo::<int>(10)); // error: follow generic type mismatch
 }

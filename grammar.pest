@@ -97,7 +97,7 @@ variable = {
     | deref? ~ ident
 }
 
-const_ = { decimal | charstr | integer | TRUE | FALSE }
+const_ = { decimal | charstr | string | integer | TRUE | FALSE }
 
 op = {
     ARROW | DOT
