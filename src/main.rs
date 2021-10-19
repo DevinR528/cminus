@@ -87,7 +87,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     println!("{:?}", items);
 
     let ctxt = inkwell::context::Context::create();
-    let mut gen = codegen::CodeGen::new(&ctxt);
+    let mut gen = codegen::CodeGen::new(&ctxt, &tyck);
     gen.visit_prog(&items);
 
     // println!("\n\n{:?}", tyck);
