@@ -22,6 +22,8 @@ use pest::Parser as _;
 use pest_derive::Parser;
 
 mod ast;
+mod codegen;
+mod const_fold;
 mod error;
 mod precedence;
 mod typeck;
@@ -29,7 +31,7 @@ mod visit;
 
 use ast::parse::parse_decl;
 
-use crate::visit::Visit;
+use crate::visit::{Visit, VisitMut};
 
 /// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
 /// into a struct with a `CMinusParser::parse` method.
@@ -70,13 +72,23 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // println!("{:?}", items);
+    println!("{:?}", items);
 
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
 
     tyck.visit_prog(&items);
     let res = tyck.report_errors();
     // res.unwrap();
+
+    // const fold as many expressions as possible then code-gen
+    let mut const_fold = const_fold::Folder::default();
+    const_fold.visit_prog(&mut items);
+
+    println!("{:?}", items);
+
+    let ctxt = inkwell::context::Context::create();
+    let mut gen = codegen::CodeGen::new(&ctxt);
+    gen.visit_prog(&items);
 
     // println!("\n\n{:?}", tyck);
 

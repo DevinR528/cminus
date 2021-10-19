@@ -1,0 +1,2 @@
+[build]
+rustflags = [ "-lLLVM-12", "-l:LLVMPolly", "-C", "link-args=-L/usr/lib/llvm-12/lib"]

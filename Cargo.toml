@@ -8,3 +8,4 @@ edition = "2018"
 [dependencies]
 pest = { version = "2.1", features = [ "pretty-print" ] }
 pest_derive = "2.1"
+inkwell = { version = "0.1.0-beta.3", features = ["llvm12-0"]}

@@ -5,8 +5,6 @@ use std::{
     slice::SliceIndex,
 };
 
-use pest::prec_climber::Operator;
-
 use crate::{
     ast::types::{
         Adt, BinOp, Binding, Block, Decl, Expr, Expression, Field, FieldInit, Func, Generic, Impl,
