@@ -24,7 +24,7 @@ crate struct TraitSolve<'ast> {
     /// The name of the trait to each type implementation.
     ///
     /// This would consider `trait foo<int, bool>` distinct from `trait foo<bool, int>`.
-    impls: BTreeMap<String, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
+    crate impls: BTreeMap<String, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
     proof_stack: BTreeMap<String, Vec<ToUnify<'ast>>>,
 }
 

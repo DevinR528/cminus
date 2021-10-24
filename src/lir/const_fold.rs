@@ -1,108 +1,98 @@
+use std::collections::HashMap;
+
 use crate::{
-    ast::types::{
-        Adt, BinOp, Binding, Block, Decl, Expr, Expression, Field, FieldInit, Func, Generic, Impl,
-        MatchArm, Param, Pat, Range, Spanned, Spany, Statement, Stmt, Struct, Trait, Ty, Type,
-        TypeEquality, UnOp, Val, Value, Var, Variant, DUMMY,
-    },
     error::Error,
+    lir::lower::{
+        Adt, BinOp, Binding, Block, Expr, Field, FieldInit, Func, Generic, Impl, MatchArm, Param,
+        Pat, Stmt, Struct, Trait, Ty, UnOp, Val, Var, Variant,
+    },
     visit::VisitMut,
 };
 
 #[derive(Debug, Default)]
 crate struct Folder;
 
-impl<'ast> VisitMut<'ast> for Folder {
-    fn visit_expr(&mut self, expr: &'ast mut Expression) {
-        // crate::visit::walk_mut_expr(self, expr);
-
-        expr.val.const_fold();
-    }
-}
-
-crate trait Foldable {
-    fn const_fold(&mut self);
-}
-
-impl Foldable for Expr {
-    fn const_fold(&mut self) {
+impl Expr {
+    crate fn const_fold(&mut self) {
         match self {
-            Expr::Ident(_) => {
+            Expr::Ident { .. } => {
                 // TODO: this could be checked if it was instantiated with a const value
             }
             Expr::AddrOf(expr) | Expr::Deref { expr, .. } => {
-                expr.val.const_fold();
+                expr.const_fold();
             }
             Expr::Parens(expr) => {
-                expr.val.const_fold();
-                if let ex @ Expr::Value(_) = &expr.val {
+                expr.const_fold();
+                if let ex @ Expr::Value(_) = &**expr {
                     *self = ex.clone();
                 }
             }
-            Expr::Urnary { expr, op } => {
-                if let Expr::Value(val) = &mut expr.val {
+            Expr::Urnary { expr, op, .. } => {
+                if let box Expr::Value(val) = expr {
                     match op {
-                        UnOp::Not => match val.val {
+                        UnOp::Not => match val {
                             Val::Int(i) => {
                                 // TODO: hmmm is this right ??
-                                val.val = Val::Bool(!(i != 0));
+                                *val = Val::Bool(*i == 0);
                             }
                             Val::Bool(b) => {
-                                val.val = Val::Bool(!b);
+                                *val = Val::Bool(!(*b));
                             }
                             _ => {}
                         },
-                        UnOp::OnesComp => match val.val {
+                        UnOp::OnesComp => match val {
                             Val::Int(i) => {
                                 // TODO: hmmm is this right ??
-                                *self = Expr::Value(Val::Int(!i).into_spanned(val.span));
+                                *val = Val::Int(!(*i));
                             }
                             Val::Float(f) => {
                                 // TODO: hmmm is this right ??
-                                val.val = Val::Float(f64::from_bits(!f.to_bits()));
+                                *val = Val::Float(f64::from_bits(!f.to_bits()));
                             }
                             Val::Bool(b) => {
-                                val.val = Val::Bool(!b);
+                                *val = Val::Bool(!(*b));
                             }
                             _ => {}
                         },
                     }
+                    *self = Expr::Value(val.clone());
                 }
             }
-            Expr::Binary { op, lhs, rhs } => {
-                lhs.val.const_fold();
-                rhs.val.const_fold();
+            Expr::Binary { op, lhs, rhs, .. } => {
+                lhs.const_fold();
+                rhs.const_fold();
                 if let Some(folded) = eval_binop(op, lhs, rhs) {
                     *self = folded;
                 }
             }
             Expr::Array { exprs, .. } => {
                 for expr in exprs {
-                    expr.val.const_fold();
+                    expr.const_fold();
                 }
             }
-            Expr::Call { ident, args, type_args } => {
+            Expr::Call { ident, args, type_args, .. } => {
                 for expr in args {
-                    expr.val.const_fold();
+                    expr.const_fold();
                 }
             }
-            Expr::TraitMeth { trait_, args, type_args } => {
+            Expr::TraitMeth { trait_, args, type_args, .. } => {
                 for expr in args {
-                    expr.val.const_fold();
+                    expr.const_fold();
                 }
             }
-            Expr::StructInit { name, fields } => {
+            Expr::StructInit { name, fields, .. } => {
                 for expr in fields {
-                    expr.init.val.const_fold();
+                    expr.init.const_fold();
                 }
             }
             Expr::EnumInit { items, .. } => {
                 for expr in items {
-                    expr.val.const_fold();
+                    expr.const_fold();
                 }
             }
-            Expr::ArrayInit { items } => {
+            Expr::ArrayInit { items, .. } => {
                 for expr in items {
-                    expr.val.const_fold();
+                    expr.const_fold();
                 }
             }
             Expr::Value(_) | Expr::FieldAccess { .. } => {}
@@ -111,18 +101,18 @@ impl Foldable for Expr {
 }
 
 // TODO: identity folding `x & 0` or `x * 0` is always `0`
-fn eval_binop(op: &BinOp, lhs: &Expression, rhs: &Expression) -> Option<Expr> {
-    let lval = if let Expr::Value(val) = &lhs.val {
-        &val.val
+fn eval_binop(op: &BinOp, lhs: &Expr, rhs: &Expr) -> Option<Expr> {
+    let lval = if let Expr::Value(val) = lhs {
+        val
     } else {
         return None;
     };
-    let rval = if let Expr::Value(val) = &rhs.val {
-        &val.val
+    let rval = if let Expr::Value(val) = rhs {
+        val
     } else {
         return None;
     };
-    Some(Expr::Value(lval.evaluate(op, &rval).into_spanned(lhs.span)))
+    Some(Expr::Value(lval.evaluate(op, rval)))
 }
 
 impl Val {
@@ -203,10 +193,10 @@ fn char_op(a: char, b: char, op: &BinOp) -> Val {
 
 fn bool_op(a: bool, b: bool, op: &BinOp) -> Val {
     match op {
-        BinOp::Lt => Val::Bool(a < b),
+        BinOp::Lt => Val::Bool(!a & b), // a < b
         BinOp::Le => Val::Bool(a <= b),
         BinOp::Ge => Val::Bool(a >= b),
-        BinOp::Gt => Val::Bool(a > b),
+        BinOp::Gt => Val::Bool(a & !b), // a > b
         BinOp::Eq => Val::Bool(a == b),
         BinOp::Ne => Val::Bool(a != b),
         BinOp::BitAnd => Val::Bool(a & b),
@@ -250,37 +240,40 @@ macro_rules! expr {
     ($ex:tt + $($rest:tt)*) => {
         Expr::Binary {
             op: BinOp::Add,
-            lhs: box Expr::Value(Val::Int($ex).into_spanned(DUMMY)).into_spanned(DUMMY),
+            lhs: box Expr::Value(Val::Int($ex)),
             rhs: box expr!($($rest)*),
-        }.into_spanned(DUMMY)
+            ty: Ty::Void
+        }
     };
     ($ex:tt * $($rest:tt)*) => {
         Expr::Binary {
             op: BinOp::Mul,
-            lhs: box Expr::Value(Val::Int($ex).into_spanned(DUMMY)).into_spanned(DUMMY),
+            lhs: box Expr::Value(Val::Int($ex)),
             rhs: box expr!($($rest)*),
-        }.into_spanned(DUMMY)
+            ty: Ty::Void
+        }
     };
     ($ex:tt - $($rest:tt)*) => {
         Expr::Binary {
             op: BinOp::Sub,
-            lhs: box Expr::Value(Val::Int($ex).into_spanned(DUMMY)).into_spanned(DUMMY),
+            lhs: box Expr::Value(Val::Int($ex)),
             rhs: box expr!($($rest)*),
-        }.into_spanned(DUMMY)
+            ty: Ty::Void
+        }
     };
     ($ex:expr) => {
-        Expr::Value(Val::Int($ex).into_spanned(DUMMY)).into_spanned(DUMMY)
+        Expr::Value(Val::Int($ex))
     };
 }
 
 #[test]
 fn fold_expr() {
-    let mut ex = expr!(5 + 9 * 9 - 3).val;
+    let mut ex = expr!(5 + 9 * 9 - 3);
     ex.const_fold();
 
     assert!(matches!(
         ex,
         // Need the parenthesis because macro has no precedence
-        Expr::Value(Spanned { val: Val::Int(i), .. }) if i == (5 + (9 * (9 - 3)))
+        Expr::Value(Val::Int(i)) if i == (5 + (9 * (9 - 3)))
     ));
 }

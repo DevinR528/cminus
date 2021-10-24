@@ -7,9 +7,9 @@ use std::{
 
 use crate::{
     ast::types::{
-        Adt, BinOp, Binding, Block, Decl, Expr, Expression, Field, FieldInit, Func, Generic, Impl,
-        MatchArm, Param, Pat, Range, Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality,
-        UnOp, Val, Value, Var, Variant, DUMMY,
+        Adt, BinOp, Binding, Block, Decl, Enum, Expr, Expression, Field, FieldInit, Func, Generic,
+        Impl, MatchArm, Param, Pat, Range, Spany, Statement, Stmt, Struct, Trait, Ty, Type,
+        TypeEquality, UnOp, Val, Value, Var, Variant, DUMMY,
     },
     error::Error,
     typeck::generic::{check_type_arg, TyRegion},
@@ -29,7 +29,7 @@ crate struct VarInFunction<'ast> {
     /// The variables in functions, mapped fn name -> variables.
     func_refs: HashMap<String, HashMap<String, Ty>>,
     /// Name to the function it represents.
-    name_func: HashMap<String, &'ast Func>,
+    crate name_func: HashMap<String, &'ast Func>,
     /// Does this function have any return statements.
     func_return: HashSet<String>,
     /// All of the variables in a scope that are used.
@@ -67,20 +67,24 @@ crate struct TyCheckRes<'ast, 'input> {
     /// All the info about variables local to a specific function.
     ///
     /// Parameters are included in the locals.
-    var_func: VarInFunction<'ast>,
+    crate var_func: VarInFunction<'ast>,
 
     /// A mapping of expression -> type, this is the main inference table.
-    expr_ty: HashMap<&'ast Expression, Ty>,
+    crate expr_ty: HashMap<&'ast Expression, Ty>,
 
     /// A mapping of struct name to the fields of that struct.
     struct_fields: HashMap<String, (Vec<Type>, Vec<Field>)>,
     /// A mapping of enum name to the variants of that enum.
     enum_fields: HashMap<String, (Vec<Type>, Vec<Variant>)>,
+    /// A mapping of struct name to struct def.
+    crate name_struct: HashMap<String, &'ast Struct>,
+    /// A mapping of enum name to enum def.
+    crate name_enum: HashMap<String, &'ast Enum>,
 
     /// Resolve generic types at the end of type checking.
     generic_res: GenericResolver<'ast>,
     /// Trait resolver for checking the bounds on generic types.
-    trait_solve: TraitSolve<'ast>,
+    crate trait_solve: TraitSolve<'ast>,
 
     /// Errors collected during parsing and type checking.
     errors: Vec<Error<'input>>,
@@ -118,7 +122,7 @@ impl<'input> TyCheckRes<'_, 'input> {
         Ok(())
     }
 
-    fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
+    crate fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
         // TODO: unused leaks into other scope
         if let Some((_, b)) = self.var_func.unsed_vars.get(id) {
             b.set(true);
@@ -319,6 +323,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     ));
                 }
 
+                self.name_struct.insert(struc.ident.clone(), struc);
+
                 if !struc.generics.is_empty() {
                     self.generic_res.collect_generic_params(
                         &Node::Struct(struc.ident.clone()),
@@ -338,6 +344,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         "duplicate struct names",
                     ));
                 }
+
+                self.name_enum.insert(en.ident.clone(), en);
 
                 if !en.generics.is_empty() {
                     self.generic_res.collect_generic_params(
@@ -1048,7 +1056,10 @@ fn check_field_access<'ast>(
 
     let (name, (generics, fields)) =
         if let Some(Ty::Struct { ident, .. }) = lhs_ty.and_then(|t| t.resolve()) {
-            (ident.clone(), tcxt.struct_fields.get(&ident).expect("no struct definition found"))
+            (
+                ident.clone(),
+                tcxt.struct_fields.get(&ident).cloned().expect("no struct definition found"),
+            )
         } else {
             panic!("{}", Error::error_with_span(tcxt, lhs.span, "not valid field access"));
         };
@@ -1063,6 +1074,10 @@ fn check_field_access<'ast>(
             Some(rty)
         }
         Expr::Array { ident, exprs } => {
+            for expr in exprs {
+                tcxt.visit_expr(expr);
+            }
+
             let rty = fields
                 .iter()
                 .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
@@ -1071,6 +1086,8 @@ fn check_field_access<'ast>(
             rty.index_dim(tcxt, exprs, rhs.span)
         }
         Expr::FieldAccess { lhs, rhs } => {
+            tcxt.visit_expr(lhs);
+
             let accty = check_field_access(tcxt, lhs, rhs);
             if let Some(ty) = &accty {
                 tcxt.expr_ty.insert(rhs, ty.clone());

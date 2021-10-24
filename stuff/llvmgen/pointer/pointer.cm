@@ -1,0 +1,11 @@
+void add(int* x) {
+    *x += 1;
+    exit;
+}
+
+void main() {
+    int a;
+    a = 2;
+    add(&a);
+    write(a);
+}

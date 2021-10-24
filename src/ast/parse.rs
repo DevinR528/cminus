@@ -1,12 +1,14 @@
 use pest::iterators::{Pair, Pairs};
 
 use crate::{
-    ast::types::{
-        Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit,
-        Func, Generic, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt, Struct,
-        Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
+    ast::{
+        precedence::{Assoc, Operator, PrecClimber},
+        types::{
+            Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field,
+            FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement,
+            Stmt, Struct, Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
+        },
     },
-    precedence::{Assoc, Operator, PrecClimber},
     Rule,
 };
 

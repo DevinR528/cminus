@@ -6,7 +6,8 @@
     crate_visibility_modifier,
     stmt_expr_attributes,
     btree_drain_filter,
-    panic_info_message
+    panic_info_message,
+    path_file_prefix
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -22,16 +23,17 @@ use pest::Parser as _;
 use pest_derive::Parser;
 
 mod ast;
-mod codegen;
-mod const_fold;
 mod error;
-mod precedence;
+mod lir;
 mod typeck;
 mod visit;
 
 use ast::parse::parse_decl;
 
-use crate::visit::{Visit, VisitMut};
+use crate::{
+    lir::visit::Visit as IrVisit,
+    visit::{Visit, VisitMut},
+};
 
 /// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
 /// into a struct with a `CMinusParser::parse` method.
@@ -80,18 +82,17 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let res = tyck.report_errors();
     // res.unwrap();
 
-    // const fold as many expressions as possible then code-gen
-    let mut const_fold = const_fold::Folder::default();
-    const_fold.visit_prog(&mut items);
+    let lowered = lir::lower::lower_items(&items, tyck);
 
-    println!("{:?}", items);
+    println!("\n\n{:#?}", lowered);
 
-    let ctxt = inkwell::context::Context::create();
-    let mut gen = codegen::CodeGen::new(&ctxt, &tyck);
-    gen.visit_prog(&items);
+    // let ctxt = inkwell::context::Context::create();
+    // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
 
-    // println!("\n\n{:?}", tyck);
+    let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
 
+    gen.visit_prog(&lowered);
+    gen.dump_asm();
     Ok(())
 }
 
@@ -124,6 +125,7 @@ fn main() {
             eprintln!("`{}`", payload);
         };
     }));
+    std::panic::take_hook();
 
     match args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice() {
         [] => panic!("need to specify file to compile"),
@@ -131,15 +133,23 @@ fn main() {
         [_bin_name, file_names @ ..] => {
             let mut errors = 0;
             for f in file_names {
-                match std::panic::catch_unwind(|| process_file(f)) {
-                    Ok(Ok(_)) => {}
-                    Ok(Err(e)) => {
-                        errors += 1;
-                        eprintln!("{}", e)
-                    }
+                // match std::panic::catch_unwind(|| process_file(f)) {
+                //     Ok(Ok(_)) => {}
+                //     Ok(Err(e)) => {
+                //         errors += 1;
+                //         eprintln!("{}", e)
+                //     }
+                //     Err(e) => {
+                //         errors += 1;
+                //         // eprintln!("{}", e);
+                //         std::process::exit(1)
+                //     }
+                // }
+                match process_file(f) {
+                    Ok(_) => {}
                     Err(e) => {
                         errors += 1;
-                        // eprintln!("{}", e.to_string())
+                        eprintln!("{}", e);
                     }
                 }
             }
