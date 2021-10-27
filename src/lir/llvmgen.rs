@@ -218,7 +218,7 @@ impl<'ctx> LLVMGen<'ctx> {
         Some(match expr {
             LValue::Ident { ident, ty } => self.vars.get(ident.as_str()).copied()?,
             LValue::Deref { indir, expr } => self.get_pointer(expr)?,
-            LValue::Array { ident, exprs } => {
+            LValue::Array { ident, exprs, ty } => {
                 let arr_ptr = self.vars.get(ident.as_str()).copied()?;
                 self.index_arr(arr_ptr.into_pointer_value(), exprs)?.into()
             }

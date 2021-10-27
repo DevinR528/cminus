@@ -101,7 +101,7 @@ crate fn walk_lval<'ast, V: Visit<'ast>>(visit: &mut V, lval: &LValue) {
     match lval {
         LValue::Ident { ident, ty } => todo!(),
         LValue::Deref { indir, expr } => todo!(),
-        LValue::Array { ident, exprs } => todo!(),
+        LValue::Array { ident, exprs, ty } => todo!(),
         LValue::FieldAccess { lhs, rhs } => todo!(),
     }
 }

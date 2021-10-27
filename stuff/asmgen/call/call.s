@@ -9,22 +9,31 @@
 .int_rformat: .string "%d"
 .float_rformat: .string "%f"
 
+.global add
+.type add,@function
+
+add:
+    pushq %rbp
+    mov %rsp, %rbp
+    pushq %rdi
+    pushq %rsi
+    mov -16(%rbp), %r9
+    add -8(%rbp), %r9
+    mov %r9, %r11
+    mov %r11, %rax
+    leave
+    ret
 .global main
 .type main,@function
 
 main:
     pushq %rbp
     mov %rsp, %rbp
-    movq $2, (%rbp)
-    mov (%rbp), %r11
-    imul $2, %r11
-    mov %r11, %r15
-    movq %r15, -8(%rbp)
-    mov -8(%rbp), %r11
-    add (%rbp), %r11
-    mov %r11, %rsi
-    movq %rsi, -16(%rbp)
-    mov -16(%rbp), %rsi
+    movq $1, %rdi
+    movq $1, %rsi
+    call add
+    movq %rax, -24(%rbp)
+    mov -24(%rbp), %rsi
     mov $0, %rax
     lea .int_wformat(%rip), %rdi
     call printf

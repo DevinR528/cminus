@@ -13,35 +13,30 @@
 .type main,@function
 
 main:
-    push %rbp
+    pushq %rbp
     mov %rsp, %rbp
 
-    sub $8, %rsp
-    sub $8, %rsp
-    sub $8, %rsp
+    movq $0, -32(%rbp)
+    movq $9, -24(%rbp)
+    movq $11, -16(%rbp)
+    movq $15, -8(%rbp)
 
-    mov $2, %r14
-    mov %r14, -0(%rbp)
-    mov -0(%rbp), %r11
-    imul %r14, %r11
-    mov %r11, -0(%rbp)
-
-    mov %r11, %rsi
+    mov -32(%rbp), %rsi
     mov $0, %rax
     lea .int_wformat(%rip), %rdi
     call printf
 
-    mov %r11, %r10
-    mov -8(%rbp), %r13
-    mov %r13, %r10
-    mov -0(%rbp), %r13
-    mov -8(%rbp), %r11
-    add %r13, %r11
-    mov %r11, %r10
-    mov -16(%rbp), %r13
-    mov %r13, %r10
+    mov -24(%rbp), %rsi
+    mov $0, %rax
+    lea .int_wformat(%rip), %rdi
+    call printf
 
-    mov %r11, %rsi
+    mov -16(%rbp), %rsi
+    mov $0, %rax
+    lea .int_wformat(%rip), %rdi
+    call printf
+
+    mov -8(%rbp), %rsi
     mov $0, %rax
     lea .int_wformat(%rip), %rdi
     call printf

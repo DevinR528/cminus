@@ -33,6 +33,16 @@ impl Val {
             Val::Str(_) => Ty::String,
         }
     }
+
+    crate fn size_of(&self) -> usize {
+        match self {
+            Val::Float(_) => 8,
+            Val::Int(_) => 8,
+            Val::Char(_) => 4,
+            Val::Bool(_) => 1,
+            Val::Str(s) => 8,
+        }
+    }
 }
 
 impl fmt::Display for Val {
@@ -383,7 +393,7 @@ pub enum LValue {
     /// Access an array by index `[expr][expr]`.
     ///
     /// Each `exprs` represents an access of a dimension of the array.
-    Array { ident: String, exprs: Vec<Expr> },
+    Array { ident: String, exprs: Vec<Expr>, ty: Ty },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<LValue>, rhs: Box<LValue> },
 }
@@ -401,10 +411,17 @@ impl LValue {
             ty::Expr::Deref { indir, expr } => {
                 LValue::Deref { indir, expr: box LValue::lower(tyctx, fold, *expr) }
             }
-            ty::Expr::Array { ident, exprs } => LValue::Array {
-                ident,
-                exprs: exprs.into_iter().map(|expr| Expr::lower(tyctx, fold, expr)).collect(),
-            },
+            ty::Expr::Array { ident, exprs } => {
+                let ty = Ty::lower(
+                    tyctx,
+                    &tyctx.type_of_ident(&ident, ex.span).expect("type checking missed ident"),
+                );
+                LValue::Array {
+                    ident,
+                    exprs: exprs.into_iter().map(|expr| Expr::lower(tyctx, fold, expr)).collect(),
+                    ty,
+                }
+            }
             ty::Expr::FieldAccess { lhs, rhs } => LValue::FieldAccess {
                 lhs: box LValue::lower(tyctx, fold, *lhs),
                 rhs: box LValue::lower(tyctx, fold, *rhs),
@@ -417,9 +434,19 @@ impl LValue {
         Some(match self {
             LValue::Ident { ident, ty } => ident,
             LValue::Deref { indir, expr } => expr.as_ident()?,
-            LValue::Array { ident, exprs } => ident,
+            LValue::Array { ident, .. } => ident,
             LValue::FieldAccess { lhs, rhs } => lhs.as_ident()?,
         })
+    }
+
+    crate fn type_of(&self) -> &Ty {
+        match self {
+            LValue::Ident { ident, ty } => ty,
+            LValue::Deref { indir, expr } => expr.type_of(),
+            LValue::Array { ident, exprs, ty } => ty,
+            // TODO: do we want the final value this would affect array too
+            LValue::FieldAccess { lhs, rhs } => rhs.type_of(),
+        }
     }
 }
 
@@ -474,10 +501,10 @@ impl Ty {
             Ty::Enum { ident, gen, def } => {
                 def.variants.iter().map(|v| v.types.iter().map(|t| t.size()).sum::<usize>()).sum()
             }
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::String => 32,
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::String => 8,
             Ty::Int => 8,
             Ty::Char => 4,
-            Ty::Float => 4,
+            Ty::Float => 8,
             Ty::Bool => 4,
             Ty::Void => 0,
             _ => unreachable!("generic type should be monomorphized"),

@@ -1,13 +1,20 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
-use crate::lir::lower::BinOp;
+use crate::lir::lower::{BinOp, Ty, Val};
 
 use Register::*;
+
 pub const ARG_REGS: [Register; 6] = [RDI, RSI, RDX, RCX, R8, R9];
+
+lazy_static::lazy_static! { pub static ref USABLE_REGS: HashSet<Register> =
+    vec![RAX, RCX, RDX, RBX, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15, R16]
+        .into_iter()
+        .collect();
+}
 
 #[rustfmt::skip]
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Register {
     RAX,
     RCX,
@@ -44,6 +51,36 @@ impl fmt::Display for Register {
     }
 }
 
+use FloatRegister::*;
+
+lazy_static::lazy_static! { pub static ref USABLE_FLOAT_REGS: HashSet<FloatRegister> =
+    vec![XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
+        .into_iter()
+        .collect();
+}
+
+#[rustfmt::skip]
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatRegister {
+    XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7,
+}
+
+impl fmt::Display for FloatRegister {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            XMM0 => "xmm0".fmt(f),
+            XMM1 => "xmm1".fmt(f),
+            XMM2 => "xmm2".fmt(f),
+            XMM3 => "xmm3".fmt(f),
+            XMM4 => "xmm4".fmt(f),
+            XMM5 => "xmm5".fmt(f),
+            XMM6 => "xmm6".fmt(f),
+            XMM7 => "xmm7".fmt(f),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Location {
     /// Something like this `BYTE PTR [rbp-1]`.
@@ -54,17 +91,30 @@ pub enum Location {
     },
     /// Plain register.
     Register(Register),
+    /// The 128 (or 32 bit) float registers.
+    FloatReg(FloatRegister),
     /// Constant, like `10`.
     ///
     /// This always represents a value never a label.
-    Const(String),
+    Const {
+        val: Val,
+    },
     /// A label to jump or call to.
     Label(String),
     /// A relative location.
     ///
     /// Accessing global variables using rip offset.
     NamedOffset(String),
-    NumberedOffset(i64),
+    NumberedOffset {
+        offset: i64,
+        reg: Register,
+    },
+    Indexable {
+        end: i64,
+        ele_idx: i64,
+        ele_size: i64,
+        reg: Register,
+    },
 }
 
 impl fmt::Display for Location {
@@ -72,11 +122,45 @@ impl fmt::Display for Location {
         match self {
             Location::RegAddr { reg, offset, size } => todo!(),
             Location::Register(reg) => write!(f, "%{}", reg),
-            Location::Const(c) => write!(f, "${}", c),
+            Location::FloatReg(reg) => write!(f, "%{}", reg),
+            Location::Const { val } => match val {
+                Val::Float(v) => write!(f, "${}", (*v as f32).to_bits()),
+                Val::Int(v) => write!(f, "${}", v),
+                Val::Char(v) => write!(f, "${}", v),
+                Val::Bool(v) => write!(f, "${}", v),
+                Val::Str(v) => write!(f, "${}", v),
+            },
             Location::Label(label) => label.fmt(f),
             Location::NamedOffset(label) => write!(f, "{}(%rip)", label),
-            Location::NumberedOffset(count) => write!(f, "-{}(%rbp)", count),
+            Location::NumberedOffset { offset, reg } => write!(
+                f,
+                "{}(%{})",
+                if *offset == 0 { "".to_owned() } else { format!("-{}", offset) },
+                reg
+            ),
+            Location::Indexable { end, ele_idx, ele_size, reg } => {
+                let offset = end - (ele_idx * ele_size);
+
+                assert!(offset > 0, "array index is out of bounds");
+
+                write!(
+                    f,
+                    "{}(%{})",
+                    if offset == 0 { "".to_owned() } else { format!("-{}", offset) },
+                    reg
+                )
+            }
         }
+    }
+}
+
+impl Location {
+    crate fn is_memory_ref(&self) -> bool {
+        matches!(self, Self::NumberedOffset { .. } | Self::NamedOffset(..))
+    }
+
+    crate fn is_float_reg(&self) -> bool {
+        matches!(self, Self::FloatReg(..))
     }
 }
 
@@ -93,11 +177,17 @@ pub enum Instruction {
     /// Instruction metadata, used for function prologue.
     Meta(String),
     /// Push `Location` to the stack.
-    Push(Location),
+    Push {
+        loc: Location,
+        size: usize,
+    },
     /// Add space to the stack (alloca).
     ///
     /// This is a `subq amt, reg` instruction.
-    Alloca { amount: i64, reg: Register },
+    Alloca {
+        amount: i64,
+        reg: Register,
+    },
     /// Jump to the address saving stack info.
     ///
     /// the `Location` is most often a label but can be an address.
@@ -109,9 +199,25 @@ pub enum Instruction {
     /// Return from a call.
     Ret,
     /// Move source to destination.
-    Mov { src: Location, dst: Location },
+    Mov {
+        src: Location,
+        dst: Location,
+    },
+    /// Move source float to destination float.
+    FloatMov {
+        src: Location,
+        dst: Location,
+    },
+    SizedMov {
+        src: Location,
+        dst: Location,
+        size: usize,
+    },
     /// Load from the address `src` to `dst`.
-    Load { src: Location, dst: Location },
+    Load {
+        src: Location,
+        dst: Location,
+    },
     /// Add source to destination.
     Math {
         /// The left hand side of a binary operation.
@@ -121,11 +227,30 @@ pub enum Instruction {
         /// The binary operation to apply, except division.
         op: BinOp,
     },
+    /// Add source to destination.
+    FloatMath {
+        /// The left hand side of a binary operation.
+        src: Location,
+        /// The register that holds the value, unless div.
+        dst: Location,
+        /// The binary operation to apply, except division.
+        op: BinOp,
+    },
+    /// Convert single precision float to double for printf.
+    Cvt {
+        src: Location,
+        dst: Location,
+    },
 }
 
 impl Instruction {
     /// The `rhs` is where the value will end up for most operations.
     pub fn from_binop(lhs: Location, rhs: Location, op: &BinOp) -> Self {
         Instruction::Math { src: lhs, dst: rhs, op: op.clone() }
+    }
+
+    /// The `rhs` is where the value will end up for most operations.
+    pub fn from_binop_float(lhs: Location, rhs: Location, op: &BinOp) -> Self {
+        Instruction::FloatMath { src: lhs, dst: rhs, op: op.clone() }
     }
 }

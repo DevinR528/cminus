@@ -15,18 +15,18 @@
 main:
     pushq %rbp
     mov %rsp, %rbp
-    movq $2, (%rbp)
-    mov (%rbp), %r11
-    imul $2, %r11
-    mov %r11, %r15
-    movq %r15, -8(%rbp)
-    mov -8(%rbp), %r11
-    add (%rbp), %r11
-    mov %r11, %rsi
-    movq %rsi, -16(%rbp)
-    mov -16(%rbp), %rsi
-    mov $0, %rax
-    lea .int_wformat(%rip), %rdi
+    pushq $1092721050
+    movsd (%rsp), %xmm5
+    movsd %xmm5, -8(%rbp)
+    pushq $1065353216
+    movsd (%rsp), %xmm5
+    movsd %xmm5, (%rsp)
+    movsd -8(%rbp), %xmm5
+    addss (%rsp), %xmm5
+    movsd %xmm5, -16(%rbp)
+    cvtss2sd -16(%rbp), %xmm0
+    mov $1, %rax
+    lea .float_wformat(%rip), %rdi
     call printf
     leave
     ret
