@@ -87,7 +87,10 @@ impl<'ctx> CodeGen<'ctx> {
                 let mnemonic = mnemonic_from(*size);
                 format!("    mov{} {}, {}", mnemonic, src, dst)
             }
-            Instruction::Load { src, dst } => format!("    lea {}, {}", src, dst),
+            Instruction::Load { src, dst, size } => {
+                let mnemonic = mnemonic_from(*size);
+                format!("    lea{} {}, {}", mnemonic, src, dst)
+            }
             Instruction::Alloca { amount, reg } => format!("    sub ${}, %{}", amount, reg),
             Instruction::Math { src, dst, op } => {
                 format!("    {} {}, {}", op.as_instruction(), src, dst)
@@ -211,8 +214,14 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn deref_to_value(&self, ptr: Location, ty: &Ty) {}
 
-    fn index_arr(&self, arr: Location, exprs: &'ctx [Expr], ele_size: usize) -> Option<Location> {
+    fn index_arr(
+        &mut self,
+        arr: Location,
+        exprs: &'ctx [Expr],
+        ele_size: usize,
+    ) -> Option<Location> {
         Some(if let Location::NumberedOffset { offset, reg } = arr {
+            // Const indexing
             if let Expr::Value(Val::Int(idx)) = exprs[0] {
                 if exprs.len() == 1 {
                     Location::Indexable {
@@ -223,9 +232,47 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     todo!("multidim arrays")
                 }
+            // TODO: add bounds checking maybe
+            // Dynamic indexing
             } else {
                 if exprs.len() == 1 {
-                    Location::Indexable { reg, end: offset, ele_pos: offset - (1 * ele_size) }
+                    let rval = self.build_value(&exprs[0], None)?;
+
+                    let tmpidx = self.free_reg();
+                    let array_reg = self.free_reg();
+                    // movq -16(%rbp), %rdx // array
+                    // movq -8(%rbp), %rbx // index
+                    // addq %rdx, %rbx
+                    // movq (%rbx), %rax
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::SizedMov {
+                            src: rval,
+                            dst: Location::Register(tmpidx),
+                            size: exprs[0].type_of().size(),
+                        },
+                        Instruction::SizedMov {
+                            src: arr,
+                            dst: Location::Register(array_reg),
+                            size: ele_size,
+                        },
+                        Instruction::Math {
+                            src: Location::Const { val: Val::Int(ele_size as isize) },
+                            dst: Location::Register(tmpidx),
+                            op: BinOp::Mul,
+                        },
+                        Instruction::Math {
+                            src: Location::Register(tmpidx),
+                            dst: Location::Register(array_reg),
+                            op: BinOp::Add,
+                        },
+                        Instruction::SizedMov {
+                            src: Location::NumberedOffset { offset: 0, reg: array_reg },
+                            dst: Location::Register(tmpidx),
+                            size: ele_size,
+                        },
+                    ]);
+
+                    Location::Register(tmpidx)
                 } else {
                     todo!("multidim arrays")
                 }
@@ -279,7 +326,11 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn alloc_arg(&mut self, count: usize, name: &'ctx str, ty: &Ty) -> Location {
-        let size = ty.size();
+        let size = match ty {
+            // An array is converted to a pointer like thing
+            Ty::Array { .. } => 8,
+            t => t.size(),
+        };
 
         self.current_stack += size;
 
@@ -399,11 +450,20 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Call { ident, args, type_args, def } => {
                 for (idx, arg) in args.iter().enumerate() {
                     let val = self.build_value(arg, None).unwrap();
-                    self.asm_buf.push(Instruction::SizedMov {
-                        src: val,
-                        dst: Location::Register(ARG_REGS[idx]),
-                        size: arg.type_of().size(),
-                    });
+                    let ty = arg.type_of();
+                    if let Ty::Array { size, ty } = ty {
+                        self.asm_buf.push(Instruction::Load {
+                            src: val,
+                            dst: Location::Register(ARG_REGS[idx]),
+                            size: ty.size(),
+                        });
+                    } else {
+                        self.asm_buf.push(Instruction::SizedMov {
+                            src: val,
+                            dst: Location::Register(ARG_REGS[idx]),
+                            size: arg.type_of().size(),
+                        });
+                    }
                 }
                 self.asm_buf.push(Instruction::Call(Location::Label(ident.to_owned())));
                 Location::Register(Register::RAX)
@@ -606,6 +666,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let expr_type = expr.type_of();
                 let fmt_str = format_str(&expr_type).to_string();
+                let size = expr_type.size();
 
                 let val = self.build_value(expr, None).unwrap();
                 if matches!(expr_type, Ty::Float) {
@@ -618,6 +679,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Instruction::Load {
                             src: Location::NamedOffset(fmt_str),
                             dst: Location::Register(Register::RDI),
+                            size,
                         },
                         Instruction::Call(Location::Label("printf".to_owned())),
                     ]);
@@ -631,6 +693,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Instruction::Load {
                             src: Location::NamedOffset(fmt_str),
                             dst: Location::Register(Register::RDI),
+                            size,
                         },
                         Instruction::Call(Location::Label("printf".to_owned())),
                     ]);
@@ -704,6 +767,10 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         for stmt in &func.stmts {
             self.gen_statement(stmt);
         }
+
+        self.current_stack = 0;
+        self.clear_regs_except(None);
+        self.clear_float_regs_except(None);
 
         self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
     }

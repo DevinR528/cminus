@@ -7,7 +7,7 @@ use Register::*;
 pub const ARG_REGS: [Register; 6] = [RDI, RSI, RDX, RCX, R8, R9];
 
 lazy_static::lazy_static! { pub static ref USABLE_REGS: HashSet<Register> =
-    vec![RAX, RCX, RDX, RBX, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15, R16]
+    vec![RAX, RCX, RDX, RBX, RSI, RDI, R8, R9, R10, R11, R12, R13, R14, R15]
         .into_iter()
         .collect();
 }
@@ -24,7 +24,7 @@ pub enum Register {
     RBP,
     RSI,
     RDI,
-    R8, R9, R10, R11, R12, R13, R14, R15, R16,
+    R8, R9, R10, R11, R12, R13, R14, R15,
 }
 
 impl fmt::Display for Register {
@@ -46,7 +46,6 @@ impl fmt::Display for Register {
             R13 => "r13".fmt(f),
             R14 => "r14".fmt(f),
             R15 => "r15".fmt(f),
-            R16 => "r16".fmt(f),
         }
     }
 }
@@ -214,6 +213,7 @@ pub enum Instruction {
     Load {
         src: Location,
         dst: Location,
+        size: usize,
     },
     /// Add source to destination.
     Math {
