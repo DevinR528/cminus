@@ -331,24 +331,6 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                 ] => {
                     parse_lvalue(var.clone(), expr.clone(), span)
                 }
-                // // var = { field: expr, optional: expr };
-                // [(Rule::expr, var), (Rule::ASSIGN, _),
-                //     (, expr), (Rule::SC, _)
-                // ] => {
-                //     parse_lvalue(var.clone(), expr.clone(), span)
-                // }
-                // // var = { 1, 2, };
-                // [(Rule::expr, var), (Rule::ASSIGN, _),
-                //     (Rule::arr_init, expr), (Rule::SC, _)
-                // ] => {
-                //     parse_lvalue(var.clone(), expr.clone(), span)
-                // }
-                // var = enum::variant(10, false);
-                // [(Rule::expr, var), (Rule::ASSIGN, _),
-                //     (Rule::enum_init, expr), (Rule::SC, _)
-                // ] => {
-                //     parse_lvalue(var.clone(), expr.clone(), span)
-                // }
                 _ => unreachable!("malformed assignment {}", stmt.to_json()),
             }
         }
@@ -359,7 +341,7 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                 .collect::<Vec<_>>()
                 .as_slice()
             {
-                // foo(x,y);
+                // foo(x,y); or foo();
                 [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _),
                     args @ ..,
                 (Rule::RP, _), (Rule::SC, _)] => {
@@ -377,14 +359,6 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                         }.into_spanned(span)
                     ).into_spanned(span)
                 }
-                // foo();
-                // [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _), (Rule::RP, _), (Rule::SC, _)] => {
-                //     Stmt::Call {
-                //         ident: name.as_str().to_string(),
-                //         args: vec![],
-                //         type_args: parse_type_arguments(type_args.clone()),
-                //     }.into_spanned(span)
-                // }
                 _ => unreachable!("malformed call statement"),
             }
         }
@@ -951,7 +925,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                     .into_spanned(span)
                 }
                 // <<T>::trait>()
-                [(Rule::generic, args), (Rule::ident, trait_), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
+                [(Rule::generic, gen_args), (Rule::ident, trait_), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
                 {
                     Expr::TraitMeth {
                         trait_: trait_.as_str().to_string(),
@@ -972,7 +946,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                         } else {
                             vec![]
                         },
-                        type_args: parse_generics(args.clone()),
+                        type_args: parse_generics(gen_args.clone()),
                     }
                     .into_spanned(span)
                 }

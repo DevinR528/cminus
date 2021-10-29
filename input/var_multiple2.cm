@@ -1,5 +1,0 @@
-int a,b,c,d[10];
-
-void main() {
-  read(d[1]);
-}

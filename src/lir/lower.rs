@@ -287,6 +287,8 @@ impl Expr {
             },
             ty::Expr::Parens(expr) => Expr::Parens(box Expr::lower(tyctx, fold, *expr)),
             ty::Expr::Call { ident, args, type_args } => {
+                if type_args.iter().any(|arg| arg.val.has_generics()) {}
+
                 let func = tyctx.var_func.name_func.get(&ident).expect("function is defined");
                 Expr::Call {
                     ident,
@@ -296,6 +298,8 @@ impl Expr {
                 }
             }
             ty::Expr::TraitMeth { trait_, args, type_args } => {
+                if type_args.iter().any(|arg| arg.val.has_generics()) {}
+
                 let func = tyctx
                     .trait_solve
                     .impls
@@ -368,20 +372,6 @@ impl Expr {
             Expr::Value(v) => v.type_of(),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CallExpr {
-    pub ident: String,
-    pub args: Vec<Expr>,
-    pub type_args: Vec<Ty>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TraitMethExpr {
-    pub trait_: String,
-    pub args: Vec<Expr>,
-    pub type_args: Vec<Ty>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -597,6 +587,20 @@ impl MatchArm {
             blk: Block::lower(tyctx, fold, arm.blk),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallExpr {
+    pub ident: String,
+    pub args: Vec<Expr>,
+    pub type_args: Vec<Ty>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TraitMethExpr {
+    pub trait_: String,
+    pub args: Vec<Expr>,
+    pub type_args: Vec<Ty>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
