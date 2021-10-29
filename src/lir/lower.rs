@@ -510,6 +510,14 @@ impl Ty {
             _ => unreachable!("generic type should be monomorphized"),
         }
     }
+
+    crate fn null_val(&self) -> Val {
+        match self {
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Float => Val::Int(1),
+            Ty::Char | Ty::Bool => Val::Char(0 as char),
+            _ => unreachable!("generic type should be monomorphized cannot create null value"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

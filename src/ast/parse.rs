@@ -937,6 +937,8 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                                         // has nothing to do with 1 + whatever
                                         climber.climb(p.clone().into_inner(), primary, infix),
                                     ),
+                                    Rule::arr_init => Some(parse_expr(p)),
+                                    Rule::struct_assign => Some(parse_expr(p)),
                                     Rule::CM => None,
                                     _ => unreachable!("malformed arguments in call {:?}", arg_list),
                                 })

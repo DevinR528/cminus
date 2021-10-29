@@ -9,6 +9,17 @@
 .int_rformat: .string "%d"
 .float_rformat: .string "%f"
 
+.global set_idx
+.type set_idx,@function
+
+set_idx:
+    pushq %rbp
+    mov %rsp, %rbp
+    pushq %rdi
+    pushbig %rsi
+    mov -24(%rbp), %rax
+    leave
+    ret
 .global main
 .type main,@function
 
@@ -19,24 +30,14 @@ main:
     pushq $1
     pushq $1
     pushq $1
-    pushq $1
-    movq $0, -32(%rbp)
-    movq $9, -24(%rbp)
-    movq $11, -16(%rbp)
-    movq $15, -8(%rbp)
-    mov -32(%rbp), %rsi
-    mov $0, %rax
-    lea .int_wformat(%rip), %rdi
-    call printf
-    mov -24(%rbp), %rsi
-    mov $0, %rax
-    lea .int_wformat(%rip), %rdi
-    call printf
-    mov -16(%rbp), %rsi
-    mov $0, %rax
-    lea .int_wformat(%rip), %rdi
-    call printf
-    mov -8(%rbp), %rsi
+    movq $2, -64(%rbp)
+    movq $1, -56(%rbp)
+    movq $3, -48(%rbp)
+    movq $1, %rdi
+    movbig -64(%rbp), %rsi
+    call set_idx
+    movq %rax, -40(%rbp)
+    mov -40(%rbp), %rsi
     mov $0, %rax
     lea .int_wformat(%rip), %rdi
     call printf

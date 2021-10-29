@@ -90,7 +90,7 @@ type_args = { ("::<" ~ type_ ~ (CM ~ type_)* ~ ">")? }
 
 arr_init = { (LBR ~ expr ~ (CM ~ expr)* ~ CM? ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ CM? ~ RBR }
 
-arg_list = { expr ~ (CM ~ expr)*}
+arg_list = { (struct_assign | arr_init | expr) ~ (CM ~ (struct_assign | arr_init | expr))*}
 
 variable = {
     deref? ~ ident ~ (LBK ~ expr ~ RBK)+

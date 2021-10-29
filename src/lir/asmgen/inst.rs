@@ -81,7 +81,7 @@ impl fmt::Display for FloatRegister {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     /// Something like this `BYTE PTR [rbp-1]`.
     RegAddr {
@@ -106,13 +106,12 @@ pub enum Location {
     /// Accessing global variables using rip offset.
     NamedOffset(String),
     NumberedOffset {
-        offset: i64,
+        offset: usize,
         reg: Register,
     },
     Indexable {
-        end: i64,
-        ele_idx: i64,
-        ele_size: i64,
+        end: usize,
+        ele_pos: usize,
         reg: Register,
     },
 }
@@ -138,15 +137,13 @@ impl fmt::Display for Location {
                 if *offset == 0 { "".to_owned() } else { format!("-{}", offset) },
                 reg
             ),
-            Location::Indexable { end, ele_idx, ele_size, reg } => {
-                let offset = end - (ele_idx * ele_size);
-
-                assert!(offset > 0, "array index is out of bounds");
+            Location::Indexable { end, ele_pos, reg } => {
+                assert!(ele_pos <= end, "array index is out of bounds");
 
                 write!(
                     f,
                     "{}(%{})",
-                    if offset == 0 { "".to_owned() } else { format!("-{}", offset) },
+                    if *ele_pos == 0 { "".to_owned() } else { format!("-{}", ele_pos) },
                     reg
                 )
             }
@@ -155,8 +152,8 @@ impl fmt::Display for Location {
 }
 
 impl Location {
-    crate fn is_memory_ref(&self) -> bool {
-        matches!(self, Self::NumberedOffset { .. } | Self::NamedOffset(..))
+    crate fn is_stack_offset(&self) -> bool {
+        matches!(self, Self::NumberedOffset { .. } | Self::NamedOffset(..) | Self::Indexable { .. })
     }
 
     crate fn is_float_reg(&self) -> bool {

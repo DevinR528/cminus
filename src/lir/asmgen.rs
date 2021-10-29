@@ -145,8 +145,13 @@ impl<'ctx> CodeGen<'ctx> {
         self.used_regs.insert(reg)
     }
 
-    fn clear_regs_except(&mut self, loc: &Location) {
+    fn clear_regs_except(&mut self, loc: Option<&Location>) {
         self.used_regs.clear();
+        let loc = if let Some(l) = loc {
+            l
+        } else {
+            return;
+        };
         match loc {
             Location::RegAddr { reg, .. } | Location::Register(reg) => {
                 self.use_reg(*reg);
@@ -206,29 +211,68 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn deref_to_value(&self, ptr: Location, ty: &Ty) {}
 
-    fn index_arr(&self, arr: Location, exprs: &'ctx [Expr], ele_size: i64) -> Option<Location> {
+    fn index_arr(&self, arr: Location, exprs: &'ctx [Expr], ele_size: usize) -> Option<Location> {
         Some(if let Location::NumberedOffset { offset, reg } = arr {
             if let Expr::Value(Val::Int(idx)) = exprs[0] {
                 if exprs.len() == 1 {
-                    Location::Indexable { reg, end: offset, ele_idx: idx as i64, ele_size }
+                    Location::Indexable {
+                        reg,
+                        end: offset,
+                        ele_pos: offset - ((idx as usize) * ele_size),
+                    }
                 } else {
                     todo!("multidim arrays")
                 }
             } else {
-                todo!("deal with dynamic array access")
+                if exprs.len() == 1 {
+                    Location::Indexable { reg, end: offset, ele_pos: offset - (1 * ele_size) }
+                } else {
+                    todo!("multidim arrays")
+                }
             }
         } else {
             unreachable!("array must be numbered offset location")
         })
     }
 
+    fn push_stack(&mut self, ty: &Ty) {
+        match ty {
+            Ty::Array { size, ty } => {
+                for el in 0..*size {
+                    self.asm_buf.push(Instruction::Push {
+                        loc: Location::Const { val: ty.null_val() },
+                        size: ty.size(),
+                    });
+                }
+            }
+            Ty::Struct { ident, gen, def } => {
+                for field in &def.fields {
+                    self.push_stack(&field.ty)
+                }
+            }
+            Ty::Enum { ident, gen, def } => todo!(),
+            Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float => {
+                self.asm_buf.push(Instruction::Push {
+                    loc: Location::Const { val: ty.null_val() },
+                    size: 8,
+                });
+            }
+            Ty::Char | Ty::Bool => {
+                self.asm_buf.push(Instruction::Push {
+                    loc: Location::Const { val: ty.null_val() },
+                    size: 4,
+                });
+            }
+            _ => unreachable!(),
+        }
+    }
+
     fn alloc_stack(&mut self, name: &'ctx str, ty: &Ty) -> Location {
-        let size = ty.size();
+        self.push_stack(ty);
 
-        self.current_stack += size;
+        self.current_stack += ty.size();
 
-        let ref_loc =
-            Location::NumberedOffset { offset: self.current_stack as i64, reg: Register::RBP };
+        let ref_loc = Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP };
 
         self.vars.insert(name, ref_loc.clone());
         ref_loc
@@ -239,8 +283,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.current_stack += size;
 
-        let ref_loc =
-            Location::NumberedOffset { offset: self.current_stack as i64, reg: Register::RBP };
+        let ref_loc = Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP };
 
         self.asm_buf.extend_from_slice(&[Instruction::Push {
             loc: Location::Register(ARG_REGS[count]),
@@ -262,7 +305,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     unreachable!("array type must be array")
                 };
-                self.index_arr(arr, exprs, ele_size as i64)?
+                self.index_arr(arr, exprs, ele_size)?
             }
             LValue::FieldAccess { lhs, rhs } => todo!(),
         })
@@ -278,9 +321,9 @@ impl<'ctx> CodeGen<'ctx> {
                 let ele_size = if let Ty::Array { ty, .. } = ty {
                     ty.size()
                 } else {
-                    unreachable!("array type must be array")
+                    unreachable!("array type must be array {:?}", ty)
                 };
-                self.index_arr(arr, exprs, ele_size as i64)?
+                self.index_arr(arr, exprs, ele_size)?
             }
             Expr::Urnary { op, expr, ty } => todo!(),
             Expr::Binary { op, lhs, rhs, ty } => {
@@ -309,7 +352,7 @@ impl<'ctx> CodeGen<'ctx> {
                         lloc
                     };
 
-                    let rfloatloc = if rloc.is_memory_ref() {
+                    let rfloatloc = if rloc.is_stack_offset() {
                         self.asm_buf.push(Instruction::FloatMov {
                             src: rloc.clone(),
                             dst: Location::FloatReg(register),
@@ -369,7 +412,42 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
             Expr::StructInit { name, fields, def } => todo!(),
             Expr::EnumInit { ident, variant, items, def } => todo!(),
-            Expr::ArrayInit { items, ty } => todo!(),
+            Expr::ArrayInit { items, ty } => {
+                let arr_size = ty.size();
+                let ele_size = match ty {
+                    Ty::Array { ty, .. } => ty.size(),
+                    t => unreachable!("not an array for array init {:?}", t),
+                };
+
+                let lval: Option<Location> = try { self.vars.get(assigned?)?.clone() };
+
+                let start_of_arr_stack = self.current_stack;
+                for (idx, item) in items.iter().enumerate() {
+                    let rval = self.build_value(item, None).unwrap();
+
+                    if let Some(Location::NumberedOffset { offset, reg }) = lval {
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rval,
+                            // to the left hand side of `here =`
+                            dst: Location::Indexable {
+                                end: offset,
+                                ele_pos: offset - (idx * ele_size),
+                                reg,
+                            },
+                            size: ele_size,
+                        }]);
+                    } else {
+                        self.asm_buf
+                            .extend_from_slice(&[Instruction::Push { loc: rval, size: ele_size }]);
+                    }
+                }
+                if let Some(lval @ Location::NumberedOffset { .. }) = lval {
+                    lval
+                } else {
+                    Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP }
+                }
+            }
             Expr::Value(val) => Location::Const { val: val.clone() },
         })
     }
@@ -419,14 +497,21 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 } else {
                     let mut lloc = self.get_pointer(lval).unwrap();
-                    let mut rloc = self.build_value(rval, None).unwrap();
+                    let mut rloc = self.build_value(rval, lval.as_ident()).unwrap();
 
                     if let Location::Const { .. } = lloc {
                         unreachable!("{:?}", lloc);
                     }
 
-                    let ty = lval.type_of();
+                    if lloc == rloc {
+                        return;
+                    }
 
+                    let ty = lval.type_of();
+                    let size = match ty {
+                        Ty::Array { ty, .. } => ty.size(),
+                        t => t.size(),
+                    };
                     // TODO: only add 3 instructions for const -> float
                     if matches!(ty, Ty::Float) {
                         if rloc.is_float_reg() {
@@ -468,18 +553,35 @@ impl<'ctx> CodeGen<'ctx> {
                                 },
                             ]);
                         }
+                    } else if lloc.is_stack_offset() && rloc.is_stack_offset() {
+                        let register = self.free_reg();
+                        self.clear_regs_except(None);
+
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::SizedMov {
+                                // Move the value on the right hand side of the `= here`
+                                src: rloc,
+                                // to the left hand side of `here =`
+                                dst: Location::Register(register),
+                                size,
+                            },
+                            Instruction::SizedMov {
+                                // Move the value on the right hand side of the `= here`
+                                src: Location::Register(register),
+                                // to the left hand side of `here =`
+                                dst: lloc,
+                                size,
+                            },
+                        ]);
                     } else {
-                        self.clear_regs_except(&lloc);
+                        self.clear_regs_except(Some(&lloc));
 
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
                             // Move the value on the right hand side of the `= here`
                             src: rloc,
                             // to the left hand side of `here =`
                             dst: lloc,
-                            size: match ty {
-                                Ty::Array { ty, .. } => ty.size(),
-                                t => t.size(),
-                            },
+                            size,
                         }]);
                     }
                 }

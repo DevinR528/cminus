@@ -1,0 +1,42 @@
+// enums as inheritance
+
+
+enum Shape {
+    pub color: string,
+
+    Circle { rad: int },
+    Rectangle { height: int, width: int },
+}
+
+// So here is inheritance
+int area(Shape x) {
+    match x {
+        Shape::Circle { rad } -> {
+            return (rad * rad) * 3.141;
+        }
+        Shape::Rectangle { height, width } -> {
+            return height * width;
+        }
+    }
+}
+
+// This would be made really nice with variants as types
+int circumference(Shape::Circle x) {
+    return x.rad * 2 * 3.141;
+}
+
+enum Result<T, E> {
+    Ok(E), Err(E)
+}
+
+Result<int, NotInstanceError?> maybe_call_circumference(Shape x) {
+    match x {
+        circle @ Shape::Circle { .. } -> {
+            // The type of circle is `Shape::Circle`
+            return Result::Ok(circumference(circle));
+        }
+        _ -> {
+            return Result::Err(NotInstanceError);
+        }
+    }
+}
