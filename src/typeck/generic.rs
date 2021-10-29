@@ -164,28 +164,6 @@ impl<'ast> GenericResolver<'ast> {
     }
 }
 
-crate fn check_type_arg(tcxt: &mut TyCheckRes<'_, '_>, id: &str, bound: &Option<String>) -> Ty {
-    // TODO: make <int[3]> work
-    match id {
-        "bool" => Ty::Bool,
-        "int" => Ty::Int,
-        "char" => Ty::Char,
-        "float" => Ty::Float,
-        "string" => Ty::String,
-        s => tcxt
-            .struct_fields
-            .get(s)
-            .map(|(generics, _fields)| Ty::Struct { ident: s.to_owned(), gen: generics.clone() })
-            .or_else(|| {
-                tcxt.enum_fields.get(s).map(|(generics, _variants)| Ty::Enum {
-                    ident: s.to_owned(),
-                    gen: generics.clone(),
-                })
-            })
-            .unwrap_or(Ty::Generic { ident: s.to_string(), bound: bound.clone() }),
-    }
-}
-
 /// Collect all the generics to track resolved and dependent sites/uses.
 ///
 /// This also converts any type arguments to their correct type.
@@ -194,81 +172,58 @@ crate fn collect_generic_usage<'ast>(
     ty: &Ty,
     exprs: &[TyRegion<'ast>],
     stack: &mut Vec<Node>,
-) -> Ty {
+) {
     // println!("collect {:?} {:?}", ty, stack);
     match &ty {
-        Ty::Generic { ident: outer_name, bound } => {
-            let res = check_type_arg(tcxt, outer_name, bound);
-            match &res {
-                Ty::Generic { ident, bound } => {
-                    tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
-                }
-                Ty::Array { size, ty } => todo!(),
-                Ty::Struct { ident, gen } => {
-                    // TODO: whaaaaat hmm what do I do.
-                    assert!(gen.is_empty());
-                    tcxt.generic_res.push_resolved_child(stack, &res, exprs.to_vec());
-                }
-                Ty::Enum { ident: inner_name, gen } => {
-                    // TODO: whaaaaat hmm what do I do.
-                    assert!(gen.is_empty());
-                    tcxt.generic_res.push_resolved_child(stack, &res, exprs.to_vec());
-                }
-                Ty::Ptr(_) => todo!(),
-                Ty::Ref(_) => todo!(),
-                Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool => {
-                    tcxt.generic_res.push_resolved_child(stack, &res, exprs.to_vec());
-                }
-                Ty::Void => todo!(),
-                Ty::Func { ident, ret, params } => todo!(),
-            }
-            res
+        Ty::Generic { ident, bound } => {
+            tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
         }
-        Ty::Array { size, ty } => Ty::Array {
-            size: *size,
-            ty: box collect_generic_usage(tcxt, &ty.val, exprs, stack).into_spanned(DUMMY),
-        },
+        Ty::Array { size, ty } => collect_generic_usage(tcxt, &ty.val, exprs, stack),
         Ty::Struct { ident, gen } => {
             stack.push(Node::Struct(ident.clone()));
 
-            let struc = Ty::Struct {
-                ident: ident.clone(),
-                gen: gen
-                    .iter()
-                    .map(|t| collect_generic_usage(tcxt, &t.val, exprs, stack).into_spanned(DUMMY))
-                    .collect(),
-            };
-
+            if gen.iter().any(|t| t.val.has_generics()) {
+                for t in gen.iter() {
+                    if let Ty::Generic { ident, bound } = &t.val {
+                        tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
+                    } else {
+                        collect_generic_usage(tcxt, &t.val, exprs, stack);
+                    }
+                }
+            } else {
+                tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
+            }
             stack.pop();
-            struc
         }
         Ty::Enum { ident, gen } => {
             stack.push(Node::Enum(ident.clone()));
 
-            let en = Ty::Enum {
-                ident: ident.clone(),
-                gen: gen
-                    .iter()
-                    .map(|t| collect_generic_usage(tcxt, &t.val, exprs, stack).into_spanned(DUMMY))
-                    .collect(),
-            };
+            if gen.iter().any(|t| t.val.has_generics()) {
+                for t in gen.iter() {
+                    if let Ty::Generic { ident, bound } = &t.val {
+                        tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
+                    } else {
+                        collect_generic_usage(tcxt, &t.val, exprs, stack);
+                    }
+                }
+            } else {
+                tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
+            }
 
             stack.pop();
-            en
         }
         Ty::Func { ident, ret, params } => {
-            stack.push(Node::Func(ident.clone()));
+            // stack.push(Node::Func(ident.clone()));
             todo!()
         }
         Ty::Ptr(t) => {
-            Ty::Ptr(box collect_generic_usage(tcxt, &t.val, exprs, stack).into_spanned(DUMMY))
+            collect_generic_usage(tcxt, &t.val, exprs, stack);
         }
         Ty::Ref(t) => {
-            Ty::Ref(box collect_generic_usage(tcxt, &t.val, exprs, stack).into_spanned(DUMMY))
+            collect_generic_usage(tcxt, &t.val, exprs, stack);
         }
         _ => {
             tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
-            ty.clone()
         }
     }
 }

@@ -12,6 +12,8 @@ struct list<T> {
     T* buf;
 }
 
+enum foo { a, b, c }
+
 struct list<T> list<T>(int size) {
     struct list<T> x;
     x = list {
@@ -36,4 +38,9 @@ void main() {
     struct list<int> x;
     x = list::<int>(3);
     push::<int>(&x, 10);
+
+    struct list<enum foo> y;
+    y = list::<enum foo>(3);
+    // push::<enum foo>(&x, false);
+
 }

@@ -82,6 +82,8 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let res = tyck.report_errors();
     // res.unwrap();
 
+    panic!("{:#?}", tyck);
+
     let lowered = lir::lower::lower_items(&items, tyck);
 
     println!("\n\n{:#?}", lowered);

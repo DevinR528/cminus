@@ -965,7 +965,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                     Expr::Parens(box inner).into_spanned(span)
                 }
                 [(Rule::enum_init, expr)] => {
-                    let span = to_span(&expr);
+                    let span = to_span(expr);
                     match expr
                         .clone()
                         .into_inner()
