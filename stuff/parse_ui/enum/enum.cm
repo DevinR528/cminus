@@ -17,10 +17,10 @@ void main() {
     enum thing x;
     x = thing::a;
 
-    enum option<thing> y;
+    enum option<enum thing> y;
     y = option::some(x);
 
-    enum option<thing>* opt;
+    enum option<enum thing>* opt;
     opt = &y;
 
     enum option<int> num;

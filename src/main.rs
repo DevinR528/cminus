@@ -14,9 +14,14 @@
 #![allow(unused)]
 
 use std::{
+    cell::Cell,
     env,
     fs::{self, DirEntry},
     path::Path,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use pest::Parser as _;
@@ -74,27 +79,27 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!("{:?}", items);
+    // println!("{:?}", items);
 
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
 
     tyck.visit_prog(&items);
-    let res = tyck.report_errors();
+    let res = tyck.report_errors()?;
     // res.unwrap();
 
-    panic!("{:#?}", tyck);
+    println!("{:#?}", tyck);
 
     let lowered = lir::lower::lower_items(&items, tyck);
 
-    println!("\n\n{:#?}", lowered);
+    // println!("\n\n{:?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
 
-    let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
+    // let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
+    // gen.visit_prog(&lowered);
+    // gen.dump_asm();
 
-    gen.visit_prog(&lowered);
-    gen.dump_asm();
     Ok(())
 }
 
@@ -139,12 +144,13 @@ fn main() {
                 //     Ok(Ok(_)) => {}
                 //     Ok(Err(e)) => {
                 //         errors += 1;
-                //         eprintln!("{}", e)
+                //         // eprintln!("{}", e)
                 //     }
                 //     Err(e) => {
                 //         errors += 1;
-                //         // eprintln!("{}", e);
-                //         std::process::exit(1)
+                //         if let Some(e) = e.downcast_ref::<&str>() {
+                //             eprintln!("{}", e);
+                //         }
                 //     }
                 // }
                 match process_file(f) {

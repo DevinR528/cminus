@@ -1,7 +1,11 @@
 use std::{collections::HashMap, fmt, slice::SliceIndex};
 
 use crate::{
-    ast::types as ty, error::Error, lir::const_fold::Folder, typeck::TyCheckRes, visit::Visit,
+    ast::types::{self as ty, Spanned},
+    error::Error,
+    lir::const_fold::Folder,
+    typeck::TyCheckRes,
+    visit::Visit,
 };
 
 #[derive(Clone, Debug)]
@@ -257,11 +261,25 @@ impl Expr {
                 let left = Expr::lower(tyctx, fold, *lhs);
                 let right = Expr::lower(tyctx, fold, *rhs);
 
-                let def = if let Expr::Ident { ty: Ty::Struct { def, .. }, .. } = &left {
-                    def.clone()
-                } else {
-                    unreachable!("lhs of field access must be struct")
+                let def = match &left {
+                    Expr::Ident { ty: Ty::Struct { def, .. }, .. } => def.clone(),
+                    Expr::Deref { indir, expr, ty } => {
+                        let mut peel = ty;
+                        while let Ty::Ptr(t) | Ty::Ref(t) = peel {
+                            peel = t;
+                        }
+                        if let Ty::Struct { def, .. } = peel {
+                            def.clone()
+                        } else {
+                            unreachable!("lhs of field access must be struct {:?}", left)
+                        }
+                    }
+                    Expr::AddrOf(_) => todo!(),
+                    Expr::Array { ident, exprs, ty } => todo!(),
+
+                    _ => unreachable!("lhs of field access must be struct {:?}", left),
                 };
+
                 let field_idx = if let Expr::Ident { ident, .. } | Expr::Array { ident, .. } =
                     &right
                 {
@@ -379,27 +397,32 @@ pub enum LValue {
     /// Access a named variable `a`.
     Ident { ident: String, ty: Ty },
     /// Remove indirection, follow a pointer to it's pointee.
-    Deref { indir: usize, expr: Box<LValue> },
+    Deref { indir: usize, expr: Box<LValue>, ty: Ty },
     /// Access an array by index `[expr][expr]`.
     ///
     /// Each `exprs` represents an access of a dimension of the array.
     Array { ident: String, exprs: Vec<Expr>, ty: Ty },
     /// Access the fields of a struct `expr.expr.expr;`.
-    FieldAccess { lhs: Box<LValue>, rhs: Box<LValue> },
+    FieldAccess { lhs: Box<LValue>, def: Struct, rhs: Box<LValue>, field_idx: u32 },
 }
 
 impl LValue {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, ex: ty::Expression) -> Self {
         match ex.val {
-            ty::Expr::Ident(ident) => {
+            ty::Expr::Ident(ref ident) => {
                 let ty = Ty::lower(
                     tyctx,
-                    &tyctx.type_of_ident(&ident, ex.span).expect("type checking missed ident"),
+                    &tyctx.type_of_ident(&ident, ex.span).expect(&format!(
+                        "type checking missed ident {}",
+                        Error::error_with_span(tyctx, ex.span, "foolio")
+                    )),
                 );
-                LValue::Ident { ident, ty }
+                LValue::Ident { ident: ident.to_string(), ty }
             }
             ty::Expr::Deref { indir, expr } => {
-                LValue::Deref { indir, expr: box LValue::lower(tyctx, fold, *expr) }
+                let lvar = LValue::lower(tyctx, fold, *expr);
+                let ty = lvar.type_of().clone();
+                LValue::Deref { indir, expr: box lvar, ty }
             }
             ty::Expr::Array { ident, exprs } => {
                 let ty = Ty::lower(
@@ -412,10 +435,75 @@ impl LValue {
                     ty,
                 }
             }
-            ty::Expr::FieldAccess { lhs, rhs } => LValue::FieldAccess {
-                lhs: box LValue::lower(tyctx, fold, *lhs),
-                rhs: box LValue::lower(tyctx, fold, *rhs),
-            },
+            ty::Expr::FieldAccess { lhs, rhs } => {
+                let left = LValue::lower(tyctx, fold, *lhs);
+
+                let def = match &left {
+                    LValue::Ident { ty: Ty::Struct { def, .. }, .. } => def.clone(),
+                    LValue::Deref { indir, expr, ty } => {
+                        let mut peel = ty;
+                        while let Ty::Ptr(t) | Ty::Ref(t) = peel {
+                            peel = t;
+                        }
+                        if let Ty::Struct { def, .. } = peel {
+                            def.clone()
+                        } else {
+                            unreachable!("lhs of field access must be struct {:?}", left)
+                        }
+                    }
+                    LValue::Array { ident, exprs, ty } => todo!(),
+
+                    _ => unreachable!("lhs of field access must be struct {:?}", left),
+                };
+
+                let field = match &rhs.val {
+                    ty::Expr::Ident(ident) => ident,
+                    ty::Expr::Deref {
+                        expr: box Spanned { val: ty::Expr::Ident(ident), .. },
+                        ..
+                    } => ident,
+                    ty::Expr::Array { ident, exprs } => ident,
+                    _ => unreachable!("lhs of field access must be struct {:?}", left),
+                };
+                let (field_idx, right_ty) =
+                    def.fields
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, f)| {
+                            if f.ident == *field {
+                                Some((i as u32, f.ty.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .expect("field access of unknown field");
+
+                LValue::FieldAccess {
+                    lhs: box left,
+                    def,
+                    rhs: box match rhs.val.clone() {
+                        ty::Expr::Ident(ident) => LValue::Ident { ident, ty: right_ty },
+                        ty::Expr::Deref {
+                            indir,
+                            expr: box Spanned { val: ty::Expr::Ident(ident), .. },
+                        } => {
+                            let inner_ty = tyctx.type_of_ident(&ident, rhs.span).unwrap();
+                            LValue::Deref {
+                                indir,
+                                expr: box LValue::Ident { ident, ty: Ty::lower(tyctx, &inner_ty) },
+                                ty: right_ty,
+                            }
+                        }
+                        ty::Expr::Array { ident, exprs } => LValue::Array {
+                            ident,
+                            exprs: exprs.into_iter().map(|e| Expr::lower(tyctx, fold, e)).collect(),
+                            ty: right_ty,
+                        },
+                        _ => unreachable!("lhs of field access must be struct {:?}", rhs),
+                    },
+                    field_idx,
+                }
+            }
             _ => unreachable!("not valid lvalue made it all the way to lowering"),
         }
     }
@@ -423,19 +511,19 @@ impl LValue {
     crate fn as_ident(&self) -> Option<&str> {
         Some(match self {
             LValue::Ident { ident, ty } => ident,
-            LValue::Deref { indir, expr } => expr.as_ident()?,
+            LValue::Deref { indir, expr, .. } => expr.as_ident()?,
             LValue::Array { ident, .. } => ident,
-            LValue::FieldAccess { lhs, rhs } => lhs.as_ident()?,
+            LValue::FieldAccess { lhs, rhs, .. } => lhs.as_ident()?,
         })
     }
 
     crate fn type_of(&self) -> &Ty {
         match self {
-            LValue::Ident { ident, ty } => ty,
-            LValue::Deref { indir, expr } => expr.type_of(),
-            LValue::Array { ident, exprs, ty } => ty,
+            LValue::Ident { ty, .. } => ty,
+            LValue::Deref { expr, .. } => expr.type_of(),
+            LValue::Array { ty, .. } => ty,
             // TODO: do we want the final value this would affect array too
-            LValue::FieldAccess { lhs, rhs } => rhs.type_of(),
+            LValue::FieldAccess { rhs, .. } => rhs.type_of(),
         }
     }
 }
@@ -920,9 +1008,18 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
         match &item.val {
             ty::Decl::Adt(adt) => {}
             ty::Decl::Func(func) => {
-                lowered.push(Item::Func(Func::lower(&tyctx, &fold, func)));
+                if func.generics.is_empty() {
+                    lowered.push(Item::Func(Func::lower(&tyctx, &fold, func)));
+                } else {
+                    // Monomorphize
+                    for mono in tyctx.mono_func(func) {
+                        lowered.push(Item::Func(Func::lower(&tyctx, &fold, &mono)));
+                    }
+                }
             }
-            ty::Decl::Impl(imp) => todo!(),
+            ty::Decl::Impl(imp) => {
+                // TODO: anything??
+            }
             ty::Decl::Var(var) => lowered.push(Item::Var(Var {
                 ty: Ty::lower(&tyctx, &var.ty.val),
                 ident: var.ident.clone(),

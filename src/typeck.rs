@@ -16,10 +16,10 @@ use crate::{
     visit::Visit,
 };
 
-mod generic;
-mod trait_solver;
+crate mod generic;
+crate mod trait_solver;
 
-use generic::{collect_generic_usage, GenericResolver, Node};
+use generic::{GenericResolver, Node};
 use trait_solver::TraitSolve;
 
 #[derive(Debug, Default)]
@@ -82,9 +82,11 @@ crate struct TyCheckRes<'ast, 'input> {
     crate name_enum: HashMap<String, &'ast Enum>,
 
     /// Resolve generic types at the end of type checking.
-    generic_res: GenericResolver<'ast>,
+    crate generic_res: GenericResolver<'ast>,
     /// Trait resolver for checking the bounds on generic types.
     crate trait_solve: TraitSolve<'ast>,
+
+    uniq_generic_instance_id: Cell<usize>,
 
     /// Errors collected during parsing and type checking.
     errors: Vec<Error<'input>>,
@@ -111,15 +113,21 @@ impl<'input> TyCheckRes<'_, 'input> {
         Self { name, input, ..Self::default() }
     }
 
-    crate fn report_errors(&self) -> Result<(), ()> {
+    crate fn report_errors(&self) -> Result<(), &'static str> {
         if !self.errors.is_empty() {
             for e in &self.errors {
                 eprintln!("{}", e)
             }
             // println!("{:?}", self);
-            return Err(());
+            return Err("errors");
         }
         Ok(())
+    }
+
+    crate fn unique_id(&self) -> usize {
+        let x = self.uniq_generic_instance_id.get();
+        self.uniq_generic_instance_id.set(x + 1);
+        x
     }
 
     crate fn type_of_ident(&self, id: &str, span: Range) -> Option<Ty> {
@@ -268,25 +276,29 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             // Now we can check the return value incase it was generic we did that ^^
             //
             // We take from the `generics` to get bound info
-            let ty = if let Ty::Generic { ident, .. } = &func.ret.val {
-                func.generics
-                    .iter()
-                    .find(|g| matches!(&g.val, Ty::Generic {ident: id, ..} if id == ident))
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "{}",
-                            Error::error_with_span(
-                                self,
-                                func.span,
-                                &format!(
-                                    "found `{}` which is not a declared generic type",
-                                    func.ret.val
-                                ),
-                            )
-                        )
-                    })
-            } else {
-                &func.ret
+            let ty = &func.ret;
+            if func.ret.val.has_generics() {
+                self.generic_res.collect_generic_usage(
+                    &ty.val,
+                    self.unique_id(),
+                    0,
+                    &[],
+                    &mut vec![Node::Func(func.ident.clone())],
+                );
+
+                let matching_gen = func.generics
+                .iter()
+                .find(|g| matches!(&g.val, Ty::Generic {ident: id, ..} if id == ty.val.generics()[0]))
+                .is_some();
+                assert!(
+                    matching_gen,
+                    "{}",
+                    Error::error_with_span(
+                        self,
+                        func.span,
+                        &format!("found `{}` which is not a declared generic type", func.ret.val),
+                    ),
+                );
             };
 
             assert!(
@@ -363,7 +375,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             let node = Node::Func(fn_id.clone());
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
 
-            collect_generic_usage(self, &var.ty.val, &[TyRegion::VarDecl(var)], &mut stack);
+            self.generic_res.collect_generic_usage(
+                &var.ty.val,
+                self.unique_id(),
+                0,
+                &[TyRegion::VarDecl(var)],
+                &mut stack,
+            );
 
             if self
                 .var_func
@@ -400,29 +418,33 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             for Param { ident, ty, span } in params {
                 // TODO: Do this for returns and any place we match for Ty::Generic {..}
                 if ty.val.has_generics() {
-                    collect_generic_usage(self, &ty.val, &[], &mut vec![Node::Func(fn_id.clone())]);
+                    self.generic_res.collect_generic_usage(
+                        &ty.val,
+                        self.unique_id(),
+                        0,
+                        &[],
+                        &mut vec![Node::Func(fn_id.clone())],
+                    );
 
-                    self.var_func
+                    let matching_gen = self.var_func
                         .name_func
                         .get(&fn_id)
                         .and_then(|f| {
+                            // TODO: this doesn't work for something like `enum result<T, E>`
+                            // only checks `T` now
                             f.generics.iter().find(
                                 |g| matches!(&g.val, Ty::Generic {ident: id, ..} if id == ty.val.generics()[0]),
                             )
-                        })
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "{}",
-                                Error::error_with_span(
-                                    self,
-                                    *span,
-                                    &format!(
-                                        "found {} which is not a declared generic type",
-                                        ty.val
-                                    ),
-                                )
-                            )
-                        });
+                        }).is_some();
+                    assert!(
+                        matching_gen,
+                        "{}",
+                        Error::error_with_span(
+                            self,
+                            *span,
+                            &format!("found {} which is not a declared generic type", ty.val),
+                        ),
+                    );
                 };
                 if self
                     .var_func
@@ -631,13 +653,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 // Check type_args agrees
-                let mut stack = self
-                    .curr_fn
-                    .as_ref()
-                    .map(|f| Node::Func(f.to_string()))
-                    .into_iter()
-                    .chain(Some(Node::Func(ident.to_string())))
-                    .collect::<Vec<_>>();
+                let mut stack = build_stack(self, Node::Func(ident.to_string()));
+
                 let mut gen_arg_map = HashMap::new();
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
@@ -656,7 +673,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
 
-                    collect_generic_usage(self, &ty_arg.val, &arguments, &mut stack);
+                    self.generic_res.collect_generic_usage(
+                        &ty_arg.val,
+                        self.unique_id(),
+                        gen_arg_idx,
+                        &arguments,
+                        &mut stack,
+                    );
 
                     // println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
 
@@ -731,13 +754,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let trait_def =
                     self.trait_solve.traits.get(trait_).cloned().expect("trait is defined");
 
-                let mut stack = self
-                    .curr_fn
-                    .as_ref()
-                    .map(|f| Node::Func(f.to_string()))
-                    .into_iter()
-                    .chain(Some(Node::Trait(trait_.to_string())))
-                    .collect::<Vec<_>>();
+                let mut stack = build_stack(self, Node::Trait(trait_.to_string()));
 
                 let mut gen_arg_map = HashMap::new();
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
@@ -752,7 +769,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
-                    collect_generic_usage(self, &ty_arg.val, &arguments, &mut stack);
+
+                    self.generic_res.collect_generic_usage(
+                        &ty_arg.val,
+                        self.unique_id(),
+                        gen_arg_idx,
+                        &arguments,
+                        &mut stack,
+                    );
 
                     gen_arg_map.insert(gen.val.generic().to_string(), ty_arg.val.clone());
                 }
@@ -823,24 +847,19 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                     let exprty = self.expr_ty.get(&*init).cloned();
 
-                    let mut stack = self
-                        .curr_fn
-                        .as_ref()
-                        .map(|f| Node::Func(f.to_string()))
-                        .into_iter()
-                        .chain(Some(Node::Struct(name.to_string())))
-                        .collect::<Vec<_>>();
+                    let mut stack = build_stack(self, Node::Struct(name.to_string()));
 
                     // Collect the generic parameter `struct list<T> vec;` (this has to be a
                     // dependent parameter) or a type argument `struct list<int> vec;`
-                    for gen in field_ty.generics() {
+                    for (idx, gen) in field_ty.generics().into_iter().enumerate() {
                         if generics
                             .iter()
                             .any(|t| matches!(&t.val, Ty::Generic { ident: i, .. } if i == gen))
                         {
-                            collect_generic_usage(
-                                self,
+                            self.generic_res.collect_generic_usage(
                                 exprty.as_ref().unwrap(),
+                                self.unique_id(),
+                                idx,
                                 &[TyRegion::Expr(&init.val)],
                                 &mut stack,
                             );
@@ -850,6 +869,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             panic!("undefined generic type used")
                         }
                     }
+
                     // Skip checking type equivalence
                     if field_ty.has_generics() {
                         continue;
@@ -890,10 +910,17 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let (generics, variant_tys) =
                     self.enum_fields.get(ident).expect("initialized undefined enum").clone();
 
-                let found_variant = variant_tys
-                    .iter()
-                    .find(|v| v.ident == *variant)
-                    .expect("no variant found by that name");
+                let found_variant =
+                    variant_tys.iter().find(|v| v.ident == *variant).unwrap_or_else(|| {
+                        panic!(
+                            "{}",
+                            Error::error_with_span(
+                                self,
+                                expr.span,
+                                &format!("enum `{}` has no variant `{}`", ident, variant),
+                            )
+                        )
+                    });
 
                 let mut gen_args = BTreeMap::new();
                 for (idx, (item, variant_ty)) in items.iter().zip(&found_variant.types).enumerate()
@@ -904,25 +931,20 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Gather expression and expected (declared) type
                     let exprty = self.expr_ty.get(&*item).cloned();
 
-                    let mut stack = self
-                        .curr_fn
-                        .as_ref()
-                        .map(|f| Node::Func(f.to_string()))
-                        .into_iter()
-                        .chain(Some(Node::Enum(ident.to_string())))
-                        .collect::<Vec<_>>();
+                    let mut stack = build_stack(self, Node::Enum(ident.to_string()));
 
                     // Collect the generic parameter `enum option<T> opt;` (this has to be a
                     // dependent parameter) or a type argument `enum option<int>
                     // opt;`
-                    for gen in variant_ty.val.generics() {
+                    for (idx, gen) in variant_ty.val.generics().into_iter().enumerate() {
                         if generics
                             .iter()
                             .any(|t| matches!(&t.val, Ty::Generic { ident: i, .. } if i == gen))
                         {
-                            collect_generic_usage(
-                                self,
+                            self.generic_res.collect_generic_usage(
                                 exprty.as_ref().unwrap(),
+                                self.unique_id(),
+                                idx,
                                 &[TyRegion::Expr(&item.val)],
                                 &mut stack,
                             );
@@ -931,6 +953,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             panic!("undefined generic type used")
                         }
                     }
+
                     // Skip checking type equivalence
                     if variant_ty.val.has_generics() {
                         continue;
@@ -1038,6 +1061,23 @@ fn subs_type_args(ty: &Ty, ty_args: &[Type], generics: &[Type]) -> Ty {
         typ.subst_generic(gen, &ty_args[pos].val);
     }
     typ
+}
+
+/// Create a stack for the current generic location.
+///
+/// Filters out function calls with no generic arguments (remove main).
+fn build_stack(tcxt: &TyCheckRes<'_, '_>, kind: Node) -> Vec<Node> {
+    if let Some((def, ident)) =
+        tcxt.curr_fn.as_ref().and_then(|f| Some((tcxt.var_func.name_func.get(f)?, f.to_string())))
+    {
+        if def.generics.is_empty() {
+            vec![kind]
+        } else {
+            vec![Node::Func(ident), kind]
+        }
+    } else {
+        vec![kind]
+    }
 }
 
 /// The left hand side of field access has been collected calling this collects the right side.
@@ -1163,19 +1203,41 @@ crate struct StmtCheck<'v, 'ast, 'input> {
 impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
     fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
         crate::visit::walk_items(self, items);
-        // TODO: monomorphize and check results?
     }
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
             Stmt::VarDecl(_) => {}
-            // TODO: rvalues take lvalue type
             Stmt::Assign { lval, rval } => {
                 let orig_lty = lvalue_type(self.tcxt, lval, stmt.span);
                 let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
 
+                let mut stack = if let Some((def, ident)) = self
+                    .tcxt
+                    .curr_fn
+                    .as_ref()
+                    .and_then(|f| Some((self.tcxt.var_func.name_func.get(f)?, f.to_string())))
+                {
+                    if def.generics.is_empty() {
+                        vec![]
+                    } else {
+                        vec![Node::Func(ident)]
+                    }
+                } else {
+                    vec![]
+                };
+                collect_unused_enum_generics(self.tcxt, lval_ty.as_ref(), &rval.val, &mut stack);
+
                 let orig_rty = self.tcxt.expr_ty.get(rval);
                 let mut rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
+
+                check_used_enum_generics(
+                    self.tcxt,
+                    lval_ty.as_ref(),
+                    rval_ty.as_mut(),
+                    rval.span,
+                    &rval.val,
+                );
 
                 coercion(lval_ty.as_ref(), rval_ty.as_mut());
 
@@ -1283,21 +1345,19 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                     .insert(variable.to_string(), ty.clone());
                             }
 
-                            println!("{} {:?} {}", fn_name, bound_vars, arm);
-
                             for stmt in &arm.blk.stmts {
                                 self.tcxt.visit_stmt(stmt);
                                 // self.visit_stmt(stmt);
                             }
 
-                            // Remove the bound locals after the arm leaves scope
-                            for (id, _) in bound_vars.drain_filter(|_, _| true) {
-                                self.tcxt
-                                    .var_func
-                                    .func_refs
-                                    .get_mut(&fn_name)
-                                    .map(|map| map.remove(&id));
-                            }
+                            // // Remove the bound locals after the arm leaves scope
+                            // for (id, _) in bound_vars.drain_filter(|_, _| true) {
+                            //     self.tcxt
+                            //         .var_func
+                            //         .func_refs
+                            //         .get_mut(&fn_name)
+                            //         .map(|map| map.remove(&id));
+                            // }
                         }
                     }
                     Ty::Int => {
@@ -1396,9 +1456,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         ),
                     ));
                 }
-
-                // TODO: if there is no return but the fn sig says there is we don't catch this
-                // `int add(int x) {  }` would not be caught
             }
             Stmt::Exit => {
                 let func_ret_ty =
@@ -1480,6 +1537,97 @@ fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
     Some(())
 }
 
+/// Fill the unused generic types if a variant is missing some.
+///
+/// `enum result<int, string> foo = result::error("blah");` is an example of generic args that
+/// need to be filled, the expression would be typed as `result<string>`.
+fn check_used_enum_generics(
+    tcxt: &TyCheckRes<'_, '_>,
+    lty: Option<&Ty>,
+    rty: Option<&mut Ty>,
+    span: Range,
+    rexpr: &Expr,
+) {
+    let dumb = rty.as_ref().map(|x| (*x).clone());
+    let _: Option<()> = try {
+        if let (Ty::Enum { ident, gen }, Ty::Enum { ident: rid, gen: rgen }) = (lty?, rty?) {
+            let def = tcxt.name_enum.get(ident)?;
+            if let Expr::EnumInit { variant, .. } = rexpr {
+                let var = def.variants.iter().find(|v| v.ident == *variant)?;
+                let mut pos = def
+                    .generics
+                    .iter()
+                    .enumerate()
+                    // Find the generic type position that this variant needs to satisfy
+                    // `result<int, char> foo = result::error('c');` works because
+                    // the generic types of result are `generics = [int, char]` where
+                    // `error` variant generic type index is 1.
+                    .filter(|(_, g)| var.types.iter().any(|t| t.is_ty_eq(g)))
+                    .map(|(i, _)| i)
+                    .collect::<Vec<_>>();
+                if !pos.is_empty()
+                    && pos.iter().all(|idx| {
+                        rgen.iter().any(|t| {
+                            println!("{:?} == {:?}", gen[*idx].val, t.val);
+                            gen[*idx].is_ty_eq(t)
+                        })
+                    })
+                {
+                    *rgen = gen.clone();
+                } else {
+                    panic!(
+                        "{}",
+                        Error::error_with_span(
+                            tcxt,
+                            span,
+                            &format!(
+                                "enum `{}::{}` found with wrong items \nfound `{}` expected `{}`",
+                                ident,
+                                variant,
+                                dumb.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                                lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            ),
+                        )
+                    );
+                }
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+    };
+}
+
+/// If variants with generics are not constructed the generic parameters are never resolved,
+/// this will collect them based on the generic arguments in the type def.
+fn collect_unused_enum_generics<'ast>(
+    tcxt: &mut TyCheckRes<'ast, '_>,
+    lty: Option<&Ty>,
+    expr: &'ast Expr,
+    stack: &mut Vec<Node>,
+) {
+    let _: Option<()> = try {
+        if let Ty::Enum { ident, gen } = lty? {
+            stack.push(Node::Enum(ident.to_owned()));
+            for (idx, gen_arg) in gen.iter().enumerate() {
+                tcxt.generic_res.collect_generic_usage(
+                    &gen_arg.val,
+                    tcxt.unique_id(),
+                    idx,
+                    &[],
+                    stack,
+                );
+            }
+        } else {
+            return;
+        };
+    };
+}
+
+/// Type check the patterns of a match arm.
+///
+/// Panic's with a good compiler error if types do not match.
 fn check_pattern_type(
     tcxt: &TyCheckRes<'_, '_>,
     pat: &Pat,
@@ -1614,6 +1762,7 @@ fn check_pattern_type(
     }
 }
 
+/// Panic with a good compiler error if the type of `Pat` is not the correct `Binding::Value`.
 fn check_val_pat(
     tcxt: &TyCheckRes<'_, '_>,
     pat: &Pat,

@@ -1,0 +1,24 @@
+enum result<T, E> {
+    ok(T),
+    error(E),
+}
+
+void main() {
+    enum result<int, char> res;
+    res = result::ok(10);
+
+    enum result<char, int> fib;
+    fib = result::error(10);
+
+    enum result<bool, string> bif;
+    bif = result::error(false);
+
+    match res {
+        result::ok(a) -> {
+            a += 1;
+        },
+        result::error(e) -> {
+            exit;
+        }
+    }
+}

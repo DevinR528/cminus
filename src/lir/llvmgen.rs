@@ -217,12 +217,12 @@ impl<'ctx> LLVMGen<'ctx> {
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<BasicValueEnum<'ctx>> {
         Some(match expr {
             LValue::Ident { ident, ty } => self.vars.get(ident.as_str()).copied()?,
-            LValue::Deref { indir, expr } => self.get_pointer(expr)?,
+            LValue::Deref { indir, expr, .. } => self.get_pointer(expr)?,
             LValue::Array { ident, exprs, ty } => {
                 let arr_ptr = self.vars.get(ident.as_str()).copied()?;
                 self.index_arr(arr_ptr.into_pointer_value(), exprs)?.into()
             }
-            LValue::FieldAccess { lhs, rhs } => todo!(),
+            LValue::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
         })
     }
 

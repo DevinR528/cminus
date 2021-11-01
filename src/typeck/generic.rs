@@ -1,6 +1,7 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fmt,
+    hash::{Hash, Hasher},
 };
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
     typeck::TyCheckRes,
 };
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 crate enum TyRegion<'ast> {
     Expr(&'ast Expr),
     VarDecl(&'ast Var),
@@ -23,7 +24,7 @@ impl fmt::Debug for TyRegion<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 crate enum Node {
     Func(String),
     Trait(String),
@@ -49,16 +50,44 @@ impl Node {
             | Ty::Void => None,
         }
     }
+
+    crate fn name(&self) -> &str {
+        match self {
+            Node::Func(s) => s,
+            Node::Trait(s) => s,
+            Node::Enum(s) => s,
+            Node::Struct(s) => s,
+        }
+    }
 }
 
 #[derive(Debug)]
 crate struct GenericArgument<'ast> {
     crate ty: Ty,
     exprs: Vec<TyRegion<'ast>>,
+    /// The index of this arguments generic parameter.
+    ///
+    /// `<T, U, V>` here T = 0, U = 1, V = 2
+    crate gen_idx: usize,
+    instance_id: usize,
 }
 
-#[derive(Debug, Default)]
-struct GenericParam {
+impl Hash for GenericArgument<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ty.hash(state);
+        self.gen_idx.hash(state);
+    }
+}
+
+impl PartialEq for GenericArgument<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ty.eq(&other.ty) && self.gen_idx.eq(&other.gen_idx)
+    }
+}
+impl Eq for GenericArgument<'_> {}
+
+#[derive(Debug, Default, PartialEq, Eq, Hash)]
+crate struct GenericParam {
     /// Generic type name `T` to possible bounds `T: add`.
     generics: BTreeMap<String, Option<String>>,
     /// Any dependent generic types. When monomorphizing these will be walked to create
@@ -66,9 +95,28 @@ struct GenericParam {
     children: BTreeMap<Node, GenericParam>,
 }
 
+crate struct GenericParamIter<'a> {
+    curr: &'a GenericParam,
+    stack: VecDeque<(&'a Node, &'a GenericParam)>,
+}
+
+impl<'a> Iterator for GenericParamIter<'a> {
+    type Item = &'a Node;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.stack.extend(self.curr.children.iter());
+        let next = self.stack.pop_front()?;
+        self.curr = next.1;
+        Some(next.0)
+    }
+}
+
 impl GenericParam {
     fn insert_generic(&mut self, id: &str, bound: Option<String>) {
         self.generics.insert(id.to_owned(), bound);
+    }
+
+    crate fn child_iter(&self) -> GenericParamIter {
+        GenericParamIter { curr: self, stack: VecDeque::new() }
     }
 }
 
@@ -77,7 +125,7 @@ crate struct GenericResolver<'ast> {
     /// Mapping of region name (function or struct/enum) to the generic arguments.
     ///
     /// These are the "resolved" types.
-    node_resolved: BTreeMap<Node, Vec<GenericArgument<'ast>>>,
+    node_resolved: BTreeMap<Node, HashMap<usize, HashSet<GenericArgument<'ast>>>>,
     /// Mapping of declaration (function or struct or enum) to the generic parameter.
     ///
     /// If a function defines a dependent statement that relationship is preserved.
@@ -92,12 +140,15 @@ crate struct GenericResolver<'ast> {
 }
 
 impl<'ast> GenericResolver<'ast> {
-    crate fn get_resolved(&self, node: &Node, idx: usize) -> Option<&GenericArgument<'_>> {
-        if let Some(res) = self.node_resolved.get(node) {
-            res.get(idx)
-        } else {
-            None
-        }
+    crate fn resolved(
+        &self,
+        node: &Node,
+    ) -> Option<&HashMap<usize, HashSet<GenericArgument<'ast>>>> {
+        self.node_resolved.get(node)
+    }
+
+    crate fn generic_dag(&self) -> &BTreeMap<Node, GenericParam> {
+        &self.item_generics
     }
 
     crate fn has_generics(&self, node: &Node) -> bool {
@@ -150,80 +201,100 @@ impl<'ast> GenericResolver<'ast> {
 
         let mut generics = BTreeMap::new();
         generics.insert(id.to_owned(), bound);
+
         gp.children
             .insert(iter.next()?.clone(), GenericParam { generics, children: BTreeMap::default() })
     }
 
-    crate fn push_resolved_child(&mut self, stack: &[Node], ty: &Ty, exprs: Vec<TyRegion<'ast>>) {
+    crate fn push_resolved_child(
+        &mut self,
+        stack: &[Node],
+        ty: &Ty,
+        instance_id: usize,
+        gen_idx: usize,
+        exprs: Vec<TyRegion<'ast>>,
+    ) {
         for node in stack.iter().rev() {
             self.node_resolved
+                // The map of function name -> indexed generic arguments
                 .entry(node.clone())
                 .or_default()
-                .push(GenericArgument { ty: ty.clone(), exprs: exprs.clone() });
+                // The map of indexed generic args -> each generic mono substitution
+                .entry(gen_idx)
+                .or_default()
+                // insert the argument
+                .insert(GenericArgument {
+                    ty: ty.clone(),
+                    exprs: exprs.clone(),
+                    gen_idx,
+                    instance_id,
+                });
         }
     }
-}
 
-/// Collect all the generics to track resolved and dependent sites/uses.
-///
-/// This also converts any type arguments to their correct type.
-crate fn collect_generic_usage<'ast>(
-    tcxt: &mut TyCheckRes<'ast, '_>,
-    ty: &Ty,
-    exprs: &[TyRegion<'ast>],
-    stack: &mut Vec<Node>,
-) {
-    // println!("collect {:?} {:?}", ty, stack);
-    match &ty {
-        Ty::Generic { ident, bound } => {
-            tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
-        }
-        Ty::Array { size, ty } => collect_generic_usage(tcxt, &ty.val, exprs, stack),
-        Ty::Struct { ident, gen } => {
-            stack.push(Node::Struct(ident.clone()));
-
-            if gen.iter().any(|t| t.val.has_generics()) {
-                for t in gen.iter() {
-                    if let Ty::Generic { ident, bound } = &t.val {
-                        tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
-                    } else {
-                        collect_generic_usage(tcxt, &t.val, exprs, stack);
-                    }
-                }
-            } else {
-                tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
+    /// Collect all the generics to track resolved and dependent sites/uses.
+    ///
+    /// This also converts any type arguments to their correct type.
+    crate fn collect_generic_usage(
+        &mut self,
+        ty: &Ty,
+        instance_id: usize,
+        gen_idx: usize,
+        exprs: &[TyRegion<'ast>],
+        stack: &mut Vec<Node>,
+    ) {
+        // println!("collect {:?} {:?}", ty, stack);
+        match &ty {
+            Ty::Generic { ident, bound } => {
+                self.push_generic_child(stack, exprs, ident, bound.clone());
             }
-            stack.pop();
-        }
-        Ty::Enum { ident, gen } => {
-            stack.push(Node::Enum(ident.clone()));
-
-            if gen.iter().any(|t| t.val.has_generics()) {
-                for t in gen.iter() {
-                    if let Ty::Generic { ident, bound } = &t.val {
-                        tcxt.generic_res.push_generic_child(stack, exprs, ident, bound.clone());
-                    } else {
-                        collect_generic_usage(tcxt, &t.val, exprs, stack);
-                    }
-                }
-            } else {
-                tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
+            Ty::Array { size, ty } => {
+                self.collect_generic_usage(&ty.val, instance_id, gen_idx, exprs, stack)
             }
+            Ty::Struct { ident: struct_name, gen } => {
+                if gen.iter().any(|t| t.val.has_generics()) {
+                    for t in gen.iter() {
+                        if let Ty::Generic { ident, bound } = &t.val {
+                            stack.push(Node::Struct(struct_name.clone()));
+                            self.push_generic_child(stack, exprs, ident, bound.clone());
+                        } else {
+                            self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
+                        }
+                    }
+                } else {
+                    self.push_resolved_child(stack, ty, instance_id, gen_idx, exprs.to_vec());
+                }
+                stack.pop();
+            }
+            Ty::Enum { ident: enum_name, gen } => {
+                if gen.iter().any(|t| t.val.has_generics()) {
+                    for t in gen.iter() {
+                        if let Ty::Generic { ident, bound } = &t.val {
+                            stack.push(Node::Enum(enum_name.clone()));
+                            self.push_generic_child(stack, exprs, ident, bound.clone());
+                        } else {
+                            self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
+                        }
+                    }
+                } else {
+                    self.push_resolved_child(stack, ty, instance_id, gen_idx, exprs.to_vec());
+                }
 
-            stack.pop();
-        }
-        Ty::Func { ident, ret, params } => {
-            // stack.push(Node::Func(ident.clone()));
-            todo!()
-        }
-        Ty::Ptr(t) => {
-            collect_generic_usage(tcxt, &t.val, exprs, stack);
-        }
-        Ty::Ref(t) => {
-            collect_generic_usage(tcxt, &t.val, exprs, stack);
-        }
-        _ => {
-            tcxt.generic_res.push_resolved_child(stack, ty, exprs.to_vec());
+                stack.pop();
+            }
+            Ty::Func { ident, ret, params } => {
+                // stack.push(Node::Func(ident.clone()));
+                todo!()
+            }
+            Ty::Ptr(t) => {
+                self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
+            }
+            Ty::Ref(t) => {
+                self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
+            }
+            _ => {
+                self.push_resolved_child(stack, ty, instance_id, gen_idx, exprs.to_vec());
+            }
         }
     }
 }

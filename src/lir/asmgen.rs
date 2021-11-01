@@ -348,7 +348,7 @@ impl<'ctx> CodeGen<'ctx> {
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<Location> {
         Some(match expr {
             LValue::Ident { ident, ty } => self.vars.get(ident.as_str())?.clone(),
-            LValue::Deref { indir, expr } => todo!(),
+            LValue::Deref { indir, expr, ty } => todo!(),
             LValue::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident.as_str())?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty {
@@ -358,7 +358,7 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.index_arr(arr, exprs, ele_size)?
             }
-            LValue::FieldAccess { lhs, rhs } => todo!(),
+            LValue::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
         })
     }
 

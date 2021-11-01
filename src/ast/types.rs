@@ -298,6 +298,7 @@ impl Ty {
         }
     }
 
+    /// Substitute a
     crate fn subst_generic(&mut self, generic: &str, subs: &Ty) {
         match self {
             t @ Ty::Generic { .. } if generic == t.generic() => {
@@ -718,7 +719,7 @@ pub struct Impl {
 /// A variable declaration.
 ///
 /// `struct foo x;` or int x[]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Var {
     pub ty: Type,
     pub ident: String,
