@@ -655,6 +655,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 // Check type_args agrees
                 let mut stack = build_stack(self, Node::Func(ident.to_string()));
 
+                let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::new();
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
@@ -675,7 +676,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                     self.generic_res.collect_generic_usage(
                         &ty_arg.val,
-                        self.unique_id(),
+                        gen_arg_set_id,
                         gen_arg_idx,
                         &arguments,
                         &mut stack,
@@ -756,6 +757,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 let mut stack = build_stack(self, Node::Trait(trait_.to_string()));
 
+                let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::new();
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     let gen = &trait_def.generics[gen_arg_idx];
@@ -772,7 +774,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                     self.generic_res.collect_generic_usage(
                         &ty_arg.val,
-                        self.unique_id(),
+                        gen_arg_set_id,
                         gen_arg_idx,
                         &arguments,
                         &mut stack,
@@ -836,6 +838,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let (generics, field_tys) =
                     self.struct_fields.get(name).expect("initialized undefined struct").clone();
 
+                let gen_arg_set_id = self.unique_id();
                 let mut gen_args = BTreeMap::new();
                 for FieldInit { ident, init, .. } in fields {
                     self.visit_expr(init);
@@ -851,14 +854,17 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                     // Collect the generic parameter `struct list<T> vec;` (this has to be a
                     // dependent parameter) or a type argument `struct list<int> vec;`
-                    for (idx, gen) in field_ty.generics().into_iter().enumerate() {
-                        if generics
-                            .iter()
-                            .any(|t| matches!(&t.val, Ty::Generic { ident: i, .. } if i == gen))
-                        {
+                    for gen in field_ty.generics().into_iter() {
+                        if let Some(idx) = generics.iter().enumerate().find_map(|(i, t)| {
+                            if matches!(&t.val, Ty::Generic { ident: id, .. } if id == gen) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        }) {
                             self.generic_res.collect_generic_usage(
                                 exprty.as_ref().unwrap(),
-                                self.unique_id(),
+                                gen_arg_set_id,
                                 idx,
                                 &[TyRegion::Expr(&init.val)],
                                 &mut stack,
@@ -888,7 +894,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
                 }
 
-                // TODO: fix pushing type as still generic when it is type arguments now
                 if self
                     .expr_ty
                     .insert(
@@ -896,8 +901,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         Ty::Struct {
                             ident: name.clone(),
                             gen: generics
-                                .into_iter()
-                                .map(|g| gen_args.remove(g.val.generic()).unwrap_or(g))
+                                .iter()
+                                .filter_map(|g| gen_args.remove(g.val.generic()))
                                 .collect(),
                         },
                     )
@@ -936,18 +941,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Collect the generic parameter `enum option<T> opt;` (this has to be a
                     // dependent parameter) or a type argument `enum option<int>
                     // opt;`
-                    for (idx, gen) in variant_ty.val.generics().into_iter().enumerate() {
-                        if generics
-                            .iter()
-                            .any(|t| matches!(&t.val, Ty::Generic { ident: i, .. } if i == gen))
-                        {
-                            self.generic_res.collect_generic_usage(
-                                exprty.as_ref().unwrap(),
-                                self.unique_id(),
-                                idx,
-                                &[TyRegion::Expr(&item.val)],
-                                &mut stack,
-                            );
+                    for gen in variant_ty.val.generics().into_iter() {
+                        if let Some(idx) = generics.iter().enumerate().find_map(|(i, t)| {
+                            if matches!(&t.val, Ty::Generic { ident: id, .. } if id == gen) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        }) {
+                            // We do NOT call `generic_res.collect_generic_usage(..)` because we
+                            // will only collect a variants worth of generic type info.
+                            // We instead wait for the assignment to collect all generic arguments.
+
                             gen_args.insert(gen, exprty.clone().unwrap().into_spanned(DUMMY));
                         } else {
                             panic!("undefined generic type used")
@@ -1226,7 +1231,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 } else {
                     vec![]
                 };
-                collect_unused_enum_generics(self.tcxt, lval_ty.as_ref(), &rval.val, &mut stack);
+                collect_enum_generics(self.tcxt, lval_ty.as_ref(), &rval.val, &mut stack);
 
                 let orig_rty = self.tcxt.expr_ty.get(rval);
                 let mut rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
@@ -1437,15 +1442,38 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO: display trait?
             }
             Stmt::Ret(expr) => {
-                let ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
+                let mut ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
                 let mut name = String::new();
-                let func_ret_ty = self.tcxt.var_func.get(expr.span).and_then(|fname| {
+                let mut func_ret_ty = self.tcxt.var_func.get(expr.span).and_then(|fname| {
                     name = fname.to_string();
-                    self.tcxt.var_func.name_func.get(fname).map(|f| &f.ret.val)
+                    self.tcxt.var_func.name_func.get(fname).map(|f| f.ret.val.clone())
                 });
                 self.tcxt.var_func.func_return.insert(name);
 
-                if !ret_ty.as_ref().is_ty_eq(&func_ret_ty) {
+                let mut stack = if let Some((def, ident)) = self
+                    .tcxt
+                    .curr_fn
+                    .as_ref()
+                    .and_then(|f| Some((self.tcxt.var_func.name_func.get(f)?, f.to_string())))
+                {
+                    if def.generics.is_empty() {
+                        vec![]
+                    } else {
+                        vec![Node::Func(ident)]
+                    }
+                } else {
+                    vec![]
+                };
+                collect_enum_generics(self.tcxt, ret_ty.as_ref(), &expr.val, &mut stack);
+                check_used_enum_generics(
+                    self.tcxt,
+                    func_ret_ty.as_ref(),
+                    ret_ty.as_mut(),
+                    expr.span,
+                    &expr.val,
+                );
+
+                if !ret_ty.as_ref().is_ty_eq(&func_ret_ty.as_ref()) {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
@@ -1566,12 +1594,7 @@ fn check_used_enum_generics(
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>();
                 if !pos.is_empty()
-                    && pos.iter().all(|idx| {
-                        rgen.iter().any(|t| {
-                            println!("{:?} == {:?}", gen[*idx].val, t.val);
-                            gen[*idx].is_ty_eq(t)
-                        })
-                    })
+                    && pos.iter().all(|idx| rgen.iter().any(|t| gen.get(*idx).is_ty_eq(&Some(t))))
                 {
                     *rgen = gen.clone();
                 } else {
@@ -1601,7 +1624,7 @@ fn check_used_enum_generics(
 
 /// If variants with generics are not constructed the generic parameters are never resolved,
 /// this will collect them based on the generic arguments in the type def.
-fn collect_unused_enum_generics<'ast>(
+fn collect_enum_generics<'ast>(
     tcxt: &mut TyCheckRes<'ast, '_>,
     lty: Option<&Ty>,
     expr: &'ast Expr,
@@ -1610,12 +1633,13 @@ fn collect_unused_enum_generics<'ast>(
     let _: Option<()> = try {
         if let Ty::Enum { ident, gen } = lty? {
             stack.push(Node::Enum(ident.to_owned()));
+            let gen_param_id = tcxt.unique_id();
             for (idx, gen_arg) in gen.iter().enumerate() {
                 tcxt.generic_res.collect_generic_usage(
                     &gen_arg.val,
-                    tcxt.unique_id(),
+                    gen_param_id,
                     idx,
-                    &[],
+                    &[TyRegion::Expr(expr)],
                     stack,
                 );
             }

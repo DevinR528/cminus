@@ -1,0 +1,13 @@
+enum two<X, Y> {
+    one(X),
+    more(Y),
+}
+
+enum two<A, B> test<A, B>(B hmm) {
+    return two::more(hmm);
+}
+
+void main() {
+    enum two<int, char> x;
+    x = test::<int, char>('c');
+}

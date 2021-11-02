@@ -1,0 +1,12 @@
+enum result<T, E> {
+    ok(T),
+    error(E),
+}
+
+void main() {
+    enum result<int, char> res;
+    res = result::ok(10);
+
+    enum result<char, int> fib;
+    fib = result::error(10);
+}

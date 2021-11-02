@@ -76,12 +76,15 @@ impl Hash for GenericArgument<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.ty.hash(state);
         self.gen_idx.hash(state);
+        self.instance_id.hash(state);
     }
 }
 
 impl PartialEq for GenericArgument<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.ty.eq(&other.ty) && self.gen_idx.eq(&other.gen_idx)
+        self.ty.eq(&other.ty)
+            && self.gen_idx.eq(&other.gen_idx)
+            && self.instance_id.eq(&other.instance_id)
     }
 }
 impl Eq for GenericArgument<'_> {}
@@ -215,14 +218,14 @@ impl<'ast> GenericResolver<'ast> {
         exprs: Vec<TyRegion<'ast>>,
     ) {
         for node in stack.iter().rev() {
-            self.node_resolved
+            let mut set = self
+                .node_resolved
                 // The map of function name -> indexed generic arguments
                 .entry(node.clone())
                 .or_default()
                 // The map of indexed generic args -> each generic mono substitution
                 .entry(gen_idx)
                 .or_default()
-                // insert the argument
                 .insert(GenericArgument {
                     ty: ty.clone(),
                     exprs: exprs.clone(),
