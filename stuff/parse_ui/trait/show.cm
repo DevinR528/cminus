@@ -11,16 +11,12 @@ impl display<int> {
 
 impl display<bool> {
     void display(bool item) {
-        char x;
-        x = item; // error: type mismatch, since it is known here
         write(item);
         // print bool
     }
 }
 
 void show<T: display>(T item) {
-    int x;
-    x = item; // error: type mismatch
     <<T>::display>(item);
 }
 

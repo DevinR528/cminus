@@ -11,7 +11,7 @@
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
-#![allow(unused)]
+#![allow(unused, clippy::if_then_panic)]
 
 use std::{
     cell::Cell,
@@ -91,7 +91,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let lowered = lir::lower::lower_items(&items, tyck);
 
-    // println!("\n\n{:?}", lowered);
+    println!("{:?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
@@ -170,6 +170,61 @@ fn main() {
                 );
                 std::process::exit(1)
             }
+        }
+    }
+}
+
+fn dump_lowered_items(lowered: Vec<lir::lower::Item>) {
+    for item in lowered {
+        match item {
+            lir::lower::Item::Adt(lir::lower::Adt::Struct(adt)) => {
+                println!(
+                    "struct {}<{}>",
+                    adt.ident,
+                    adt.generics.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                );
+            }
+            lir::lower::Item::Adt(lir::lower::Adt::Enum(adt)) => {
+                println!(
+                    "enum {}<{}>",
+                    adt.ident,
+                    adt.generics.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                );
+            }
+            lir::lower::Item::Func(f) => {
+                println!(
+                    "fn {}<{}>({}) -> {}",
+                    f.ident,
+                    f.generics.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                    f.params.iter().map(|p| p.ty.to_string()).collect::<Vec<_>>().join(", "),
+                    f.ret,
+                );
+            }
+            lir::lower::Item::Trait(t) => {
+                println!(
+                    "trait {}<{}>({}) -> {}",
+                    t.ident,
+                    t.generics.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                    t.method
+                        .function()
+                        .params
+                        .iter()
+                        .map(|p| p.ty.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    t.method.function().ret,
+                );
+            }
+            lir::lower::Item::Impl(i) => {
+                println!(
+                    "impl {}<{}>({}) -> {}",
+                    i.ident,
+                    i.type_arguments.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                    i.method.params.iter().map(|p| p.ty.to_string()).collect::<Vec<_>>().join(", "),
+                    i.method.ret,
+                );
+            }
+            lir::lower::Item::Var(v) => todo!(),
         }
     }
 }

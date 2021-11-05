@@ -298,7 +298,7 @@ impl Ty {
         }
     }
 
-    /// Substitute a
+    /// Substitute a generic parameter with a concrete type.
     crate fn subst_generic(&mut self, generic: &str, subs: &Ty) {
         match self {
             t @ Ty::Generic { .. } if generic == t.generic() => {
@@ -678,6 +678,19 @@ pub struct Func {
     /// All the crap the function does.
     pub stmts: Vec<Statement>,
     pub span: Range,
+}
+
+impl Default for Func {
+    fn default() -> Self {
+        Self {
+            ret: Ty::Void.into_spanned(DUMMY),
+            ident: String::new(),
+            generics: vec![],
+            params: vec![],
+            stmts: vec![],
+            span: DUMMY,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

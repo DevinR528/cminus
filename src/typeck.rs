@@ -72,6 +72,9 @@ crate struct TyCheckRes<'ast, 'input> {
     /// A mapping of expression -> type, this is the main inference table.
     crate expr_ty: HashMap<&'ast Expression, Ty>,
 
+    /// A mapping of identities -> val, this is how const folding keeps track of `Expr::Ident`s.
+    crate consts: HashMap<&'ast str, &'ast Val>,
+
     /// A mapping of struct name to the fields of that struct.
     struct_fields: HashMap<String, (Vec<Type>, Vec<Field>)>,
     /// A mapping of enum name to the variants of that enum.
@@ -286,10 +289,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     &mut vec![Node::Func(func.ident.clone())],
                 );
 
-                let matching_gen = func.generics
-                .iter()
-                .find(|g| matches!(&g.val, Ty::Generic {ident: id, ..} if id == ty.val.generics()[0]))
-                .is_some();
+                let matching_gen = func.generics.iter().any(
+                    |g| matches!(&g.val, Ty::Generic {ident: id, ..} if id == ty.val.generics()[0]),
+                );
                 assert!(
                     matching_gen,
                     "{}",
@@ -1256,6 +1258,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             orig_lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
                     ));
+                } else if let Expr::Ident(id) = &lval.val {
+                    if let Expr::Value(val) = &rval.val {
+                        self.tcxt.consts.insert(id, &val.val);
+                    }
                 }
             }
             Stmt::Call(expr) => {

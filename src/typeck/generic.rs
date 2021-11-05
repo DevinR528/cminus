@@ -69,7 +69,7 @@ crate struct GenericArgument<'ast> {
     ///
     /// `<T, U, V>` here T = 0, U = 1, V = 2
     crate gen_idx: usize,
-    instance_id: usize,
+    crate instance_id: usize,
 }
 
 impl Hash for GenericArgument<'_> {

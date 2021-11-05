@@ -6,6 +6,7 @@ use crate::{
         Adt, BinOp, Binding, Block, Expr, Field, FieldInit, Func, Generic, Impl, MatchArm, Param,
         Pat, Stmt, Struct, Trait, Ty, UnOp, Val, Var, Variant,
     },
+    typeck::TyCheckRes,
     visit::VisitMut,
 };
 
@@ -13,16 +14,24 @@ use crate::{
 crate struct Folder;
 
 impl Expr {
-    crate fn const_fold(&mut self) {
+    crate fn const_fold(&mut self, tcxt: &TyCheckRes<'_, '_>) {
         match self {
-            Expr::Ident { .. } => {
-                // TODO: this could be checked if it was instantiated with a const value
+            Expr::Ident { ident, .. } => {
+                // TODO: damn, this needs to track mutations to work
+                // int a, b;
+                // a = 5;
+                // a += 1;
+                // b = a + 1; ERROR ERROR a is now 6 but we think its 5
+
+                // if let Some(v) = tcxt.consts.get(ident.as_str()) {
+                //     *self = Expr::Value(Val::lower((*v).clone()));
+                // }
             }
             Expr::AddrOf(expr) | Expr::Deref { expr, .. } => {
-                expr.const_fold();
+                expr.const_fold(tcxt);
             }
             Expr::Parens(expr) => {
-                expr.const_fold();
+                expr.const_fold(tcxt);
                 if let ex @ Expr::Value(_) = &**expr {
                     *self = ex.clone();
                 }
@@ -59,40 +68,40 @@ impl Expr {
                 }
             }
             Expr::Binary { op, lhs, rhs, .. } => {
-                lhs.const_fold();
-                rhs.const_fold();
+                lhs.const_fold(tcxt);
+                rhs.const_fold(tcxt);
                 if let Some(folded) = eval_binop(op, lhs, rhs) {
                     *self = folded;
                 }
             }
             Expr::Array { exprs, .. } => {
                 for expr in exprs {
-                    expr.const_fold();
+                    expr.const_fold(tcxt);
                 }
             }
             Expr::Call { ident, args, type_args, .. } => {
                 for expr in args {
-                    expr.const_fold();
+                    expr.const_fold(tcxt);
                 }
             }
             Expr::TraitMeth { trait_, args, type_args, .. } => {
                 for expr in args {
-                    expr.const_fold();
+                    expr.const_fold(tcxt);
                 }
             }
             Expr::StructInit { name, fields, .. } => {
                 for expr in fields {
-                    expr.init.const_fold();
+                    expr.init.const_fold(tcxt);
                 }
             }
             Expr::EnumInit { items, .. } => {
                 for expr in items {
-                    expr.const_fold();
+                    expr.const_fold(tcxt);
                 }
             }
             Expr::ArrayInit { items, .. } => {
                 for expr in items {
-                    expr.const_fold();
+                    expr.const_fold(tcxt);
                 }
             }
             Expr::Value(_) | Expr::FieldAccess { .. } => {}
@@ -269,7 +278,7 @@ macro_rules! expr {
 #[test]
 fn fold_expr() {
     let mut ex = expr!(5 + 9 * 9 - 3);
-    ex.const_fold();
+    ex.const_fold(&TyCheckRes::default());
 
     assert!(matches!(
         ex,

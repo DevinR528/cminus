@@ -283,15 +283,13 @@ pub trait VisitMut<'ast>: Sized {
         walk_mut_var(self, var)
     }
 
-    fn visit_params(&mut self, params: &mut [Param]) {
+    fn visit_params(&mut self, params: &'ast mut [Param]) {
         walk_mut_params(self, params)
     }
 
     fn visit_generics(&mut self, generics: &mut [Type]) {}
 
-    fn visit_ty(&mut self, ty: &Type) {
-        // done
-    }
+    fn visit_ty(&mut self, ty: &mut Type) {}
 
     fn visit_stmt(&mut self, stmt: &'ast mut Statement) {
         walk_mut_stmt(self, stmt)
@@ -331,7 +329,7 @@ crate fn walk_mut_func<'ast, V: VisitMut<'ast>>(visit: &mut V, func: &'ast mut F
     // visit.visit_ident(ident);
     // visit.visit_generics(generics);
     visit.visit_params(params);
-    // visit.visit_ty(ret);
+    visit.visit_ty(ret);
     for stmt in stmts {
         visit.visit_stmt(stmt);
     }
@@ -378,10 +376,10 @@ crate fn walk_mut_adt<'ast, V: VisitMut<'ast>>(visit: &mut V, adt: &'ast mut Adt
 
 crate fn walk_mut_var<'ast, V: VisitMut<'ast>>(visit: &mut V, var: &'ast mut Var) {
     // visit.visit_ident(&var.ident);
-    visit.visit_ty(&var.ty);
+    visit.visit_ty(&mut var.ty);
 }
 
-crate fn walk_mut_params<'ast, V: VisitMut<'ast>>(visit: &mut V, params: &[Param]) {
+crate fn walk_mut_params<'ast, V: VisitMut<'ast>>(visit: &mut V, params: &'ast mut [Param]) {
     for Param { ident, ty, .. } in params {
         visit.visit_ty(ty);
     }

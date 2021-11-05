@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    iter,
+    fmt, iter,
 };
 
 use crate::{
@@ -17,7 +17,7 @@ crate struct ToUnify<'ast> {
     chain: Vec<Node>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 crate struct TraitSolve<'ast> {
     /// The name of the trait to the declaration.
     crate traits: BTreeMap<String, &'ast Trait>,
@@ -26,6 +26,22 @@ crate struct TraitSolve<'ast> {
     /// This would consider `trait foo<int, bool>` distinct from `trait foo<bool, int>`.
     crate impls: BTreeMap<String, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
     proof_stack: BTreeMap<String, Vec<ToUnify<'ast>>>,
+}
+
+impl fmt::Debug for TraitSolve<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TraitSolver")
+            .field(
+                "impls",
+                &self
+                    .impls
+                    .iter()
+                    .map(|(k, map)| (k, map.keys().collect::<Vec<_>>()))
+                    .collect::<Vec<_>>(),
+            )
+            .field("proof_stack", &self.proof_stack)
+            .finish()
+    }
 }
 
 impl<'ast> TraitSolve<'ast> {
@@ -55,6 +71,13 @@ impl<'ast> TraitSolve<'ast> {
             .entry(trait_.to_owned())
             .or_default()
             .push(ToUnify { solution_stack, chain: chain.into_iter().flatten().collect() });
+    }
+
+    crate fn has_impl(&self, imp: &str, to_unify: &Ty) -> bool {
+        if let Some(imp) = self.impls.get(imp) {
+            // imp.
+        }
+        false
     }
 
     crate fn unify(&self, tcxt: &TyCheckRes<'_, '_>, bound_generic: &Ty, to_unify: &Ty) -> bool {

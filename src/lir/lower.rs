@@ -1,11 +1,11 @@
 use std::{collections::HashMap, fmt, slice::SliceIndex};
 
 use crate::{
-    ast::types::{self as ty, Spanned},
+    ast::types::{self as ty, Spanned, DUMMY},
     error::Error,
-    lir::const_fold::Folder,
+    lir::{const_fold::Folder, mono::TraitRes},
     typeck::TyCheckRes,
-    visit::Visit,
+    visit::{Visit, VisitMut},
 };
 
 #[derive(Clone, Debug)]
@@ -18,7 +18,7 @@ pub enum Val {
 }
 
 impl Val {
-    fn lower(val: ty::Val) -> Self {
+    crate fn lower(val: ty::Val) -> Self {
         match val {
             ty::Val::Float(v) => Val::Float(v),
             ty::Val::Int(v) => Val::Int(v),
@@ -243,7 +243,11 @@ impl Expr {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut ex: ty::Expression) -> Self {
         let ty = Ty::lower(
             tyctx,
-            tyctx.expr_ty.get(&ex).expect(&format!("could not find this expression {:?}", ex)),
+            &tyctx.expr_ty.get(&ex).cloned().unwrap_or_else(|| match &mut ex.val {
+                ty::Expr::Call { ident, args, type_args } => type_args.remove(0).val,
+                ty::Expr::TraitMeth { trait_, args, type_args } => type_args.remove(0).val,
+                _ => unreachable!("only trait impl calls and function calls are replaced"),
+            }),
         );
 
         let mut lowered = match ex.val {
@@ -305,7 +309,7 @@ impl Expr {
             },
             ty::Expr::Parens(expr) => Expr::Parens(box Expr::lower(tyctx, fold, *expr)),
             ty::Expr::Call { ident, args, type_args } => {
-                if type_args.iter().any(|arg| arg.val.has_generics()) {}
+                if type_args.iter().any(|arg| !arg.val.has_generics()) {}
 
                 let func = tyctx.var_func.name_func.get(&ident).expect("function is defined");
                 Expr::Call {
@@ -318,6 +322,12 @@ impl Expr {
             ty::Expr::TraitMeth { trait_, args, type_args } => {
                 if type_args.iter().any(|arg| arg.val.has_generics()) {}
 
+                let f = ty::Impl {
+                    ident: trait_.clone(),
+                    type_arguments: type_args.clone(),
+                    method: ty::Func::default(),
+                    span: DUMMY,
+                };
                 let func = tyctx
                     .trait_solve
                     .impls
@@ -325,7 +335,8 @@ impl Expr {
                     .expect("function is defined")
                     .get(&type_args.iter().map(|t| &t.val).collect::<Vec<_>>())
                     .cloned()
-                    .expect("types have impl");
+                    .unwrap_or(&f);
+                // .expect(&format!("types have impl {:?}", tyctx.trait_solve));
                 Expr::TraitMeth {
                     trait_,
                     args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
@@ -362,7 +373,7 @@ impl Expr {
         };
         // Evaluate any constant expressions, since this is the lowered Expr we don't have to worry
         // about destroying spans or hashes since we gather types for everything
-        lowered.const_fold();
+        lowered.const_fold(tyctx);
         lowered
     }
 
@@ -598,6 +609,55 @@ impl Ty {
     }
 }
 
+impl fmt::Display for Ty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Ty::Array { size, ty } => {
+                if let Ty::Array { ty: t, size: s } = &**ty {
+                    write!(f, "{}[{}][{}]", t, size, s)
+                } else {
+                    write!(f, "{}[{}]", ty, size)
+                }
+            }
+            Ty::Generic { ident, .. } => write!(f, "<{}>", ident),
+            Ty::Struct { ident, gen, .. } => write!(
+                f,
+                "struct {}{}",
+                ident,
+                if gen.is_empty() {
+                    "".to_owned()
+                } else {
+                    format!(
+                        "<{}>",
+                        gen.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                },
+            ),
+            Ty::Enum { ident, gen, .. } => write!(
+                f,
+                "enum {}{}",
+                ident,
+                if gen.is_empty() {
+                    "".to_owned()
+                } else {
+                    format!(
+                        "<{}>",
+                        gen.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                }
+            ),
+            Ty::Ptr(t) => write!(f, "&{}", t),
+            Ty::Ref(t) => write!(f, "*{}", t),
+            Ty::String => write!(f, "string"),
+            Ty::Int => write!(f, "int"),
+            Ty::Char => write!(f, "char"),
+            Ty::Float => write!(f, "float"),
+            Ty::Bool => write!(f, "bool"),
+            Ty::Void => write!(f, "void"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Param {
     pub ty: Ty,
@@ -722,8 +782,8 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, s: ty::Statement) -> Self {
-        match s.val {
+    fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut s: ty::Statement) -> Self {
+        match s.val.clone() {
             ty::Stmt::VarDecl(var) => Stmt::VarDecl(
                 var.iter()
                     .map(|var| Var {
@@ -758,6 +818,18 @@ impl Stmt {
                 val: ty::Expr::TraitMeth { trait_, args, type_args },
                 ..
             }) => {
+                if type_args.iter().all(|arg| !arg.val.has_generics()) {
+                    TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
+                        .visit_stmt(&mut s);
+                }
+
+                // TODO: here and in Expr, not sure how OK this is...
+                let f = ty::Impl {
+                    ident: trait_.clone(),
+                    type_arguments: type_args.clone(),
+                    method: ty::Func::default(),
+                    span: DUMMY,
+                };
                 let func = tyctx
                     .trait_solve
                     .impls
@@ -765,15 +837,13 @@ impl Stmt {
                     .expect("function is defined")
                     .get(&type_args.iter().map(|t| &t.val).collect::<Vec<_>>())
                     .cloned()
-                    .expect("types have impl");
+                    .unwrap_or(&f);
+
                 Stmt::TraitMeth {
                     expr: TraitMethExpr {
-                        trait_,
-                        args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
-                        type_args: type_args
-                            .into_iter()
-                            .map(|a| Ty::lower(tyctx, &a.val))
-                            .collect(),
+                        trait_: trait_.clone(),
+                        args: args.iter().map(|a| Expr::lower(tyctx, fold, a.clone())).collect(),
+                        type_args: type_args.iter().map(|a| Ty::lower(tyctx, &a.val)).collect(),
                     },
                     def: Impl::lower(tyctx, fold, func),
                 }
@@ -908,7 +978,7 @@ impl Func {
             ret: Ty::lower(tyctx, &func.ret.val),
             ident: func.ident.clone(),
             params: func.params.iter().map(|p| Param::lower(tyctx, p.clone())).collect(),
-            generics: vec![], // TODO
+            generics: func.generics.iter().map(|g| Ty::lower(tyctx, &g.val)).collect(),
             stmts: func.stmts.iter().map(|s| Stmt::lower(tyctx, fold, s.clone())).collect(),
         }
     }
@@ -918,6 +988,13 @@ impl Func {
 pub enum TraitMethod {
     Default(Func),
     NoBody(Func),
+}
+
+impl TraitMethod {
+    crate fn function(&self) -> &Func {
+        let (Self::Default(f) | Self::NoBody(f)) = (self);
+        f
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1017,8 +1094,8 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
                     }
                 }
             }
-            ty::Decl::Impl(imp) => {
-                // TODO: anything??
+            ty::Decl::Impl(i) => {
+                lowered.push(Item::Func(Func::lower(&tyctx, &fold, &i.method)));
             }
             ty::Decl::Var(var) => lowered.push(Item::Var(Var {
                 ty: Ty::lower(&tyctx, &var.ty.val),
