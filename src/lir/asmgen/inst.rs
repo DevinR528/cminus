@@ -125,7 +125,7 @@ impl fmt::Display for Location {
                 Val::Float(v) => write!(f, "${}", (*v as f32).to_bits()),
                 Val::Int(v) => write!(f, "${}", v),
                 Val::Char(v) => write!(f, "${}", v),
-                Val::Bool(v) => write!(f, "${}", v),
+                Val::Bool(v) => write!(f, "${}", if *v { 1 } else { 0 }),
                 Val::Str(v) => write!(f, "${}", v),
             },
             Location::Label(label) => label.fmt(f),
@@ -167,6 +167,37 @@ pub enum Global {
 }
 
 #[derive(Clone, Debug)]
+pub enum CondFlag {
+    Overflow,
+    NoOverflow,
+    Below,
+    Carry,
+    NotAboveEq,
+    AboveEq,
+    NotBelow,
+    NoCarry,
+    Eq,
+    Zero,
+}
+
+impl ToString for CondFlag {
+    fn to_string(&self) -> String {
+        match self {
+            CondFlag::Overflow => "o".into(),
+            CondFlag::NoOverflow => "no".into(),
+            CondFlag::Below => "b".into(),
+            CondFlag::Carry => "c".into(),
+            CondFlag::NotAboveEq => "nae".into(),
+            CondFlag::AboveEq => "ae".into(),
+            CondFlag::NotBelow => "nb".into(),
+            CondFlag::NoCarry => "nc".into(),
+            CondFlag::Eq => "e".into(),
+            CondFlag::Zero => "z".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Instruction {
     /// Start a new block with the given label.
     Label(String),
@@ -198,6 +229,12 @@ pub enum Instruction {
     Mov {
         src: Location,
         dst: Location,
+    },
+    /// Conditionally move source to destination.
+    CondMov {
+        src: Location,
+        dst: Location,
+        cond: CondFlag,
     },
     /// Move source float to destination float.
     FloatMov {
@@ -235,6 +272,11 @@ pub enum Instruction {
     },
     /// Convert single precision float to double for printf.
     Cvt {
+        src: Location,
+        dst: Location,
+    },
+    /// Compare `src` to `dst`.
+    Cmp {
         src: Location,
         dst: Location,
     },

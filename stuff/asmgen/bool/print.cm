@@ -1,0 +1,5 @@
+void main() {
+    bool x;
+    x = false;
+    write(x);
+}

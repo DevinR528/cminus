@@ -65,9 +65,9 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                     self.visit_expr(arg);
                 }
                 let ident = format!(
-                    "{}<{}>",
+                    "{}{}",
                     trait_,
-                    self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
+                    self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
                 );
                 x = Some(ty::Expr::Call { ident, args, type_args: vec![i.method.ret.clone()] });
             } else {
@@ -110,9 +110,9 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                     self.visit_expr(arg);
                 }
                 let ident = format!(
-                    "{}<{}>",
+                    "{}{}",
                     trait_,
-                    self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
+                    self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
                 );
                 x = Some(ty::Stmt::Call(
                     ty::Expr::Call { ident, args, type_args: vec![i.method.ret.clone()] }
@@ -183,7 +183,6 @@ fn sub_mono_generic(
 
     let mut functions = vec![func.clone(); number_of_specializations];
     for (idx, mut generics) in map.into_values().enumerate() {
-        functions[idx].ident.push('<');
         generics.sort_by(|a, b| a.gen_idx.cmp(&b.gen_idx));
 
         for (i, gen) in generics.iter().enumerate() {
@@ -191,11 +190,7 @@ fn sub_mono_generic(
             // Replace ALL uses of this generic and remove the generic parameters
             let mut subs = GenSubstitution { generic: &gen_param.val, ty: &gen.ty, tcxt };
             subs.visit_func(&mut functions[idx]);
-            if i != generics.len() - 1 {
-                functions[idx].ident.push(',');
-            }
         }
-        functions[idx].ident.push('>');
 
         let mut trait_res =
             TraitRes { type_args: generics.iter().map(|g| &g.ty).collect::<Vec<_>>(), tcxt };

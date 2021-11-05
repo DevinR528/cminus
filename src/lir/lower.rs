@@ -603,7 +603,7 @@ impl Ty {
     crate fn null_val(&self) -> Val {
         match self {
             Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Float => Val::Int(1),
-            Ty::Char | Ty::Bool => Val::Char(0 as char),
+            Ty::Char | Ty::Bool => Val::Int(1),
             _ => unreachable!("generic type should be monomorphized cannot create null value"),
         }
     }
@@ -751,16 +751,24 @@ pub struct TraitMethExpr {
     pub type_args: Vec<Ty>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Stmt {
     /// Variable declaration `int x;`
     VarDecl(Vec<Var>),
     /// Assignment `lval = rval;`
     Assign { lval: LValue, rval: Expr },
     /// A call statement `call(arg1, arg2)`
-    Call { expr: CallExpr, def: Func },
+    Call {
+        expr: CallExpr,
+        #[dbg_ignore]
+        def: Func,
+    },
     /// A trait method call `<<T>::trait>(args)`
-    TraitMeth { expr: TraitMethExpr, def: Impl },
+    TraitMeth {
+        expr: TraitMethExpr,
+        #[dbg_ignore]
+        def: Impl,
+    },
     /// If statement `if (expr) { stmts }`
     If { cond: Expr, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`

@@ -91,14 +91,14 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let lowered = lir::lower::lower_items(&items, tyck);
 
-    println!("{:?}", lowered);
+    println!("{:#?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
 
-    // let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
-    // gen.visit_prog(&lowered);
-    // gen.dump_asm();
+    let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
+    gen.visit_prog(&lowered);
+    gen.dump_asm();
 
     Ok(())
 }

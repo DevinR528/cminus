@@ -203,14 +203,13 @@ fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
                 ident: ident.as_str().to_string(),
                 method: {
                     let mut f = parse_func(func.clone().into_inner());
-                    f.ident.push_str(&format!(
-                        "<{}>",
-                        type_arguments
+                    f.ident.push_str(
+                        &type_arguments
                             .iter()
                             .map(|t| t.val.to_string())
                             .collect::<Vec<_>>()
-                            .join(",")
-                    ));
+                            .join("0"),
+                    );
                     f
                 },
                 type_arguments,

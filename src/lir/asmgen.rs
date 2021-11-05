@@ -9,7 +9,7 @@ use std::{
 use crate::{
     error::Error,
     lir::{
-        asmgen::inst::{FloatRegister, USABLE_FLOAT_REGS},
+        asmgen::inst::{CondFlag, FloatRegister, USABLE_FLOAT_REGS},
         lower::{
             Adt, BinOp, CallExpr, Enum, Expr, Func, Impl, Item, LValue, MatchArm, Stmt, Struct, Ty,
             Val, Var,
@@ -33,7 +33,9 @@ const STATIC_PREAMBLE: &str = r#"
 .str_wformat: .string "%s\n"
 .char_rformat: .string "%c"
 .int_rformat: .string "%d"
-.float_rformat: .string "%f""#;
+.float_rformat: .string "%f"
+.bool_true: .string "true"
+.bool_false: .string "false""#;
 
 #[derive(Debug)]
 crate struct CodeGen<'ctx> {
@@ -81,15 +83,20 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::Jmp(_) => todo!(),
             Instruction::Leave => "    leave".to_owned(),
             Instruction::Ret => "    ret".to_owned(),
+            Instruction::Cmp { src, dst } => format!("    cmp {}, {}", src, dst),
             Instruction::Mov { src, dst } => format!("    mov {}, {}", src, dst),
             Instruction::FloatMov { src, dst } => format!("    movsd {}, {}", src, dst),
             Instruction::SizedMov { src, dst, size } => {
                 let mnemonic = mnemonic_from(*size);
                 format!("    mov{} {}, {}", mnemonic, src, dst)
             }
+            Instruction::CondMov { src, dst, cond } => {
+                format!("    cmov{} {}, {}", cond.to_string(), src, dst)
+            }
             Instruction::Load { src, dst, size } => {
-                let mnemonic = mnemonic_from(*size);
-                format!("    lea{} {}, {}", mnemonic, src, dst)
+                // TODO: re-enable
+                // let mnemonic = mnemonic_from(*size);
+                format!("    leaq {}, {}", src, dst)
             }
             Instruction::Alloca { amount, reg } => format!("    sub ${}, %{}", amount, reg),
             Instruction::Math { src, dst, op } => {
@@ -234,48 +241,46 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             // TODO: add bounds checking maybe
             // Dynamic indexing
+            } else if exprs.len() == 1 {
+                let rval = self.build_value(&exprs[0], None)?;
+
+                let tmpidx = self.free_reg();
+                let array_reg = self.free_reg();
+                // movq -16(%rbp), %rdx // array
+                // movq -8(%rbp), %rbx // index
+                // addq %rdx, %rbx
+                // movq (%rbx), %rax
+                self.asm_buf.extend_from_slice(&[
+                    Instruction::SizedMov {
+                        src: rval,
+                        dst: Location::Register(tmpidx),
+                        size: exprs[0].type_of().size(),
+                    },
+                    Instruction::SizedMov {
+                        src: arr,
+                        dst: Location::Register(array_reg),
+                        size: ele_size,
+                    },
+                    Instruction::Math {
+                        src: Location::Const { val: Val::Int(ele_size as isize) },
+                        dst: Location::Register(tmpidx),
+                        op: BinOp::Mul,
+                    },
+                    Instruction::Math {
+                        src: Location::Register(tmpidx),
+                        dst: Location::Register(array_reg),
+                        op: BinOp::Add,
+                    },
+                    Instruction::SizedMov {
+                        src: Location::NumberedOffset { offset: 0, reg: array_reg },
+                        dst: Location::Register(tmpidx),
+                        size: ele_size,
+                    },
+                ]);
+
+                Location::Register(tmpidx)
             } else {
-                if exprs.len() == 1 {
-                    let rval = self.build_value(&exprs[0], None)?;
-
-                    let tmpidx = self.free_reg();
-                    let array_reg = self.free_reg();
-                    // movq -16(%rbp), %rdx // array
-                    // movq -8(%rbp), %rbx // index
-                    // addq %rdx, %rbx
-                    // movq (%rbx), %rax
-                    self.asm_buf.extend_from_slice(&[
-                        Instruction::SizedMov {
-                            src: rval,
-                            dst: Location::Register(tmpidx),
-                            size: exprs[0].type_of().size(),
-                        },
-                        Instruction::SizedMov {
-                            src: arr,
-                            dst: Location::Register(array_reg),
-                            size: ele_size,
-                        },
-                        Instruction::Math {
-                            src: Location::Const { val: Val::Int(ele_size as isize) },
-                            dst: Location::Register(tmpidx),
-                            op: BinOp::Mul,
-                        },
-                        Instruction::Math {
-                            src: Location::Register(tmpidx),
-                            dst: Location::Register(array_reg),
-                            op: BinOp::Add,
-                        },
-                        Instruction::SizedMov {
-                            src: Location::NumberedOffset { offset: 0, reg: array_reg },
-                            dst: Location::Register(tmpidx),
-                            size: ele_size,
-                        },
-                    ]);
-
-                    Location::Register(tmpidx)
-                } else {
-                    todo!("multidim arrays")
-                }
+                todo!("multidim arrays")
             }
         } else {
             unreachable!("array must be numbered offset location")
@@ -468,7 +473,32 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::Call(Location::Label(ident.to_owned())));
                 Location::Register(Register::RAX)
             }
-            Expr::TraitMeth { trait_, args, type_args, def } => todo!(),
+            Expr::TraitMeth { trait_, args, type_args, def } => {
+                for (idx, arg) in args.iter().enumerate() {
+                    let val = self.build_value(arg, None).unwrap();
+                    let ty = arg.type_of();
+                    if let Ty::Array { size, ty } = ty {
+                        self.asm_buf.push(Instruction::Load {
+                            src: val,
+                            dst: Location::Register(ARG_REGS[idx]),
+                            size: ty.size(),
+                        });
+                    } else {
+                        self.asm_buf.push(Instruction::SizedMov {
+                            src: val,
+                            dst: Location::Register(ARG_REGS[idx]),
+                            size: arg.type_of().size(),
+                        });
+                    }
+                }
+                let ident = format!(
+                    "{}{}",
+                    trait_,
+                    type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
+                );
+                self.asm_buf.push(Instruction::Call(Location::Label(ident)));
+                Location::Register(Register::RAX)
+            }
             Expr::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
             Expr::StructInit { name, fields, def } => todo!(),
             Expr::EnumInit { ident, variant, items, def } => todo!(),
@@ -678,6 +708,43 @@ impl<'ctx> CodeGen<'ctx> {
                         },
                         Instruction::Load {
                             src: Location::NamedOffset(fmt_str),
+                            dst: Location::Register(Register::RDI),
+                            size,
+                        },
+                        Instruction::Call(Location::Label("printf".to_owned())),
+                    ]);
+                } else if matches!(expr_type, Ty::Bool) {
+                    let free_reg = self.free_reg();
+                    // TODO: print string "true" or "false"
+                    // have globals and
+
+                    // leaq .bool_false(%rip), %rsi
+                    // cmp $1, %bool_loc
+                    // leaq .bool_true(%rip), %freereg
+                    // cmovz %freereg, %rsi
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::Load {
+                            src: Location::NamedOffset(".bool_false".into()),
+                            dst: Location::Register(Register::RSI),
+                            size,
+                        },
+                        Instruction::Cmp { src: Location::Const { val: Val::Int(1) }, dst: val },
+                        Instruction::Load {
+                            src: Location::NamedOffset(".bool_true".into()),
+                            dst: Location::Register(free_reg),
+                            size: 8,
+                        },
+                        Instruction::CondMov {
+                            src: Location::Register(free_reg),
+                            dst: Location::Register(Register::RSI),
+                            cond: CondFlag::Eq,
+                        },
+                        Instruction::Mov {
+                            src: Location::Const { val: Val::Int(0) },
+                            dst: Location::Register(Register::RAX),
+                        },
+                        Instruction::Load {
+                            src: Location::NamedOffset(".str_wformat".into()),
                             dst: Location::Register(Register::RDI),
                             size,
                         },
