@@ -14,14 +14,9 @@
 #![allow(clippy::if_then_panic)]
 
 use std::{
-    cell::Cell,
     env,
-    fs::{self, DirEntry},
+    fs::{self},
     path::Path,
-    sync::{
-        atomic::{AtomicU8, Ordering},
-        Arc, Mutex,
-    },
 };
 
 use pest::Parser as _;
@@ -35,10 +30,7 @@ mod visit;
 
 use ast::parse::parse_decl;
 
-use crate::{
-    lir::visit::Visit as IrVisit,
-    visit::{Visit, VisitMut},
-};
+use crate::{lir::visit::Visit as IrVisit, visit::Visit};
 
 /// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
 /// into a struct with a `CMinusParser::parse` method.
@@ -84,7 +76,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
 
     tyck.visit_prog(&items);
-    let res = tyck.report_errors()?;
+    let _res = tyck.report_errors()?;
     // res.unwrap();
 
     // println!("{:#?}", tyck);
@@ -98,7 +90,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
     gen.visit_prog(&lowered);
-    gen.dump_asm();
+    gen.dump_asm()?;
 
     Ok(())
 }
@@ -132,7 +124,7 @@ fn main() {
             eprintln!("`{}`", payload);
         };
     }));
-    std::panic::take_hook();
+    let _ = std::panic::take_hook();
 
     match args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice() {
         [] => panic!("need to specify file to compile"),
@@ -174,6 +166,7 @@ fn main() {
     }
 }
 
+#[allow(dead_code)]
 fn dump_lowered_items(lowered: Vec<lir::lower::Item>) {
     for item in lowered {
         match item {
@@ -224,7 +217,7 @@ fn dump_lowered_items(lowered: Vec<lir::lower::Item>) {
                     i.method.ret,
                 );
             }
-            lir::lower::Item::Var(v) => todo!(),
+            lir::lower::Item::Var(_v) => todo!(),
         }
     }
 }

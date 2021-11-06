@@ -1,14 +1,14 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fmt, iter,
+    collections::{BTreeMap, HashMap},
+    fmt,
 };
 
 use crate::{
-    ast::types::{Expr, Func, Impl, Range, Spany, Trait, TraitMethod, Ty, Type, Var, DUMMY},
-    error::Error,
-    typeck::{generic::Node, TyCheckRes},
+    ast::types::{Impl, Trait, Ty},
+    typeck::generic::Node,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 crate struct ToUnify<'ast> {
     /// All the types that have to be unified and proven.
@@ -73,14 +73,14 @@ impl<'ast> TraitSolve<'ast> {
             .push(ToUnify { solution_stack, chain: chain.into_iter().flatten().collect() });
     }
 
-    crate fn has_impl(&self, imp: &str, to_unify: &Ty) -> bool {
-        if let Some(imp) = self.impls.get(imp) {
-            // imp.
-        }
-        false
-    }
+    // crate fn has_impl(&self, imp: &str, _to_unify: &Ty) -> bool {
+    //     if let Some(_imp) = self.impls.get(imp) {
+    //         // imp.
+    //     }
+    //     false
+    // }
 
-    crate fn unify(&self, tcxt: &TyCheckRes<'_, '_>, bound_generic: &Ty, to_unify: &Ty) -> bool {
-        true
-    }
+    // crate fn unify(&self, _tcxt: &TyCheckRes<'_, '_>, _bound_generic: &Ty, _to_unify: &Ty) ->
+    // bool {     true
+    // }
 }

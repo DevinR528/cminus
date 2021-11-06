@@ -1,13 +1,10 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fmt,
     hash::{Hash, Hasher},
 };
 
-use crate::{
-    ast::types::{Expr, Spany, Ty, Type, Var, DUMMY},
-    typeck::TyCheckRes,
-};
+use crate::ast::types::{Expr, Ty, Var};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 crate enum TyRegion<'ast> {
@@ -18,7 +15,7 @@ crate enum TyRegion<'ast> {
 impl fmt::Debug for TyRegion<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Expr(e) => write!(f, "Expr(..)"),
+            Self::Expr(_e) => write!(f, "Expr(..)"),
             Self::VarDecl(e) => write!(f, "VarDecl({})", e.ident),
         }
     }
@@ -33,24 +30,6 @@ crate enum Node {
 }
 
 impl Node {
-    crate fn type_parent(ty: &Ty) -> Option<Node> {
-        match ty {
-            Ty::Generic { ident, bound } => None,
-            Ty::Array { size, ty } => todo!(),
-            Ty::Struct { ident, gen } => Some(Node::Struct(ident.clone())),
-            Ty::Enum { ident, gen } => Some(Node::Enum(ident.clone())),
-            Ty::Func { ident, .. } => Some(Node::Func(ident.clone())),
-            Ty::Ptr(_)
-            | Ty::Ref(_)
-            | Ty::String
-            | Ty::Int
-            | Ty::Char
-            | Ty::Float
-            | Ty::Bool
-            | Ty::Void => None,
-        }
-    }
-
     crate fn name(&self) -> &str {
         match self {
             Node::Func(s) => s,
@@ -61,6 +40,7 @@ impl Node {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 crate struct GenericArgument<'ast> {
     crate ty: Ty,
@@ -166,18 +146,18 @@ impl<'ast> GenericResolver<'ast> {
                     .or_default()
                     .insert_generic(ident, bound.clone());
             }
-            Ty::Array { size, ty } => todo!(),
-            Ty::Struct { ident, gen } => {
+            Ty::Array { size: _, ty: _ } => todo!(),
+            Ty::Struct { ident: _, gen } => {
                 for t in gen {
                     self.collect_generic_params(node, &t.val);
                 }
             }
-            Ty::Enum { ident, gen } => {
+            Ty::Enum { ident: _, gen } => {
                 for t in gen {
                     self.collect_generic_params(node, &t.val);
                 }
             }
-            Ty::Func { ident, ret, params } => {
+            Ty::Func { ident: _, ret, params } => {
                 if let Ty::Generic { .. } = &**ret {
                     self.collect_generic_params(node, ret);
                 }
@@ -194,13 +174,13 @@ impl<'ast> GenericResolver<'ast> {
     fn push_generic_child(
         &mut self,
         stack: &[Node],
-        expr: &[TyRegion<'ast>],
+        _expr: &[TyRegion<'ast>],
         id: &str,
         bound: Option<String>,
     ) -> Option<GenericParam> {
         // println!("GEN STACK {:?} {:?}\n", stack, expr);
         let mut iter = stack.iter();
-        let mut gp = self.item_generics.get_mut(iter.next()?)?;
+        let gp = self.item_generics.get_mut(iter.next()?)?;
 
         let mut generics = BTreeMap::new();
         generics.insert(id.to_owned(), bound);
@@ -218,7 +198,7 @@ impl<'ast> GenericResolver<'ast> {
         exprs: Vec<TyRegion<'ast>>,
     ) {
         for node in stack.iter().rev() {
-            let mut set = self
+            let _set = self
                 .node_resolved
                 // The map of function name -> indexed generic arguments
                 .entry(node.clone())
@@ -251,7 +231,7 @@ impl<'ast> GenericResolver<'ast> {
             Ty::Generic { ident, bound } => {
                 self.push_generic_child(stack, exprs, ident, bound.clone());
             }
-            Ty::Array { size, ty } => {
+            Ty::Array { size: _, ty } => {
                 self.collect_generic_usage(&ty.val, instance_id, gen_idx, exprs, stack)
             }
             Ty::Struct { ident: struct_name, gen } => {
@@ -285,7 +265,7 @@ impl<'ast> GenericResolver<'ast> {
 
                 stack.pop();
             }
-            Ty::Func { ident, ret, params } => {
+            Ty::Func { ident: _, ret: _, params: _ } => {
                 // stack.push(Node::Func(ident.clone()));
                 todo!()
             }
@@ -300,23 +280,6 @@ impl<'ast> GenericResolver<'ast> {
             }
         }
     }
-}
-
-struct Foo<T> {
-    it: T,
-}
-
-enum Bar<T> {
-    Var(T),
-    Other,
-}
-
-fn func<T>(it: T) {}
-
-fn func2<T>(it: T) -> Bar<T> {
-    let x: Bar<T> = Bar::Var(it);
-    let y = func2(10);
-    x
 }
 
 /*

@@ -5,8 +5,8 @@ use crate::{
         precedence::{Assoc, Operator, PrecClimber},
         types::{
             Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field,
-            FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement,
-            Stmt, Struct, Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
+            FieldInit, Func, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt,
+            Struct, Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
         },
     },
     Rule,
@@ -221,7 +221,6 @@ fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
 }
 
 fn parse_param(param: Pair<Rule>) -> Param {
-    let span = to_span(&param);
     let Var { ty, ident, span } = parse_var_decl(param.into_inner()).remove(0);
     Param { ty, ident, span }
 }
@@ -516,7 +515,7 @@ fn parse_match_arm_pat(pat: Expr, span: Range) -> Pattern {
                 })
                 .collect(),
         },
-        Expr::StructInit { name, fields } => todo!(),
+        Expr::StructInit { .. } => todo!(),
         Expr::ArrayInit { items } => Pat::Array {
             size: items.len(),
             items: items
@@ -541,7 +540,6 @@ fn parse_match_arm_pat(pat: Expr, span: Range) -> Pattern {
 }
 
 fn parse_generics(generics: Pair<Rule>) -> Vec<Type> {
-    let span = to_span(&generics);
     generics
         .into_inner()
         .map(|g| (g.as_rule(), g))
@@ -666,9 +664,8 @@ fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> 
     }
 }
 
-fn build_recursive_pointer_ty(mut indir: usize, base_ty: Type, outer_span: Range) -> Type {
+fn build_recursive_pointer_ty(indir: usize, base_ty: Type, outer_span: Range) -> Type {
     if indir > 0 {
-        let span = base_ty.span;
         Ty::Ptr(box build_recursive_pointer_ty(indir - 1, base_ty, outer_span))
             .into_spanned(outer_span)
     } else {
@@ -766,11 +763,11 @@ fn parse_expr(expr: Pair<Rule>) -> Expression {
         Operator::new(Rule::DOT, Assoc::Left) | Operator::new(Rule::ARROW, Assoc::Left),
     ]);
 
-    consume(expr, &climber, true)
+    consume(expr, &climber)
 }
 
-fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Expression {
-    let primary = |p: Pair<'_, _>| consume(p, climber, false);
+fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
+    let primary = |p: Pair<'_, _>| consume(p, climber);
     let infix = |lhs: Expression, op: Pair<Rule>, rhs: Expression| {
         let span = lhs.span.start..rhs.span.end;
         let expr = match op.as_rule() {

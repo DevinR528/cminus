@@ -1,15 +1,14 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt,
-    slice::SliceIndex,
 };
 
 use crate::{
     ast::types::{
-        Adt, BinOp, Binding, Block, Decl, Enum, Expr, Expression, Field, FieldInit, Func, Generic,
-        Impl, MatchArm, Param, Pat, Range, Spany, Statement, Stmt, Struct, Trait, Ty, Type,
-        TypeEquality, UnOp, Val, Value, Var, Variant, DUMMY,
+        Adt, BinOp, Binding, Block, Decl, Enum, Expr, Expression, Field, FieldInit, Func, Impl,
+        MatchArm, Param, Pat, Range, Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality,
+        UnOp, Val, Var, Variant, DUMMY,
     },
     error::Error,
     typeck::generic::TyRegion,
@@ -53,7 +52,6 @@ impl VarInFunction<'_> {
 }
 #[derive(Default)]
 crate struct TyCheckRes<'ast, 'input> {
-    inc: usize,
     /// The name of the file being checked.
     crate name: &'input str,
     /// The content of the file as a string.
@@ -212,7 +210,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .var_func
             .unsed_vars
             .iter()
-            .filter(|(id, (_, used))| !used.get())
+            .filter(|(_id, (_, used))| !used.get())
             .map(|(id, (sp, _))| (id, *sp))
             .collect::<Vec<_>>();
         unused.sort_by(|a, b| a.1.cmp(&b.1));
@@ -480,7 +478,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     /// gather the nested scope from binding in match arms.
     ///
     /// See `StmtCheck::visit_stmt` for what happens.
-    fn visit_match_arm(&mut self, arms: &'ast [MatchArm]) {}
+    fn visit_match_arm(&mut self, _arms: &'ast [MatchArm]) {}
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         crate::visit::walk_stmt(self, stmt);
@@ -662,7 +660,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 // Check type_args agrees
-                let mut stack = build_stack(self, Node::Func(ident.to_string()));
+                let stack = build_stack(self, Node::Func(ident.to_string()));
 
                 let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::new();
@@ -679,7 +677,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .params
                         .iter()
                         .enumerate()
-                        .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
+                        .filter(|(_i, p)| p.ty.val.is_ty_eq(&gen.val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
 
@@ -777,7 +775,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .params
                         .iter()
                         .enumerate()
-                        .filter(|(i, p)| p.ty.val.is_ty_eq(&gen.val))
+                        .filter(|(_i, p)| p.ty.val.is_ty_eq(&gen.val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
 
@@ -897,7 +895,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             &format!(
                                 "field initialized with mismatched type\nfound `{}` expected `{}`",
                                 exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                                field_ty.to_string(),
+                                field_ty,
                             ),
                         ));
                     }
@@ -937,7 +935,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     });
 
                 let mut gen_args = BTreeMap::new();
-                for (idx, (item, variant_ty)) in items.iter().zip(&found_variant.types).enumerate()
+                for (_idx, (item, variant_ty)) in items.iter().zip(&found_variant.types).enumerate()
                 {
                     // Visit inner expressions
                     self.visit_expr(item);
@@ -945,13 +943,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Gather expression and expected (declared) type
                     let exprty = self.expr_ty.get(&*item).cloned();
 
-                    let mut stack = build_stack(self, Node::Enum(ident.to_string()));
+                    let _stack = build_stack(self, Node::Enum(ident.to_string()));
 
                     // Collect the generic parameter `enum option<T> opt;` (this has to be a
                     // dependent parameter) or a type argument `enum option<int>
                     // opt;`
                     for gen in variant_ty.val.generics().into_iter() {
-                        if let Some(idx) = generics.iter().enumerate().find_map(|(i, t)| {
+                        if let Some(_idx) = generics.iter().enumerate().find_map(|(i, t)| {
                             if matches!(&t.val, Ty::Generic { ident: id, .. } if id == gen) {
                                 Some(i)
                             } else {
@@ -980,7 +978,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             &format!(
                                 "enum tuple initialized with mismatched type\nfound `{}` expected `{}`",
                                 exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                                variant_ty.val.to_string(),
+                                variant_ty.val,
                             ),
                         ));
                     }
@@ -1011,7 +1009,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let arr_ty = items.chunks(2).fold(
                     Option::<Ty>::None,
                     // this might be overkill, but `{1 + 1, 2, call()}` all need to be checked
-                    |mut ty, arr| match arr {
+                    |ty, arr| match arr {
                         [] => None,
                         [a] if ty.is_none() => self.expr_ty.get(a).cloned(),
                         [a] => fold_ty(self, ty.as_ref(), self.expr_ty.get(a), &BinOp::Add, a.span),
@@ -1104,7 +1102,7 @@ fn check_field_access<'ast>(
 ) -> Option<Ty> {
     let lhs_ty = tcxt.expr_ty.get(lhs);
 
-    let (name, (generics, fields)) =
+    let (name, (_generics, fields)) =
         if let Some(Ty::Struct { ident, .. }) = lhs_ty.and_then(|t| t.resolve()) {
             (
                 ident.clone(),
@@ -1154,7 +1152,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
     match &expr.val {
         Expr::Ident(id) => {
             let ty = tcxt.type_of_ident(id, expr.span).or_else(|| tcxt.expr_ty.get(expr).cloned());
-            if let Some(ty) = ty {
+            if let Some(_ty) = ty {
                 // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
                 // panic!("{:?}", expr);
@@ -1168,7 +1166,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                 ));
             }
         }
-        Expr::Deref { indir, expr } => check_dereference(tcxt, expr),
+        Expr::Deref { indir: _, expr } => check_dereference(tcxt, expr),
         Expr::AddrOf(expr) => check_dereference(tcxt, expr),
         Expr::FieldAccess { lhs, rhs } => {
             check_dereference(tcxt, lhs);
@@ -1178,7 +1176,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
             let ty = tcxt
                 .type_of_ident(ident, expr.span)
                 .and_then(|ty| ty.index_dim(tcxt, exprs, expr.span));
-            if let Some(ty) = ty {
+            if let Some(_ty) = ty {
                 // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
                 tcxt.errors.push(Error::error_with_span(
@@ -1271,10 +1269,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     }
                 }
             }
-            Stmt::Call(expr) => {
+            Stmt::Call(_expr) => {
                 // Hmm we need something here?
             }
-            Stmt::TraitMeth(e) => {
+            Stmt::TraitMeth(_e) => {
                 // TODO:
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
@@ -1328,9 +1326,9 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                 // TODO: more
                 match match_ty.as_ref().unwrap() {
-                    Ty::Array { size, ty } => todo!(),
-                    Ty::Enum { ident, gen } => {
-                        let (generics, variant_tys) = self
+                    Ty::Array { size: _, ty: _ } => todo!(),
+                    Ty::Enum { ident, gen: _ } => {
+                        let (_generics, _variant_tys) = self
                             .tcxt
                             .enum_fields
                             .get(ident)
@@ -1439,7 +1437,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::Read(expr) => {
-                if let Some(read_ty) = self.tcxt.expr_ty.get(expr) {
+                if let Some(_read_ty) = self.tcxt.expr_ty.get(expr) {
                     // TODO: check for readable type
                 } else {
                     self.tcxt.errors.push(Error::error_with_span(
@@ -1451,17 +1449,16 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 // TODO: writable trait
                 // id must be something that can be from_string or something
             }
-            Stmt::Write { expr } => {
+            Stmt::Write { expr: _ } => {
                 // TODO: display trait?
             }
             Stmt::Ret(expr) => {
                 let mut ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
                 let mut name = String::new();
-                let mut func_ret_ty =
-                    self.tcxt.var_func.get_fn_by_span(expr.span).and_then(|fname| {
-                        name = fname.to_string();
-                        self.tcxt.var_func.name_func.get(fname).map(|f| f.ret.val.clone())
-                    });
+                let func_ret_ty = self.tcxt.var_func.get_fn_by_span(expr.span).and_then(|fname| {
+                    name = fname.to_string();
+                    self.tcxt.var_func.name_func.get(fname).map(|f| f.ret.val.clone())
+                });
                 self.tcxt.var_func.func_return.insert(name);
 
                 let mut stack = if let Some((def, ident)) = self
@@ -1556,22 +1553,22 @@ fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
             _ => return None,
         },
         Ty::Bool => match rhs? {
-            r @ Ty::Int => {
+            _r @ Ty::Int => {
                 // anything but 0 is true ..
             }
-            r @ Ty::Float => {
+            _r @ Ty::Float => {
                 // anything but 0 is true ..
             }
             _ => return None,
         },
         Ty::Ptr(_) => match rhs? {
-            r @ Ty::Int => {
+            _r @ Ty::Int => {
                 // pointer maths
             }
             _ => return None,
         },
         Ty::Ref(_) => todo!(),
-        Ty::Generic { ident, bound } => return None,
+        Ty::Generic { ident: _, bound: _ } => return None,
         // TODO: char has no coercion as of now
         // array has no coercion
         _ => return None,
@@ -1592,11 +1589,11 @@ fn check_used_enum_generics(
 ) {
     let dumb = rty.as_ref().map(|x| (*x).clone());
     let _: Option<()> = try {
-        if let (Ty::Enum { ident, gen }, Ty::Enum { ident: rid, gen: rgen }) = (lty?, rty?) {
+        if let (Ty::Enum { ident, gen }, Ty::Enum { ident: _rid, gen: rgen }) = (lty?, rty?) {
             let def = tcxt.name_enum.get(ident)?;
             if let Expr::EnumInit { variant, .. } = rexpr {
                 let var = def.variants.iter().find(|v| v.ident == *variant)?;
-                let mut pos = def
+                let pos = def
                     .generics
                     .iter()
                     .enumerate()
@@ -1675,7 +1672,7 @@ fn check_pattern_type(
 ) {
     match ty.as_ref().unwrap() {
         Ty::Array { size, ty: t } => match pat {
-            Pat::Enum { ident, variant, items } => panic!(
+            Pat::Enum { ident, variant, items: _ } => panic!(
                 "{}",
                 Error::error_with_span(
                     tcxt,
@@ -1717,9 +1714,9 @@ fn check_pattern_type(
                 }
             },
         },
-        Ty::Struct { ident, gen } => todo!(),
+        Ty::Struct { ident: _, gen: _ } => todo!(),
         Ty::Enum { ident, gen } => {
-            let (generics, variant_tys) =
+            let (_generics, variant_tys) =
                 tcxt.enum_fields.get(ident).expect("matched undefined enum").clone();
             match pat {
                 Pat::Enum { ident: pat_name, variant, items } => {
@@ -1763,7 +1760,7 @@ fn check_pattern_type(
                         check_pattern_type(tcxt, it, var_ty, span, bound_vars);
                     }
                 }
-                Pat::Array { size, items } => todo!(),
+                Pat::Array { size: _, items: _ } => todo!(),
                 Pat::Bind(bind) => match bind {
                     Binding::Wild(id) => {
                         bound_vars.insert(id.to_string(), ty.cloned().unwrap());
@@ -1810,7 +1807,7 @@ fn check_val_pat(
     bound_vars: &mut BTreeMap<String, Ty>,
 ) {
     match pat {
-        Pat::Enum { ident, variant, items } => panic!(
+        Pat::Enum { ident, variant, items: _ } => panic!(
             "{}",
             Error::error_with_span(
                 tcxt,
@@ -1818,7 +1815,7 @@ fn check_val_pat(
                 &format!("expected `{}` found `{}::{}`", expected, ident, variant)
             )
         ),
-        Pat::Array { size, items } => panic!(
+        Pat::Array { size: _, items: _ } => panic!(
             "{}",
             Error::error_with_span(tcxt, span, &format!("expected `{}` found `{}`", expected, pat))
         ),
@@ -1844,10 +1841,10 @@ fn check_val_pat(
 
 fn resolve_ty(tcxt: &TyCheckRes<'_, '_>, expr: &Expression, ty: Option<&Ty>) -> Option<Ty> {
     match &expr.val {
-        Expr::Deref { indir, expr } => ty.and_then(|t| t.resolve()),
-        Expr::Array { ident, exprs } => ty.and_then(|t| t.index_dim(tcxt, exprs, expr.span)),
+        Expr::Deref { indir: _, expr: _ } => ty.and_then(|t| t.resolve()),
+        Expr::Array { ident: _, exprs } => ty.and_then(|t| t.index_dim(tcxt, exprs, expr.span)),
         Expr::AddrOf(_) => ty.cloned(),
-        Expr::FieldAccess { lhs, rhs } => resolve_ty(tcxt, rhs, ty),
+        Expr::FieldAccess { lhs: _, rhs } => resolve_ty(tcxt, rhs, ty),
         Expr::Ident(_)
         | Expr::Urnary { .. }
         | Expr::Binary { .. }
@@ -1863,7 +1860,7 @@ fn resolve_ty(tcxt: &TyCheckRes<'_, '_>, expr: &Expression, ty: Option<&Ty>) -> 
 
 fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Range) -> Option<Ty> {
     let lval_ty = match &lval.val {
-        Expr::Ident(id) => tcxt.expr_ty.get(lval).cloned(),
+        Expr::Ident(_id) => tcxt.expr_ty.get(lval).cloned(),
         Expr::Deref { indir, expr } => {
             lvalue_type(tcxt, expr, stmt_span)
                 .map(|t| t.dereference(*indir))
@@ -1882,14 +1879,14 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     ty.index_dim(tcxt, exprs, stmt_span)
                 }
             } else {
-                panic!("{:?}", lval);
+                panic!("ICE: todo `{:?}`", lval);
                 // TODO: specific error here?
-                None
+                // None
             }
         },
         Expr::FieldAccess { lhs, rhs } => {
             if let Some(Ty::Struct { ident, .. }) = tcxt.expr_ty.get(&**lhs).and_then(|t| t.resolve()) {
-                let fields = tcxt.struct_fields.get(&ident).map(|(g, f)| f.clone()).unwrap_or_default();
+                let fields = tcxt.struct_fields.get(&ident).map(|(_g, f)| f.clone()).unwrap_or_default();
 
                 walk_field_access(tcxt, &fields, rhs)
             } else {
@@ -1970,7 +1967,7 @@ fn walk_field_access(
             if let Some(Ty::Struct { ident: name, .. }) = tcxt.type_of_ident(&id, expr.span).and_then(|t| t.resolve()) {
                 // TODO: this is kinda ugly because of the clone but it complains about tcxt otherwise
                 // or default not being impl'ed \o/
-                let fields = tcxt.struct_fields.get(&name).map(|(g, f)| f.clone()).unwrap_or_default();
+                let fields = tcxt.struct_fields.get(&name).map(|(_g, f)| f.clone()).unwrap_or_default();
                 walk_field_access(tcxt, &fields, rhs)
             } else {
                 tcxt.errors.push(Error::error_with_span(
@@ -2098,16 +2095,6 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
                     tcxt,
                     span,
                     "cannot assign to a statement, this isn't Rust ;)"
-                )
-            )
-        }
-        _ => {
-            panic!(
-                "{}",
-                Error::error_with_span(
-                    tcxt,
-                    span,
-                    &format!("not a legal operation for `{}`", ret_ty)
                 )
             )
         }

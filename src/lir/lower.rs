@@ -1,11 +1,11 @@
-use std::{collections::HashMap, fmt, slice::SliceIndex};
+use std::fmt;
 
 use crate::{
     ast::types::{self as ty, Spanned, DUMMY},
     error::Error,
     lir::{const_fold::Folder, mono::TraitRes},
     typeck::TyCheckRes,
-    visit::{Visit, VisitMut},
+    visit::VisitMut,
 };
 
 #[derive(Clone, Debug)]
@@ -38,13 +38,14 @@ impl Val {
         }
     }
 
+    #[allow(dead_code)]
     crate fn size_of(&self) -> usize {
         match self {
             Val::Float(_) => 8,
             Val::Int(_) => 8,
             Val::Char(_) => 4,
             Val::Bool(_) => 1,
-            Val::Str(s) => 8,
+            Val::Str(_) => 8,
         }
     }
 }
@@ -255,8 +256,8 @@ impl Expr {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut ex: ty::Expression) -> Self {
         let mut typ = tyctx.expr_ty.get(&ex).cloned().unwrap_or_else(|| match &mut ex.val {
             // HACK: pass the return value to lower via `type_args` see `TraitRes::visit_expr`
-            ty::Expr::Call { ident, args, type_args } => type_args.remove(0).val,
-            ty::Expr::TraitMeth { trait_, args, type_args } => type_args.remove(0).val,
+            ty::Expr::Call { ident: _, args: _, type_args } => type_args.remove(0).val,
+            ty::Expr::TraitMeth { trait_: _, args: _, type_args } => type_args.remove(0).val,
             _ => unreachable!("only trait impl calls and function calls are replaced"),
         });
 
@@ -284,7 +285,7 @@ impl Expr {
 
                 let def = match &left {
                     Expr::Ident { ty: Ty::Struct { def, .. }, .. } => def.clone(),
-                    Expr::Deref { indir, expr, ty } => {
+                    Expr::Deref { indir: _, expr: _, ty } => {
                         let mut peel = ty;
                         while let Ty::Ptr(t) | Ty::Ref(t) = peel {
                             peel = t;
@@ -296,7 +297,7 @@ impl Expr {
                         }
                     }
                     Expr::AddrOf(_) => todo!(),
-                    Expr::Array { ident, exprs, ty } => todo!(),
+                    Expr::Array { ident: _, exprs: _, ty: _ } => todo!(),
 
                     _ => unreachable!("lhs of field access must be struct {:?}", left),
                 };
@@ -396,25 +397,25 @@ impl Expr {
 
     crate fn type_of(&self) -> Ty {
         match self {
-            Expr::Ident { ident, ty } => ty.clone(),
-            Expr::Deref { indir, expr, ty } => ty.clone(),
+            Expr::Ident { ident: _, ty } => ty.clone(),
+            Expr::Deref { indir: _, expr: _, ty } => ty.clone(),
             Expr::AddrOf(expr) => expr.type_of(),
-            Expr::Array { ident, exprs, ty } => ty.clone(),
-            Expr::Urnary { op, expr, ty } => ty.clone(),
-            Expr::Binary { op, lhs, rhs, ty } => ty.clone(),
+            Expr::Array { ident: _, exprs: _, ty } => ty.clone(),
+            Expr::Urnary { op: _, expr: _, ty } => ty.clone(),
+            Expr::Binary { op: _, lhs: _, rhs: _, ty } => ty.clone(),
             Expr::Parens(expr) => expr.type_of(),
-            Expr::Call { ident, args, type_args, def } => def.ret.clone(),
-            Expr::TraitMeth { trait_, args, type_args, def } => def.method.ret.clone(),
-            Expr::FieldAccess { lhs, def, rhs, field_idx } => {
+            Expr::Call { ident: _, args: _, type_args: _, def } => def.ret.clone(),
+            Expr::TraitMeth { trait_: _, args: _, type_args: _, def } => def.method.ret.clone(),
+            Expr::FieldAccess { lhs: _, def, rhs: _, field_idx } => {
                 def.fields[*field_idx as usize].ty.clone()
             }
-            Expr::StructInit { name, fields, def } => {
+            Expr::StructInit { name: _, fields: _, def } => {
                 Ty::Struct { ident: def.ident.clone(), gen: def.generics.clone(), def: def.clone() }
             }
-            Expr::EnumInit { ident, variant, items, def } => {
+            Expr::EnumInit { ident: _, variant: _, items: _, def } => {
                 Ty::Enum { ident: def.ident.clone(), gen: def.generics.clone(), def: def.clone() }
             }
-            Expr::ArrayInit { items, ty } => ty.clone(),
+            Expr::ArrayInit { items: _, ty } => ty.clone(),
             Expr::Value(v) => v.type_of(),
         }
     }
@@ -440,10 +441,12 @@ impl LValue {
             ty::Expr::Ident(ref ident) => {
                 let ty = Ty::lower(
                     tyctx,
-                    &tyctx.type_of_ident(&ident, ex.span).expect(&format!(
-                        "type checking missed ident {}",
-                        Error::error_with_span(tyctx, ex.span, "foolio")
-                    )),
+                    &tyctx.type_of_ident(ident, ex.span).unwrap_or_else(|| {
+                        panic!(
+                            "type checking missed ident {}",
+                            Error::error_with_span(tyctx, ex.span, "foolio")
+                        )
+                    }),
                 );
                 LValue::Ident { ident: ident.to_string(), ty }
             }
@@ -468,7 +471,7 @@ impl LValue {
 
                 let def = match &left {
                     LValue::Ident { ty: Ty::Struct { def, .. }, .. } => def.clone(),
-                    LValue::Deref { indir, expr, ty } => {
+                    LValue::Deref { indir: _, expr: _, ty } => {
                         let mut peel = ty;
                         while let Ty::Ptr(t) | Ty::Ref(t) = peel {
                             peel = t;
@@ -479,7 +482,7 @@ impl LValue {
                             unreachable!("lhs of field access must be struct {:?}", left)
                         }
                     }
-                    LValue::Array { ident, exprs, ty } => todo!(),
+                    LValue::Array { ident: _, exprs: _, ty: _ } => todo!(),
 
                     _ => unreachable!("lhs of field access must be struct {:?}", left),
                 };
@@ -490,7 +493,7 @@ impl LValue {
                         expr: box Spanned { val: ty::Expr::Ident(ident), .. },
                         ..
                     } => ident,
-                    ty::Expr::Array { ident, exprs } => ident,
+                    ty::Expr::Array { ident, exprs: _ } => ident,
                     _ => unreachable!("lhs of field access must be struct {:?}", left),
                 };
                 let (field_idx, right_ty) =
@@ -538,10 +541,10 @@ impl LValue {
 
     crate fn as_ident(&self) -> Option<&str> {
         Some(match self {
-            LValue::Ident { ident, ty } => ident,
-            LValue::Deref { indir, expr, .. } => expr.as_ident()?,
+            LValue::Ident { ident, ty: _ } => ident,
+            LValue::Deref { indir: _, expr, .. } => expr.as_ident()?,
             LValue::Array { ident, .. } => ident,
-            LValue::FieldAccess { lhs, rhs, .. } => lhs.as_ident()?,
+            LValue::FieldAccess { lhs, rhs: _, .. } => lhs.as_ident()?,
         })
     }
 
@@ -603,8 +606,8 @@ impl Ty {
     crate fn size(&self) -> usize {
         match self {
             Ty::Array { size, ty } => ty.size() * size,
-            Ty::Struct { ident, gen, def } => def.fields.iter().map(|f| f.ty.size()).sum(),
-            Ty::Enum { ident, gen, def } => {
+            Ty::Struct { ident: _, gen: _, def } => def.fields.iter().map(|f| f.ty.size()).sum(),
+            Ty::Enum { ident: _, gen: _, def } => {
                 def.variants.iter().map(|v| v.types.iter().map(|t| t.size()).sum::<usize>()).sum()
             }
             Ty::Ptr(_) | Ty::Ref(_) | Ty::String => 8,
@@ -975,6 +978,7 @@ impl Enum {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Adt {
     Struct(Struct),
@@ -1013,6 +1017,7 @@ impl Func {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TraitMethod {
     Default(Func),
@@ -1021,7 +1026,7 @@ pub enum TraitMethod {
 
 impl TraitMethod {
     crate fn function(&self) -> &Func {
-        let (Self::Default(f) | Self::NoBody(f)) = (self);
+        let (Self::Default(f) | Self::NoBody(f)) = self;
         f
     }
 }
@@ -1060,6 +1065,7 @@ pub struct Var {
     pub is_global: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Adt(Adt),
@@ -1112,7 +1118,7 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
     let mut lowered = vec![];
     for item in items {
         match &item.val {
-            ty::Decl::Adt(adt) => {}
+            ty::Decl::Adt(_adt) => {}
             ty::Decl::Func(func) => {
                 if func.generics.is_empty() {
                     lowered.push(Item::Func(Func::lower(&tyctx, &fold, func)));

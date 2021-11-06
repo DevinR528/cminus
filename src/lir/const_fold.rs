@@ -1,13 +1,6 @@
-use std::collections::HashMap;
-
 use crate::{
-    error::Error,
-    lir::lower::{
-        Adt, BinOp, Binding, Block, Expr, Field, FieldInit, Func, Generic, Impl, MatchArm, Param,
-        Pat, Stmt, Struct, Trait, Ty, UnOp, Val, Var, Variant,
-    },
+    lir::lower::{BinOp, Expr, UnOp, Val},
     typeck::TyCheckRes,
-    visit::VisitMut,
 };
 
 #[derive(Debug, Default)]
@@ -16,7 +9,7 @@ crate struct Folder;
 impl Expr {
     crate fn const_fold(&mut self, tcxt: &TyCheckRes<'_, '_>) {
         match self {
-            Expr::Ident { ident, .. } => {
+            Expr::Ident { ident: _, .. } => {
                 // TODO: damn, this needs to track mutations to work
                 // int a, b;
                 // a = 5;
@@ -79,17 +72,17 @@ impl Expr {
                     expr.const_fold(tcxt);
                 }
             }
-            Expr::Call { ident, args, type_args, .. } => {
+            Expr::Call { ident: _, args, type_args: _, .. } => {
                 for expr in args {
                     expr.const_fold(tcxt);
                 }
             }
-            Expr::TraitMeth { trait_, args, type_args, .. } => {
+            Expr::TraitMeth { trait_: _, args, type_args: _, .. } => {
                 for expr in args {
                     expr.const_fold(tcxt);
                 }
             }
-            Expr::StructInit { name, fields, .. } => {
+            Expr::StructInit { name: _, fields, .. } => {
                 for expr in fields {
                     expr.init.const_fold(tcxt);
                 }
@@ -245,38 +238,38 @@ fn float_logical_ops() {
     println!("{}", f64::from_bits(!(1.1_f64).to_bits()));
 }
 
-macro_rules! expr {
-    ($ex:tt + $($rest:tt)*) => {
-        Expr::Binary {
-            op: BinOp::Add,
-            lhs: box Expr::Value(Val::Int($ex)),
-            rhs: box expr!($($rest)*),
-            ty: Ty::Void
-        }
-    };
-    ($ex:tt * $($rest:tt)*) => {
-        Expr::Binary {
-            op: BinOp::Mul,
-            lhs: box Expr::Value(Val::Int($ex)),
-            rhs: box expr!($($rest)*),
-            ty: Ty::Void
-        }
-    };
-    ($ex:tt - $($rest:tt)*) => {
-        Expr::Binary {
-            op: BinOp::Sub,
-            lhs: box Expr::Value(Val::Int($ex)),
-            rhs: box expr!($($rest)*),
-            ty: Ty::Void
-        }
-    };
-    ($ex:expr) => {
-        Expr::Value(Val::Int($ex))
-    };
-}
-
 #[test]
 fn fold_expr() {
+    macro_rules! expr {
+        ($ex:tt + $($rest:tt)*) => {
+            Expr::Binary {
+                op: BinOp::Add,
+                lhs: box Expr::Value(Val::Int($ex)),
+                rhs: box expr!($($rest)*),
+                ty: crate::lir::lower::Ty::Void
+            }
+        };
+        ($ex:tt * $($rest:tt)*) => {
+            Expr::Binary {
+                op: BinOp::Mul,
+                lhs: box Expr::Value(Val::Int($ex)),
+                rhs: box expr!($($rest)*),
+                ty: crate::lir::lower::Ty::Void
+            }
+        };
+        ($ex:tt - $($rest:tt)*) => {
+            Expr::Binary {
+                op: BinOp::Sub,
+                lhs: box Expr::Value(Val::Int($ex)),
+                rhs: box expr!($($rest)*),
+                ty: crate::lir::lower::Ty::Void
+            }
+        };
+        ($ex:expr) => {
+            Expr::Value(Val::Int($ex))
+        };
+    }
+
     let mut ex = expr!(5 + 9 * 9 - 3);
     ex.const_fold(&TyCheckRes::default());
 

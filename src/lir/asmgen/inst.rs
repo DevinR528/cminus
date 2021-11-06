@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt};
 
-use crate::lir::lower::{BinOp, Ty, Val};
+use crate::lir::lower::{BinOp, Val};
 
 use Register::*;
 
@@ -80,6 +80,7 @@ impl fmt::Display for FloatRegister {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     /// Something like this `BYTE PTR [rbp-1]`.
@@ -118,7 +119,7 @@ pub enum Location {
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Location::RegAddr { reg, offset, size } => todo!(),
+            Location::RegAddr { reg: _, offset: _, size: _ } => todo!(),
             Location::Register(reg) => write!(f, "%{}", reg),
             Location::FloatReg(reg) => write!(f, "%{}", reg),
             Location::Const { val } => match val {
@@ -166,6 +167,7 @@ pub enum Global {
     Int { name: String, content: i64 },
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum CondFlag {
     Overflow,
@@ -197,6 +199,7 @@ impl ToString for CondFlag {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum Instruction {
     /// Start a new block with the given label.

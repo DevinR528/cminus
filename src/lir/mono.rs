@@ -1,17 +1,13 @@
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-    fmt,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::types::{self as ty, Spany, Ty, DUMMY},
     error::Error,
-    lir::lower::Func,
     typeck::{
         generic::{GenericArgument, Node},
         TyCheckRes,
     },
-    visit::{Visit, VisitMut},
+    visit::VisitMut,
 };
 
 struct GenSubstitution<'a> {
@@ -55,7 +51,7 @@ impl<'a> TraitRes<'a> {
 impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         let mut x = None;
-        if let ty::Expr::TraitMeth { trait_, type_args, args } = &mut expr.val {
+        if let ty::Expr::TraitMeth { trait_, type_args: _, args } = &mut expr.val {
             if let Some(i) =
                 self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
             {
@@ -98,7 +94,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
     fn visit_stmt(&mut self, stmt: &'ast mut ty::Statement) {
         let mut x = None;
         if let ty::Stmt::TraitMeth(ty::Spanned {
-            val: ty::Expr::TraitMeth { trait_, type_args, args },
+            val: ty::Expr::TraitMeth { trait_, type_args: _, args },
             ..
         }) = &mut stmt.val
         {

@@ -6,17 +6,10 @@ use std::{
     vec,
 };
 
-use crate::{
-    error::Error,
-    lir::{
-        asmgen::inst::{CondFlag, FloatRegister, USABLE_FLOAT_REGS},
-        lower::{
-            Adt, BinOp, CallExpr, Enum, Expr, Func, Impl, Item, LValue, MatchArm, Stmt, Struct, Ty,
-            Val, Var,
-        },
-        visit::Visit,
-    },
-    typeck::TyCheckRes,
+use crate::lir::{
+    asmgen::inst::{CondFlag, FloatRegister, USABLE_FLOAT_REGS},
+    lower::{BinOp, Expr, Func, LValue, Stmt, Ty, Val, Var},
+    visit::Visit,
 };
 
 mod inst;
@@ -67,7 +60,7 @@ impl<'ctx> CodeGen<'ctx> {
             4 => "q", // TODO: everything is 64 bits
             8 => "q",
             _ => "big",
-            _ => unreachable!("larger than 8 bytes isn't valid to move in one go"),
+            // _ => unreachable!("larger than 8 bytes isn't valid to move in one go"),
         };
 
         match inst {
@@ -93,7 +86,7 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::CondMov { src, dst, cond } => {
                 format!("    cmov{} {}, {}", cond.to_string(), src, dst)
             }
-            Instruction::Load { src, dst, size } => {
+            Instruction::Load { src, dst, size: _ } => {
                 // TODO: re-enable
                 // let mnemonic = mnemonic_from(*size);
                 format!("    leaq {}, {}", src, dst)
@@ -204,12 +197,12 @@ impl<'ctx> CodeGen<'ctx> {
             | Location::RegAddr { .. }
             | Location::Label(_)
             | Location::NamedOffset(_)
-            | Location::FloatReg(_)
             | Location::Indexable { .. }
             | Location::NumberedOffset { .. } => {}
         };
     }
 
+    #[allow(clippy::single_match)]
     fn order_operands(&mut self, lval: &mut Location, rval: &mut Location) {
         match (lval, rval) {
             (lval, rval @ Location::Const { .. }) => {
@@ -219,7 +212,8 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn deref_to_value(&self, ptr: Location, ty: &Ty) {}
+    #[allow(dead_code)]
+    fn deref_to_value(&self, _ptr: Location, _ty: &Ty) {}
 
     fn index_arr(
         &mut self,
@@ -290,19 +284,19 @@ impl<'ctx> CodeGen<'ctx> {
     fn push_stack(&mut self, ty: &Ty) {
         match ty {
             Ty::Array { size, ty } => {
-                for el in 0..*size {
+                for _el in 0..*size {
                     self.asm_buf.push(Instruction::Push {
                         loc: Location::Const { val: ty.null_val() },
                         size: ty.size(),
                     });
                 }
             }
-            Ty::Struct { ident, gen, def } => {
+            Ty::Struct { ident: _, gen: _, def } => {
                 for field in &def.fields {
                     self.push_stack(&field.ty)
                 }
             }
-            Ty::Enum { ident, gen, def } => todo!(),
+            Ty::Enum { ident: _, gen: _, def: _ } => todo!(),
             Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float => {
                 self.asm_buf.push(Instruction::Push {
                     loc: Location::Const { val: ty.null_val() },
@@ -352,8 +346,8 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<Location> {
         Some(match expr {
-            LValue::Ident { ident, ty } => self.vars.get(ident.as_str())?.clone(),
-            LValue::Deref { indir, expr, ty } => todo!(),
+            LValue::Ident { ident, ty: _ } => self.vars.get(ident.as_str())?.clone(),
+            LValue::Deref { indir: _, expr: _, ty: _ } => todo!(),
             LValue::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident.as_str())?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty {
@@ -363,14 +357,14 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.index_arr(arr, exprs, ele_size)?
             }
-            LValue::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
+            LValue::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
         })
     }
 
     fn build_value(&mut self, expr: &'ctx Expr, assigned: Option<&str>) -> Option<Location> {
         Some(match expr {
-            Expr::Ident { ident, ty } => self.vars.get(ident.as_str())?.clone(),
-            Expr::Deref { indir, expr, ty } => todo!(),
+            Expr::Ident { ident, ty: _ } => self.vars.get(ident.as_str())?.clone(),
+            Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
             Expr::AddrOf(_) => todo!(),
             Expr::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident.as_str())?.clone();
@@ -381,7 +375,7 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.index_arr(arr, exprs, ele_size)?
             }
-            Expr::Urnary { op, expr, ty } => todo!(),
+            Expr::Urnary { op: _, expr: _, ty: _ } => todo!(),
             Expr::Binary { op, lhs, rhs, ty } => {
                 let mut lloc = self.build_value(lhs, None)?;
                 let mut rloc = self.build_value(rhs, None)?;
@@ -452,11 +446,11 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Parens(ex) => self.build_value(ex, assigned)?,
-            Expr::Call { ident, args, type_args, def } => {
+            Expr::Call { ident, args, type_args, def: _ } => {
                 for (idx, arg) in args.iter().enumerate() {
                     let val = self.build_value(arg, None).unwrap();
                     let ty = arg.type_of();
-                    if let Ty::Array { size, ty } = ty {
+                    if let Ty::Array { size: _, ty } = ty {
                         self.asm_buf.push(Instruction::Load {
                             src: val,
                             dst: Location::Register(ARG_REGS[idx]),
@@ -483,11 +477,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::Call(Location::Label(ident)));
                 Location::Register(Register::RAX)
             }
-            Expr::TraitMeth { trait_, args, type_args, def } => {
+            Expr::TraitMeth { trait_, args, type_args, def: _ } => {
                 for (idx, arg) in args.iter().enumerate() {
                     let val = self.build_value(arg, None).unwrap();
                     let ty = arg.type_of();
-                    if let Ty::Array { size, ty } = ty {
+                    if let Ty::Array { size: _, ty } = ty {
                         self.asm_buf.push(Instruction::Load {
                             src: val,
                             dst: Location::Register(ARG_REGS[idx]),
@@ -509,11 +503,11 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::Call(Location::Label(ident)));
                 Location::Register(Register::RAX)
             }
-            Expr::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
-            Expr::StructInit { name, fields, def } => todo!(),
-            Expr::EnumInit { ident, variant, items, def } => todo!(),
+            Expr::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
+            Expr::StructInit { name: _, fields: _, def: _ } => todo!(),
+            Expr::EnumInit { ident: _, variant: _, items: _, def: _ } => todo!(),
             Expr::ArrayInit { items, ty } => {
-                let arr_size = ty.size();
+                let _arr_size = ty.size();
                 let ele_size = match ty {
                     Ty::Array { ty, .. } => ty.size(),
                     t => unreachable!("not an array for array init {:?}", t),
@@ -521,7 +515,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let lval: Option<Location> = try { self.vars.get(assigned?)?.clone() };
 
-                let start_of_arr_stack = self.current_stack;
+                let _start_of_arr_stack = self.current_stack;
                 for (idx, item) in items.iter().enumerate() {
                     let rval = self.build_value(item, None).unwrap();
 
@@ -562,32 +556,32 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Assign { lval, rval } => {
                 if let Some(global) = self.globals.get_mut(lval.as_ident().unwrap()) {
                     match rval {
-                        Expr::Ident { ident, ty } => todo!(),
-                        Expr::StructInit { name, fields, def } => todo!(),
-                        Expr::EnumInit { ident, variant, items, def } => todo!(),
-                        Expr::ArrayInit { items, ty } => todo!(),
+                        Expr::Ident { ident: _, ty: _ } => todo!(),
+                        Expr::StructInit { name: _, fields: _, def: _ } => todo!(),
+                        Expr::EnumInit { ident: _, variant: _, items: _, def: _ } => todo!(),
+                        Expr::ArrayInit { items: _, ty: _ } => todo!(),
                         Expr::Value(val) => match val {
                             Val::Float(_) => todo!(),
                             Val::Int(num) => match global {
-                                Global::Int { name, content } => {
+                                Global::Int { name: _, content } => {
                                     *content = *num as i64;
                                 }
                                 _ => todo!(),
                             },
                             Val::Bool(boo) => match global {
-                                Global::Int { name, content } => {
+                                Global::Int { name: _, content } => {
                                     *content = *boo as i64;
                                 }
                                 _ => todo!(),
                             },
                             Val::Char(c) => match global {
-                                Global::Text { name, content } => {
+                                Global::Text { name: _, content } => {
                                     *content = c.to_string();
                                 }
                                 _ => todo!(),
                             },
                             Val::Str(s) => match global {
-                                Global::Text { name, content } => {
+                                Global::Text { name: _, content } => {
                                     *content = s.clone();
                                 }
                                 _ => todo!(),
@@ -596,8 +590,8 @@ impl<'ctx> CodeGen<'ctx> {
                         _ => {}
                     }
                 } else {
-                    let mut lloc = self.get_pointer(lval).unwrap();
-                    let mut rloc = self.build_value(rval, lval.as_ident()).unwrap();
+                    let lloc = self.get_pointer(lval).unwrap();
+                    let rloc = self.build_value(rval, lval.as_ident()).unwrap();
 
                     if let Location::Const { .. } = lloc {
                         unreachable!("{:?}", lloc);
@@ -686,11 +680,11 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
-            Stmt::Call { expr, def } => todo!(),
-            Stmt::TraitMeth { expr, def } => todo!(),
-            Stmt::If { cond, blk, els } => todo!(),
-            Stmt::While { cond, stmt } => todo!(),
-            Stmt::Match { expr, arms } => todo!(),
+            Stmt::Call { expr: _, def: _ } => todo!(),
+            Stmt::TraitMeth { expr: _, def: _ } => todo!(),
+            Stmt::If { cond: _, blk: _, els: _ } => todo!(),
+            Stmt::While { cond: _, stmt: _ } => todo!(),
+            Stmt::Match { expr: _, arms: _ } => todo!(),
             Stmt::Read(_) => todo!(),
             Stmt::Write { expr } => {
                 fn format_str(ty: &Ty) -> &str {
@@ -841,7 +835,7 @@ impl<'ctx> CodeGen<'ctx> {
                     ]);
                 }
             }
-            Stmt::Ret(expr, ty) => {
+            Stmt::Ret(expr, _ty) => {
                 let val = self.build_value(expr, None).unwrap();
                 self.asm_buf.extend_from_slice(&[
                     // return value is stored in %rax

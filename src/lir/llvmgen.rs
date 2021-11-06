@@ -1,30 +1,23 @@
+#![allow(dead_code)]
+
 use std::{collections::HashMap, path::Path, vec};
 
 use either::Either;
 use inkwell::{
     builder::Builder,
     context::Context,
-    execution_engine::{ExecutionEngine, JitFunction},
+    execution_engine::ExecutionEngine,
     module::{Linkage, Module},
     passes::PassManager,
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
-    types::{AnyTypeEnum, BasicType, BasicTypeEnum, FunctionType, PointerType},
-    values::{
-        AggregateValue, BasicValue, BasicValueEnum, FunctionValue, InstructionOpcode, PointerValue,
-    },
+    types::{BasicType, BasicTypeEnum},
+    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
     AddressSpace, OptimizationLevel,
 };
 
-use crate::{
-    error::Error,
-    lir::{
-        lower::{
-            Adt, BinOp, CallExpr, Enum, Expr, Func, Impl, Item, LValue, MatchArm, Stmt, Struct, Ty,
-            Val, Var,
-        },
-        visit::Visit,
-    },
-    typeck::TyCheckRes,
+use crate::lir::{
+    lower::{BinOp, CallExpr, Expr, Func, LValue, Stmt, Ty, Val, Var},
+    visit::Visit,
 };
 
 impl Ty {
@@ -33,11 +26,11 @@ impl Ty {
             Ty::Array { size, ty } => {
                 BasicTypeEnum::ArrayType(ty.as_llvm_type(context).array_type(*size as u32))
             }
-            Ty::Struct { ident, gen, def } => BasicTypeEnum::StructType(context.struct_type(
+            Ty::Struct { ident: _, gen: _, def } => BasicTypeEnum::StructType(context.struct_type(
                 &def.fields.iter().map(|f| f.ty.as_llvm_type(context)).collect::<Vec<_>>(),
                 false,
             )),
-            Ty::Enum { ident, gen, def } => {
+            Ty::Enum { ident, gen: _, def: _ } => {
                 BasicTypeEnum::StructType(context.opaque_struct_type(ident))
             }
             Ty::String => BasicTypeEnum::ArrayType(context.i16_type().array_type(0)),
@@ -97,7 +90,7 @@ impl<'ctx> LLVMGen<'ctx> {
         pass.add_gvn_pass();
         pass.initialize();
 
-        let mut this = Self {
+        let this = Self {
             context: ctxt,
             module,
             builder,
@@ -126,7 +119,7 @@ impl<'ctx> LLVMGen<'ctx> {
 
     fn coerce_store_ptr_val(&self, ptr: BasicValueEnum<'_>, val: BasicValueEnum<'_>) {
         match ptr {
-            BasicValueEnum::ArrayValue(arr) => unreachable!("arrays are never left value types"),
+            BasicValueEnum::ArrayValue(_arr) => unreachable!("arrays are never left value types"),
             BasicValueEnum::IntValue(_) | BasicValueEnum::FloatValue(_) => {
                 unreachable!("const fold removed all constant expressions")
             }
@@ -153,7 +146,7 @@ impl<'ctx> LLVMGen<'ctx> {
 
     fn deref_to_value(&self, ptr: BasicValueEnum<'ctx>, ty: &Ty) -> BasicValueEnum<'ctx> {
         match ty {
-            Ty::Ptr(t) => {
+            Ty::Ptr(_t) => {
                 if let BasicValueEnum::PointerValue(_) = ptr {
                     ptr
                 } else {
@@ -216,13 +209,13 @@ impl<'ctx> LLVMGen<'ctx> {
 
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<BasicValueEnum<'ctx>> {
         Some(match expr {
-            LValue::Ident { ident, ty } => self.vars.get(ident.as_str()).copied()?,
-            LValue::Deref { indir, expr, .. } => self.get_pointer(expr)?,
-            LValue::Array { ident, exprs, ty } => {
+            LValue::Ident { ident, ty: _ } => self.vars.get(ident.as_str()).copied()?,
+            LValue::Deref { indir: _, expr, .. } => self.get_pointer(expr)?,
+            LValue::Array { ident, exprs, ty: _ } => {
                 let arr_ptr = self.vars.get(ident.as_str()).copied()?;
                 self.index_arr(arr_ptr.into_pointer_value(), exprs)?.into()
             }
-            LValue::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
+            LValue::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
         })
     }
 
@@ -232,8 +225,8 @@ impl<'ctx> LLVMGen<'ctx> {
         assigned: Option<&str>,
     ) -> Option<BasicValueEnum<'ctx>> {
         Some(match expr {
-            Expr::Ident { ident, ty } => self.vars.get(ident.as_str()).copied()?,
-            Expr::Deref { indir, expr, ty } => {
+            Expr::Ident { ident, ty: _ } => self.vars.get(ident.as_str()).copied()?,
+            Expr::Deref { indir: _, expr, ty } => {
                 let mut ptr = self.build_value(expr, None)?;
                 let mut t = ty;
                 while let Ty::Ref(next) = t {
@@ -246,12 +239,12 @@ impl<'ctx> LLVMGen<'ctx> {
                 let val = self.build_value(expr, None)?;
                 val
             }
-            Expr::Array { ident, exprs, ty } => {
+            Expr::Array { ident, exprs, ty: _ } => {
                 let arr_ptr = self.vars.get(ident.as_str()).copied()?;
                 let idx_ptr = self.index_arr(arr_ptr.into_pointer_value(), exprs)?;
                 self.builder.build_load(idx_ptr, "arr_ele")
             }
-            Expr::Urnary { op, expr, ty } => todo!(),
+            Expr::Urnary { op: _, expr: _, ty: _ } => todo!(),
             Expr::Binary { op, lhs, rhs, ty } => {
                 let lval = self.deref_to_value(self.build_value(lhs, None)?, ty);
                 let rval = self.deref_to_value(self.build_value(rhs, None)?, ty);
@@ -303,16 +296,16 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
             }
             Expr::Parens(_) => todo!(),
-            Expr::Call { ident, args, type_args, def } => {
+            Expr::Call { ident, args, type_args: _, def: _ } => {
                 let func = self.module.get_function(ident).unwrap();
                 let args =
                     args.iter().map(|e| self.build_value(e, None).unwrap()).collect::<Vec<_>>();
                 match self.builder.build_call(func, &args, "calltmp").try_as_basic_value() {
                     Either::Left(val) => val,
-                    Either::Right(inst) => todo!(),
+                    Either::Right(_inst) => todo!(),
                 }
             }
-            Expr::TraitMeth { trait_, args, type_args, def } => todo!(),
+            Expr::TraitMeth { trait_: _, args: _, type_args: _, def: _ } => todo!(),
             Expr::FieldAccess { lhs, def, rhs, field_idx } => {
                 let struct_ptr = self.build_value(lhs, None).unwrap().into_pointer_value();
 
@@ -322,17 +315,17 @@ impl<'ctx> LLVMGen<'ctx> {
                     Expr::Ident { ident, .. } => {
                         self.builder.build_load(field, &format!("{}.{}", def.ident, ident))
                     }
-                    Expr::Deref { indir, expr, ty } => todo!(),
+                    Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
                     Expr::AddrOf(_) => todo!(),
-                    Expr::Array { ident, exprs, ty } => {
+                    Expr::Array { ident, exprs, ty: _ } => {
                         let elptr = self.index_arr(field, exprs)?;
                         self.builder.build_load(elptr, &format!("{}.{}[]", def.ident, ident))
                     }
-                    Expr::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
+                    Expr::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
                     _ => unreachable!("not a possible right side field access"),
                 }
             }
-            Expr::StructInit { name, fields, def } => {
+            Expr::StructInit { name, fields, def: _ } => {
                 let struct_ptr = self.vars.get(assigned?).copied()?.into_pointer_value();
                 for (idx, field) in fields.iter().enumerate() {
                     let val = self.build_value(&field.init, None).unwrap();
@@ -355,7 +348,7 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
                 struct_ptr.into()
             }
-            Expr::EnumInit { ident, variant, items, def } => todo!(),
+            Expr::EnumInit { ident: _, variant: _, items: _, def: _ } => todo!(),
             Expr::ArrayInit { items, ty } => {
                 let memptr = self.builder.build_alloca(ty.as_llvm_type(self.context), "arrinit");
                 for (idx, expr) in items.iter().enumerate() {
@@ -412,25 +405,25 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
             }
             Stmt::Assign { lval, rval } => {
-                let mut lptr = self.get_pointer(lval).unwrap();
-                let mut rvalue = self.build_value(rval, lval.as_ident()).unwrap();
+                let lptr = self.get_pointer(lval).unwrap();
+                let rvalue = self.build_value(rval, lval.as_ident()).unwrap();
                 self.coerce_store_ptr_val(lptr, rvalue);
             }
-            Stmt::Call { expr: CallExpr { ident, args, type_args }, def } => {
+            Stmt::Call { expr: CallExpr { ident, args, type_args: _ }, def: _ } => {
                 let func = self.module.get_function(ident).unwrap();
                 let args =
                     args.iter().map(|e| self.build_value(e, None).unwrap()).collect::<Vec<_>>();
                 match self.builder.build_call(func, &args, "calltmp").try_as_basic_value() {
-                    Either::Left(val) => {}
-                    Either::Right(inst) => {
+                    Either::Left(_val) => {}
+                    Either::Right(_inst) => {
                         // eprintln!("{:?}", inst);
                     }
                 }
             }
-            Stmt::TraitMeth { expr, def } => todo!(),
-            Stmt::If { cond, blk, els } => todo!(),
-            Stmt::While { cond, stmt } => todo!(),
-            Stmt::Match { expr, arms } => todo!(),
+            Stmt::TraitMeth { expr: _, def: _ } => todo!(),
+            Stmt::If { cond: _, blk: _, els: _ } => todo!(),
+            Stmt::While { cond: _, stmt: _ } => todo!(),
+            Stmt::Match { expr: _, arms: _ } => todo!(),
             Stmt::Read(_) => todo!(),
             Stmt::Write { expr } => {
                 let function = self.module.get_function("printf").unwrap();

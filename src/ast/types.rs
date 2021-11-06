@@ -168,18 +168,18 @@ pub enum Expr {
 impl Spany for Expr {}
 
 impl Expr {
-    crate fn deref_count(&self) -> usize {
-        if let Self::Deref { indir, .. } = self {
-            *indir
-        } else {
-            0
-        }
-    }
+    // crate fn deref_count(&self) -> usize {
+    //     if let Self::Deref { indir, .. } = self {
+    //         *indir
+    //     } else {
+    //         0
+    //     }
+    // }
 
     crate fn as_ident_string(&self) -> String {
         match self {
             Expr::Ident(id) => id.to_string(),
-            Expr::Deref { indir, expr } => expr.val.as_ident_string(),
+            Expr::Deref { expr, .. } => expr.val.as_ident_string(),
             Expr::AddrOf(expr) => expr.val.as_ident_string(),
             Expr::Array { ident, .. } => ident.to_string(),
             // TODO: hmm
@@ -269,13 +269,13 @@ impl Ty {
     /// Returns iterator of all generic parameters [`T`, `U`, ..].
     crate fn generics(&self) -> Vec<&str> {
         match self {
-            Ty::Generic { ident, bound } => vec![ident],
-            Ty::Array { size, ty } => ty.val.generics(),
-            Ty::Struct { ident, gen } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
-            Ty::Enum { ident, gen } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
+            Ty::Generic { ident, .. } => vec![ident],
+            Ty::Array { ty, .. } => ty.val.generics(),
+            Ty::Struct { gen, .. } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
+            Ty::Enum { gen, .. } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
             Ty::Ptr(ty) => ty.val.generics(),
             Ty::Ref(ty) => ty.val.generics(),
-            Ty::Func { ident, ret, params } => {
+            Ty::Func { ret, params, .. } => {
                 params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
             }
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => vec![],
@@ -285,13 +285,13 @@ impl Ty {
     /// Returns `true` if the type contains a generic parameter.
     crate fn has_generics(&self) -> bool {
         match self {
-            Ty::Generic { ident, bound } => true,
-            Ty::Array { size, ty } => ty.val.has_generics(),
-            Ty::Struct { ident, gen } => !gen.is_empty(),
-            Ty::Enum { ident, gen } => !gen.is_empty(),
+            Ty::Generic { .. } => true,
+            Ty::Array { ty, .. } => ty.val.has_generics(),
+            Ty::Struct { gen, .. } => !gen.is_empty(),
+            Ty::Enum { gen, .. } => !gen.is_empty(),
             Ty::Ptr(ty) => ty.val.has_generics(),
             Ty::Ref(ty) => ty.val.has_generics(),
-            Ty::Func { ident, ret, params } => {
+            Ty::Func { ret, params, .. } => {
                 ret.has_generics() | params.iter().any(|t| t.has_generics())
             }
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
@@ -304,46 +304,46 @@ impl Ty {
             t @ Ty::Generic { .. } if generic == t.generic() => {
                 *t = subs.clone();
             }
-            Ty::Array { size, ty } => ty.val.subst_generic(generic, subs),
-            Ty::Struct { ident, gen } => {
+            Ty::Array { size: _, ty } => ty.val.subst_generic(generic, subs),
+            Ty::Struct { ident: _, gen } => {
                 for t in gen {
                     t.val.subst_generic(generic, subs)
                 }
             }
-            Ty::Enum { ident, gen } => {
+            Ty::Enum { ident: _, gen } => {
                 for t in gen {
                     t.val.subst_generic(generic, subs)
                 }
             }
             Ty::Ptr(ty) => ty.val.subst_generic(generic, subs),
             Ty::Ref(ty) => ty.val.subst_generic(generic, subs),
-            Ty::Func { ident, ret, params } => {
+            Ty::Func { ident: _, ret: _, params: _ } => {
                 todo!()
             }
             _ => {}
         }
     }
 
-    crate fn reference(&self, mut deref: usize) -> Option<Self> {
-        let mut indirection = Some(self);
-        let mut stop = false;
-        while !stop {
-            match indirection {
-                Some(Ty::Ptr(next)) if deref > 0 => {
-                    deref -= 1;
-                    indirection = Some(&next.val);
-                }
-                _ => {
-                    stop = true;
-                }
-            }
-        }
-        indirection.cloned()
-    }
+    // crate fn reference(&self, mut deref: usize) -> Option<Self> {
+    //     let mut indirection = Some(self);
+    //     let mut stop = false;
+    //     while !stop {
+    //         match indirection {
+    //             Some(Ty::Ptr(next)) if deref > 0 => {
+    //                 deref -= 1;
+    //                 indirection = Some(&next.val);
+    //             }
+    //             _ => {
+    //                 stop = true;
+    //             }
+    //         }
+    //     }
+    //     indirection.cloned()
+    // }
 
     crate fn dereference(&self, mut indirection: usize) -> Self {
         let mut new = self.clone();
-        while (indirection > 0) {
+        while indirection > 0 {
             new = Ty::Ref(box new.into_spanned(DUMMY));
             indirection -= 1;
         }
@@ -357,13 +357,13 @@ impl Ty {
             deref += 1;
             new = t.val;
         }
-        while (deref > 0) {
+        while deref > 0 {
             new = match new {
                 // peel off indirection
                 Ty::Ptr(ty) => ty.val,
-                Ty::Array { size, ty } => todo!("first element of array"),
+                Ty::Array { size: _, ty: _ } => todo!("first element of array"),
                 Ty::String => todo!("char??"),
-                ty => return None,
+                _ty => return None,
             };
             deref -= 1;
         }
@@ -506,8 +506,8 @@ pub struct Block {
 
 impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "}}");
-        for stmt in &self.stmts {
+        write!(f, "}}")?;
+        for _stmt in &self.stmts {
             write!(f, "..;")?;
         }
         write!(f, "}}")
@@ -563,7 +563,7 @@ impl fmt::Display for Pat {
                     )
                 },
             ),
-            Self::Array { size, items } => write!(
+            Self::Array { size: _, items } => write!(
                 f,
                 "[{}]",
                 items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
