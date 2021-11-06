@@ -27,17 +27,16 @@ impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
     }
 
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
-        if let ty::Expr::TraitMeth { trait_, type_args, args } = &expr.val {
-            println!(
-                "{}: {} -> {}",
-                type_args.iter().map(|t| t.val.to_string()).collect::<Vec<_>>().join(", "),
-                trait_,
-                self.ty
-            );
+        if let Some(t) = self.tcxt.expr_ty.get(expr) {
+            if t.generic() == self.generic.generic() {
+                self.tcxt.mono_expr_ty.borrow_mut().insert(expr.clone(), self.ty.clone());
+            }
         }
+        crate::visit::walk_mut_expr(self, expr);
     }
 
     fn visit_ty(&mut self, ty: &mut ty::Type) {
+        // println!("{:?} {:?} {:?}", self.generic, self.ty, ty);
         ty.val.subst_generic(self.generic.generic(), self.ty)
     }
 }
@@ -62,6 +61,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
             {
                 let mut args = args.clone();
                 for arg in &mut args {
+                    // Incase there is a function/trait method call as an argument
                     self.visit_expr(arg);
                 }
                 let ident = format!(
@@ -190,6 +190,10 @@ fn sub_mono_generic(
             // Replace ALL uses of this generic and remove the generic parameters
             let mut subs = GenSubstitution { generic: &gen_param.val, ty: &gen.ty, tcxt };
             subs.visit_func(&mut functions[idx]);
+
+            if i != generics.len() - 1 {
+                functions[idx].ident.push('0');
+            }
         }
 
         let mut trait_res =

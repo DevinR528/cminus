@@ -61,7 +61,7 @@ impl Node {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 crate struct GenericArgument<'ast> {
     crate ty: Ty,
     exprs: Vec<TyRegion<'ast>>,

@@ -11,7 +11,7 @@
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
-#![allow(unused, clippy::if_then_panic)]
+#![allow(clippy::if_then_panic)]
 
 use std::{
     cell::Cell,
@@ -87,11 +87,11 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let res = tyck.report_errors()?;
     // res.unwrap();
 
-    println!("{:#?}", tyck);
+    // println!("{:#?}", tyck);
 
     let lowered = lir::lower::lower_items(&items, tyck);
 
-    println!("{:#?}", lowered);
+    // println!("{:#?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));

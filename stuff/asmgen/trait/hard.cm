@@ -1,0 +1,25 @@
+// This is like an interface or Haskell's type class
+trait add<T> {
+    T add(T a, T b);
+}
+
+// implementing that "interface"
+impl add<int> {
+    int add(int a, int b) {
+        return a + b;
+    }
+}
+
+// This function has a bound on the generic `T` that says
+// `T` must implement the `add` "interface"
+T foo<T: add>(T a, T b,) {
+    return <<T>::add>(a, b);
+}
+
+void main() {
+    int x, y, a;
+    x = 10; y = 111;
+    // Call `foo` with all the types specified
+    a = foo::<int>(x, y);
+    write(a);
+}

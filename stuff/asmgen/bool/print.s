@@ -17,12 +17,16 @@
 main:
     pushq %rbp
     mov %rsp, %rbp
-    push $1
-    movl $0, -4(%rbp)
+    pushq $1
+    movq $0, -4(%rbp)
     leaq .bool_false(%rip), %rsi
     cmp $1, -4(%rbp)
-    leaq .bool_true(%rip), %rax
-    cmove %rax, %rsi
+    leaq .bool_true(%rip), %r9
+    cmove %r9, %rsi
+    mov $0, %rax
+    leaq .str_wformat(%rip), %rdi
+    call printf
+    leaq .bool_true(%rip), %rsi
     mov $0, %rax
     leaq .str_wformat(%rip), %rdi
     call printf

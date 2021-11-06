@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fmt,
     slice::SliceIndex,
@@ -37,7 +37,7 @@ crate struct VarInFunction<'ast> {
 }
 
 impl VarInFunction<'_> {
-    fn get(&self, span: Range) -> Option<&str> {
+    crate fn get_fn_by_span(&self, span: Range) -> Option<&str> {
         self.func_spans.iter().find_map(|(k, v)| {
             if k.start <= span.start && k.end >= span.end {
                 Some(&**v)
@@ -71,6 +71,13 @@ crate struct TyCheckRes<'ast, 'input> {
 
     /// A mapping of expression -> type, this is the main inference table.
     crate expr_ty: HashMap<&'ast Expression, Ty>,
+
+    /// An `Expression` -> `Ty` mapping made after monomorphization.
+    ///
+    /// Types reflect specializations that happens to the expressions. This
+    /// only effects expressions where parameters are used (as far as I can tell) since
+    /// `GenSubstitution` removes all the typed statements and expressions.
+    crate mono_expr_ty: RefCell<HashMap<Expression, Ty>>,
 
     /// A mapping of identities -> val, this is how const folding keeps track of `Expr::Ident`s.
     crate consts: HashMap<&'ast str, &'ast Val>,
@@ -140,7 +147,7 @@ impl<'input> TyCheckRes<'_, 'input> {
         }
 
         self.var_func
-            .get(span)
+            .get_fn_by_span(span)
             .and_then(|f| self.var_func.func_refs.get(f).and_then(|s| s.get(id)))
             .or_else(|| self.global.get(id))
             .cloned()
@@ -1342,7 +1349,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             let fn_name = self
                                 .tcxt
                                 .var_func
-                                .get(stmt.span)
+                                .get_fn_by_span(stmt.span)
                                 .expect("in a function")
                                 .to_string();
 
@@ -1384,7 +1391,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             let fn_name = self
                                 .tcxt
                                 .var_func
-                                .get(stmt.span)
+                                .get_fn_by_span(stmt.span)
                                 .expect("in a function")
                                 .to_string();
 
@@ -1450,10 +1457,11 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             Stmt::Ret(expr) => {
                 let mut ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
                 let mut name = String::new();
-                let mut func_ret_ty = self.tcxt.var_func.get(expr.span).and_then(|fname| {
-                    name = fname.to_string();
-                    self.tcxt.var_func.name_func.get(fname).map(|f| f.ret.val.clone())
-                });
+                let mut func_ret_ty =
+                    self.tcxt.var_func.get_fn_by_span(expr.span).and_then(|fname| {
+                        name = fname.to_string();
+                        self.tcxt.var_func.name_func.get(fname).map(|f| f.ret.val.clone())
+                    });
                 self.tcxt.var_func.func_return.insert(name);
 
                 let mut stack = if let Some((def, ident)) = self
@@ -1493,7 +1501,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             }
             Stmt::Exit => {
                 let func_ret_ty =
-                    self.tcxt.var_func.get(stmt.span).and_then(|fname| {
+                    self.tcxt.var_func.get_fn_by_span(stmt.span).and_then(|fname| {
                         self.tcxt.var_func.name_func.get(fname).map(|f| &f.ret.val)
                     });
                 if !func_ret_ty.is_ty_eq(&Some(&Ty::Void)) {

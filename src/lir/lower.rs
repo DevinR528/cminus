@@ -205,7 +205,7 @@ impl FieldInit {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Expr {
     /// Access a named variable `a`.
     Ident { ident: String, ty: Ty },
@@ -224,9 +224,21 @@ pub enum Expr {
     /// An expression wrapped in parantheses (expr).
     Parens(Box<Expr>),
     /// A function call with possible expression arguments `call(expr)`.
-    Call { ident: String, args: Vec<Expr>, type_args: Vec<Ty>, def: Func },
+    Call {
+        ident: String,
+        args: Vec<Expr>,
+        type_args: Vec<Ty>,
+        #[dbg_ignore]
+        def: Func,
+    },
     /// A call to a trait method with possible expression arguments `<<T>::trait>(expr)`.
-    TraitMeth { trait_: String, args: Vec<Expr>, type_args: Vec<Ty>, def: Impl },
+    TraitMeth {
+        trait_: String,
+        args: Vec<Expr>,
+        type_args: Vec<Ty>,
+        #[dbg_ignore]
+        def: Impl,
+    },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<Expr>, def: Struct, rhs: Box<Expr>, field_idx: u32 },
     /// An ADT is initialized with field values.
@@ -241,14 +253,19 @@ pub enum Expr {
 
 impl Expr {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut ex: ty::Expression) -> Self {
-        let ty = Ty::lower(
-            tyctx,
-            &tyctx.expr_ty.get(&ex).cloned().unwrap_or_else(|| match &mut ex.val {
-                ty::Expr::Call { ident, args, type_args } => type_args.remove(0).val,
-                ty::Expr::TraitMeth { trait_, args, type_args } => type_args.remove(0).val,
-                _ => unreachable!("only trait impl calls and function calls are replaced"),
-            }),
-        );
+        let mut typ = tyctx.expr_ty.get(&ex).cloned().unwrap_or_else(|| match &mut ex.val {
+            // HACK: pass the return value to lower via `type_args` see `TraitRes::visit_expr`
+            ty::Expr::Call { ident, args, type_args } => type_args.remove(0).val,
+            ty::Expr::TraitMeth { trait_, args, type_args } => type_args.remove(0).val,
+            _ => unreachable!("only trait impl calls and function calls are replaced"),
+        });
+
+        if typ.has_generics() {
+            if let Some(ty) = tyctx.mono_expr_ty.borrow().get(&ex) {
+                typ = ty.clone();
+            }
+        }
+        let ty = Ty::lower(tyctx, &typ);
 
         let mut lowered = match ex.val {
             ty::Expr::Ident(ident) => Expr::Ident { ident, ty },
@@ -808,6 +825,10 @@ impl Stmt {
             ty::Stmt::Call(ty::Spanned {
                 val: ty::Expr::Call { ident, args, type_args }, ..
             }) => {
+                if type_args.iter().all(|arg| !arg.val.has_generics()) {
+                    TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
+                        .visit_stmt(&mut s);
+                }
                 let func = tyctx.var_func.name_func.get(&ident).expect("function is defined");
                 Stmt::Call {
                     expr: CallExpr {

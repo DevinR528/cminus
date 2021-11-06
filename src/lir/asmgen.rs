@@ -64,7 +64,7 @@ impl<'ctx> CodeGen<'ctx> {
     crate fn to_asm(&self, inst: &Instruction) -> String {
         let mnemonic_from = |size: usize| match size {
             1 => "b",
-            4 => "l",
+            4 => "q", // TODO: everything is 64 bits
             8 => "q",
             _ => "big",
             _ => unreachable!("larger than 8 bytes isn't valid to move in one go"),
@@ -451,7 +451,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Location::Register(store_reg)
                 }
             }
-            Expr::Parens(_) => todo!(),
+            Expr::Parens(ex) => self.build_value(ex, assigned)?,
             Expr::Call { ident, args, type_args, def } => {
                 for (idx, arg) in args.iter().enumerate() {
                     let val = self.build_value(arg, None).unwrap();
@@ -470,7 +470,17 @@ impl<'ctx> CodeGen<'ctx> {
                         });
                     }
                 }
-                self.asm_buf.push(Instruction::Call(Location::Label(ident.to_owned())));
+
+                let ident = if type_args.is_empty() {
+                    ident.to_owned()
+                } else {
+                    format!(
+                        "{}{}",
+                        ident,
+                        type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+                    )
+                };
+                self.asm_buf.push(Instruction::Call(Location::Label(ident)));
                 Location::Register(Register::RAX)
             }
             Expr::TraitMeth { trait_, args, type_args, def } => {
@@ -494,7 +504,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let ident = format!(
                     "{}{}",
                     trait_,
-                    type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","),
+                    type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
                 );
                 self.asm_buf.push(Instruction::Call(Location::Label(ident)));
                 Location::Register(Register::RAX)
@@ -618,12 +628,12 @@ impl<'ctx> CodeGen<'ctx> {
                             self.asm_buf.extend_from_slice(&[
                                 // From stack pointer
                                 Instruction::Push { loc: rloc, size: 8 },
-                                // To xmm3 to store as float
+                                // To xmm? to store as float
                                 Instruction::FloatMov {
                                     src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
                                     dst: Location::FloatReg(register),
                                 },
-                                // Move xmm3 value to where it is supposed to be
+                                // Move xmm? value to where it is supposed to be
                                 Instruction::FloatMov {
                                     src: Location::FloatReg(register),
                                     dst: lloc,
@@ -700,19 +710,57 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let val = self.build_value(expr, None).unwrap();
                 if matches!(expr_type, Ty::Float) {
-                    self.asm_buf.extend_from_slice(&[
-                        Instruction::Cvt { src: val, dst: Location::FloatReg(FloatRegister::XMM0) },
-                        Instruction::Mov {
-                            src: Location::Const { val: Val::Int(1) },
-                            dst: Location::Register(Register::RAX),
-                        },
-                        Instruction::Load {
-                            src: Location::NamedOffset(fmt_str),
-                            dst: Location::Register(Register::RDI),
-                            size,
-                        },
-                        Instruction::Call(Location::Label("printf".to_owned())),
-                    ]);
+                    if matches!(val, Location::Const { .. }) {
+                        self.used_float_regs.insert(FloatRegister::XMM0);
+                        let register = self.free_float_reg();
+                        self.clear_float_regs_except(None);
+
+                        self.asm_buf.extend_from_slice(&[
+                            // From stack pointer
+                            Instruction::Push { loc: val, size: 8 },
+                            // To xmm? to store as float
+                            Instruction::FloatMov {
+                                src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                dst: Location::FloatReg(register),
+                            },
+                            // Move back see if this helps
+                            Instruction::FloatMov {
+                                src: Location::FloatReg(register),
+                                dst: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                            },
+                            Instruction::Cvt {
+                                src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                dst: Location::FloatReg(FloatRegister::XMM0),
+                            },
+                            Instruction::Mov {
+                                src: Location::Const { val: Val::Int(1) },
+                                dst: Location::Register(Register::RAX),
+                            },
+                            Instruction::Load {
+                                src: Location::NamedOffset(fmt_str),
+                                dst: Location::Register(Register::RDI),
+                                size,
+                            },
+                            Instruction::Call(Location::Label("printf".to_owned())),
+                        ]);
+                    } else {
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::Cvt {
+                                src: val,
+                                dst: Location::FloatReg(FloatRegister::XMM0),
+                            },
+                            Instruction::Mov {
+                                src: Location::Const { val: Val::Int(1) },
+                                dst: Location::Register(Register::RAX),
+                            },
+                            Instruction::Load {
+                                src: Location::NamedOffset(fmt_str),
+                                dst: Location::Register(Register::RDI),
+                                size,
+                            },
+                            Instruction::Call(Location::Label("printf".to_owned())),
+                        ]);
+                    }
                 } else if matches!(expr_type, Ty::Bool) {
                     let free_reg = self.free_reg();
                     // TODO: print string "true" or "false"
@@ -722,34 +770,61 @@ impl<'ctx> CodeGen<'ctx> {
                     // cmp $1, %bool_loc
                     // leaq .bool_true(%rip), %freereg
                     // cmovz %freereg, %rsi
-                    self.asm_buf.extend_from_slice(&[
-                        Instruction::Load {
-                            src: Location::NamedOffset(".bool_false".into()),
-                            dst: Location::Register(Register::RSI),
-                            size,
-                        },
-                        Instruction::Cmp { src: Location::Const { val: Val::Int(1) }, dst: val },
-                        Instruction::Load {
-                            src: Location::NamedOffset(".bool_true".into()),
-                            dst: Location::Register(free_reg),
-                            size: 8,
-                        },
-                        Instruction::CondMov {
-                            src: Location::Register(free_reg),
-                            dst: Location::Register(Register::RSI),
-                            cond: CondFlag::Eq,
-                        },
-                        Instruction::Mov {
-                            src: Location::Const { val: Val::Int(0) },
-                            dst: Location::Register(Register::RAX),
-                        },
-                        Instruction::Load {
-                            src: Location::NamedOffset(".str_wformat".into()),
-                            dst: Location::Register(Register::RDI),
-                            size,
-                        },
-                        Instruction::Call(Location::Label("printf".to_owned())),
-                    ]);
+                    if let Location::Const { val: Val::Bool(b) } = val {
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::Load {
+                                src: if b {
+                                    Location::NamedOffset(".bool_true".into())
+                                } else {
+                                    Location::NamedOffset(".bool_false".into())
+                                },
+                                dst: Location::Register(Register::RSI),
+                                size: 8,
+                            },
+                            Instruction::Mov {
+                                src: Location::Const { val: Val::Int(0) },
+                                dst: Location::Register(Register::RAX),
+                            },
+                            Instruction::Load {
+                                src: Location::NamedOffset(".str_wformat".into()),
+                                dst: Location::Register(Register::RDI),
+                                size,
+                            },
+                            Instruction::Call(Location::Label("printf".to_owned())),
+                        ]);
+                    } else {
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::Load {
+                                src: Location::NamedOffset(".bool_false".into()),
+                                dst: Location::Register(Register::RSI),
+                                size,
+                            },
+                            Instruction::Cmp {
+                                src: Location::Const { val: Val::Int(1) },
+                                dst: val,
+                            },
+                            Instruction::Load {
+                                src: Location::NamedOffset(".bool_true".into()),
+                                dst: Location::Register(free_reg),
+                                size: 8,
+                            },
+                            Instruction::CondMov {
+                                src: Location::Register(free_reg),
+                                dst: Location::Register(Register::RSI),
+                                cond: CondFlag::Eq,
+                            },
+                            Instruction::Mov {
+                                src: Location::Const { val: Val::Int(0) },
+                                dst: Location::Register(Register::RAX),
+                            },
+                            Instruction::Load {
+                                src: Location::NamedOffset(".str_wformat".into()),
+                                dst: Location::Register(Register::RDI),
+                                size,
+                            },
+                            Instruction::Call(Location::Label("printf".to_owned())),
+                        ]);
+                    }
                 } else {
                     self.asm_buf.extend_from_slice(&[
                         Instruction::Mov { src: val, dst: Location::Register(Register::RSI) },
@@ -773,7 +848,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Instruction::Mov { src: val, dst: Location::Register(Register::RAX) },
                 ]);
             }
-            Stmt::Exit => todo!(),
+            Stmt::Exit => {}
             Stmt::Block(_) => todo!(),
         }
     }
