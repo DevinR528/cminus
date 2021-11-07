@@ -302,6 +302,10 @@ pub enum Instruction {
         /// The binary operation to apply, except division.
         op: BinOp,
     },
+    /// A `idiv` instruction, since they are funky just special case it.
+    Idiv(Location),
+    /// Sign extend `rax` into `rdx` `rdx:rax`.
+    Extend,
     /// Convert single precision float to double for printf.
     Cvt {
         src: Location,
@@ -316,8 +320,13 @@ pub enum Instruction {
 
 impl Instruction {
     /// The `rhs` is where the value will end up for most operations.
-    pub fn from_binop(lhs: Location, rhs: Location, op: &BinOp) -> Vec<Self> {
+    pub fn from_binop(mut lhs: Location, mut rhs: Location, op: &BinOp) -> Vec<Self> {
         assert!(!op.is_cmp());
+        // TODO: audit for consistency
+        // idiv may needs some flip flops too
+        if matches!(op, BinOp::Sub) && !matches!(lhs, Location::Const { .. }) {
+            std::mem::swap(&mut lhs, &mut rhs);
+        }
         vec![Instruction::Math { src: lhs, dst: rhs, op: op.clone() }]
     }
 

@@ -7,7 +7,8 @@
     stmt_expr_attributes,
     btree_drain_filter,
     panic_info_message,
-    path_file_prefix
+    path_file_prefix,
+    io_error_more
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -72,7 +73,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // println!("{:?}", items);
+    println!("{:?}", items);
 
     let tyck_time = Instant::now();
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
@@ -86,7 +87,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let lower_time = Instant::now();
     let lowered = lir::lower::lower_items(&items, tyck);
     println!("    lowering: {} ns", lower_time.elapsed().as_nanos());
-    // println!("{:#?}", lowered);
+    println!("{:?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
