@@ -8,6 +8,9 @@
 .char_rformat: .string "%c"
 .int_rformat: .string "%d"
 .float_rformat: .string "%f"
+.bool_true: .string "true"
+.bool_false: .string "false"
+.bool_test: .quad 1
 
 .global set_idx
 .type set_idx,@function
@@ -18,10 +21,10 @@ set_idx:
     pushq %rdi
     pushq %rsi
     movq -8(%rbp), %r11
-    movq -16(%rbp), %r9
+    movq -16(%rbp), %r14
     imul $8, %r11
-    add %r11, %r9
-    movq (%r9), %r11
+    add %r11, %r14
+    movq (%r14), %r11
     mov %r11, %rax
     leave
     ret
@@ -64,5 +67,8 @@ main:
     mov $0, %rax
     leaq .int_wformat(%rip), %rdi
     call printf
+    leave
+    movq $0, %rax
+    ret
     leave
     ret

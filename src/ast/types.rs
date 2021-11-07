@@ -549,7 +549,7 @@ impl Spany for Pat {}
 impl fmt::Display for Pat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Enum { ident, variant, items } => write!(
+            Self::Enum { ident, variant, items, .. } => write!(
                 f,
                 "{}::{}{}",
                 ident,

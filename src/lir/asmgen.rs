@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::lir::{
-    asmgen::inst::{CondFlag, FloatRegister, USABLE_FLOAT_REGS},
-    lower::{BinOp, Expr, Func, LValue, Stmt, Ty, Val, Var},
+    asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
+    lower::{BinOp, Expr, Func, LValue, Pat, Stmt, Ty, Val, Var},
     visit::Visit,
 };
 
@@ -28,7 +28,8 @@ const STATIC_PREAMBLE: &str = r#"
 .int_rformat: .string "%d"
 .float_rformat: .string "%f"
 .bool_true: .string "true"
-.bool_false: .string "false""#;
+.bool_false: .string "false"
+.bool_test: .quad 1"#;
 
 #[derive(Debug)]
 crate struct CodeGen<'ctx> {
@@ -74,6 +75,9 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Instruction::Call(call) => format!("    call {}", call),
             Instruction::Jmp(_) => todo!(),
+            Instruction::CondJmp { loc, cond } => {
+                format!("    j{} {}", cond.to_string(), loc)
+            }
             Instruction::Leave => "    leave".to_owned(),
             Instruction::Ret => "    ret".to_owned(),
             Instruction::Cmp { src, dst } => format!("    cmp {}, {}", src, dst),
@@ -102,33 +106,40 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    crate fn to_glob(&self, glob: &Global) -> String {
+    crate fn to_global(&self, glob: &Global) -> String {
         match glob {
             Global::Text { name, content } => {
-                format!("{}\n    .string {:?}\n    .text", name, content)
+                format!("{}: .string {:?}", name, content)
             }
             Global::Int { name, content } => {
-                format!("{}\n    .long {}\n    .section .rodata", name, content)
+                format!("{}:   .long {}", name, content)
             }
         }
     }
 
     crate fn dump_asm(&self) -> Result<(), String> {
-        let mut p = self.path.to_path_buf();
-        p.set_extension("s");
+        let mut build_dir = self.path.to_path_buf();
+        let file = build_dir.file_name().unwrap().to_os_string();
+        build_dir.pop();
+        build_dir.push("build");
+
+        std::fs::create_dir_all(&build_dir);
+
+        build_dir.push(file);
+        build_dir.set_extension("s");
 
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(true)
-            .open(p)
+            .open(build_dir)
             .map_err(|e| e.to_string())?;
 
         let globals = self
             .globals
             .values()
-            .map(|decl| self.to_glob(decl))
+            .map(|decl| self.to_global(decl))
             .collect::<Vec<String>>()
             .join("\n");
         let assembly =
@@ -285,6 +296,7 @@ impl<'ctx> CodeGen<'ctx> {
         match ty {
             Ty::Array { size, ty } => {
                 for _el in 0..*size {
+                    // TODO: better just sub from %rsp
                     self.asm_buf.push(Instruction::Push {
                         loc: Location::Const { val: ty.null_val() },
                         size: ty.size(),
@@ -296,7 +308,23 @@ impl<'ctx> CodeGen<'ctx> {
                     self.push_stack(&field.ty)
                 }
             }
-            Ty::Enum { ident: _, gen: _, def: _ } => todo!(),
+            Ty::Enum { ident: _, gen: _, def } => {
+                let mut largest_variant = 0;
+                for var in &def.variants {
+                    // Size is size of largest variant plus 8 for tag
+                    // TODO: optimize tag sizes using `variants.len()`?
+                    let curr = var.types.iter().map(|t| t.size()).sum::<usize>() + 8;
+                    if curr > largest_variant {
+                        largest_variant = curr
+                    }
+                }
+
+                self.asm_buf.push(Instruction::Math {
+                    src: Location::Const { val: Val::Int(largest_variant as isize) },
+                    dst: Location::Register(Register::RSP),
+                    op: BinOp::Sub,
+                });
+            }
             Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float => {
                 self.asm_buf.push(Instruction::Push {
                     loc: Location::Const { val: ty.null_val() },
@@ -420,19 +448,28 @@ impl<'ctx> CodeGen<'ctx> {
 
                     rfloatloc
                 } else {
-                    let inst = if let Location::NumberedOffset { .. } = &rloc {
+                    if let Location::NumberedOffset { .. } = &rloc {
                         let new_reg = self.free_reg();
-                        let x = vec![
-                            Instruction::Mov {
-                                src: rloc.clone(),
-                                dst: Location::Register(new_reg),
-                            },
-                            Instruction::from_binop(lloc, Location::Register(new_reg), op),
-                        ];
+
+                        self.asm_buf.push(Instruction::Mov {
+                            src: rloc.clone(),
+                            dst: Location::Register(new_reg),
+                        });
                         rloc = Location::Register(new_reg);
+                    }
+
+                    let inst = if op.is_cmp() {
+                        let cond_reg = self.free_reg();
+                        let x = Instruction::from_binop_cmp(
+                            lloc,
+                            rloc,
+                            op,
+                            Location::Register(cond_reg),
+                        );
+                        rloc = Location::Register(cond_reg);
                         x
                     } else {
-                        vec![Instruction::from_binop(lloc, rloc.clone(), op)]
+                        Instruction::from_binop(lloc, rloc.clone(), op)
                     };
 
                     let store_reg = self.free_reg();
@@ -504,10 +541,53 @@ impl<'ctx> CodeGen<'ctx> {
                 Location::Register(Register::RAX)
             }
             Expr::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
-            Expr::StructInit { name: _, fields: _, def: _ } => todo!(),
-            Expr::EnumInit { ident: _, variant: _, items: _, def: _ } => todo!(),
+            Expr::StructInit { name: _, fields: _, def: _ } => {
+                todo!()
+            }
+            Expr::EnumInit { ident: _, variant, items, def } => {
+                let lval: Option<Location> = try { self.vars.get(assigned?)?.clone() };
+                let tag = def.variants.iter().position(|v| variant == &v.ident).unwrap();
+                if let Some(mov_to @ Location::NumberedOffset { .. }) = &lval {
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        // Move the value on the right hand side of the `= here`
+                        src: Location::Const { val: Val::Int(tag as isize) },
+                        // to the left hand side of `here =`
+                        // The start offset - the current item size + the tag bits which are first
+                        dst: mov_to.clone(),
+                        size: 8,
+                    }]);
+                } else {
+                    todo!()
+                }
+                for item in items.iter() {
+                    let rval = self.build_value(item, None).unwrap();
+
+                    let ele_size = item.type_of().size();
+                    if let Some(Location::NumberedOffset { offset, reg }) = lval {
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rval,
+                            // to the left hand side of `here =`
+                            // The start offset - the current item size + the tag bits which are
+                            // first
+                            dst: Location::NumberedOffset {
+                                offset: (offset - (ele_size + 8)),
+                                reg,
+                            },
+                            size: ele_size,
+                        }]);
+                    } else {
+                        self.asm_buf
+                            .extend_from_slice(&[Instruction::Push { loc: rval, size: ele_size }]);
+                    }
+                }
+                if let Some(lval @ Location::NumberedOffset { .. }) = lval {
+                    lval
+                } else {
+                    Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP }
+                }
+            }
             Expr::ArrayInit { items, ty } => {
-                let _arr_size = ty.size();
                 let ele_size = match ty {
                     Ty::Array { ty, .. } => ty.size(),
                     t => unreachable!("not an array for array init {:?}", t),
@@ -515,7 +595,6 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let lval: Option<Location> = try { self.vars.get(assigned?)?.clone() };
 
-                let _start_of_arr_stack = self.current_stack;
                 for (idx, item) in items.iter().enumerate() {
                     let rval = self.build_value(item, None).unwrap();
 
@@ -542,7 +621,16 @@ impl<'ctx> CodeGen<'ctx> {
                     Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP }
                 }
             }
-            Expr::Value(val) => Location::Const { val: val.clone() },
+            Expr::Value(val) => match val {
+                Val::Float(_) | Val::Int(_) | Val::Bool(_) => Location::Const { val: val.clone() },
+                Val::Char(_) => todo!(),
+                Val::Str(s) => {
+                    let cleaned = s.replace("\"", "");
+                    let name = format!(".{}", cleaned);
+                    self.globals.insert(s, Global::Text { name: name.clone(), content: cleaned });
+                    Location::NamedOffset(name)
+                }
+            },
         })
     }
 
@@ -606,7 +694,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Ty::Array { ty, .. } => ty.size(),
                         t => t.size(),
                     };
-                    // TODO: only add 3 instructions for const -> float
+
                     if matches!(ty, Ty::Float) {
                         if rloc.is_float_reg() {
                             self.clear_float_regs_except(Some(&lloc));
@@ -682,9 +770,62 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Call { expr: _, def: _ } => todo!(),
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
-            Stmt::If { cond: _, blk: _, els: _ } => todo!(),
+            Stmt::If { cond, blk, els } => {
+                let cond_val = self.build_value(cond, None).unwrap();
+                // Check if true
+                self.asm_buf.push(Instruction::Cmp {
+                    src: Location::Const { val: Val::Int(1) },
+                    dst: cond_val,
+                });
+
+                let name = format!(".jmpif{}", self.asm_buf.len());
+                let else_or_uncond = Location::Label(name.clone());
+                // Jump over the "then" block
+                self.asm_buf
+                    .push(Instruction::CondJmp { loc: else_or_uncond, cond: JmpCond::NotEq });
+
+                for stmt in &blk.stmts {
+                    self.gen_statement(stmt);
+                }
+
+                self.asm_buf.push(Instruction::Label(name));
+                if let Some(els) = els {
+                    for stmt in &els.stmts {
+                        self.gen_statement(stmt);
+                    }
+                }
+            }
             Stmt::While { cond: _, stmt: _ } => todo!(),
-            Stmt::Match { expr: _, arms: _ } => todo!(),
+            Stmt::Match { expr, arms, ty } => {
+                let val = self.build_value(expr, None).unwrap();
+
+                for (idx, arm) in arms.iter().enumerate() {
+                    match &arm.pat {
+                        Pat::Enum { idx, items, .. } => {
+                            // cmp enum tag to variant
+                            self.asm_buf.push(Instruction::Cmp {
+                                src: Location::Const { val: Val::Int(*idx as isize) },
+                                dst: val.clone(),
+                            });
+                            // cmp each non wildcard pattern
+                            for item in items {
+                                // TODO: recursively add cmp instructions
+                                // only Binding::Values and enums actually emit cmp instructions
+                            }
+                        }
+                        Pat::Array { size, items } => {
+                            for item in items {
+                                // TODO: recursively add cmp instructions
+                            }
+                        }
+                        Pat::Bind(_) => todo!(),
+                    }
+                }
+                self.asm_buf.extend_from_slice(&[Instruction::Cmp {
+                    src: Location::Const { val: Val::Int(69) },
+                    dst: val,
+                }]);
+            }
             Stmt::Read(_) => todo!(),
             Stmt::Write { expr } => {
                 fn format_str(ty: &Ty) -> &str {
@@ -757,9 +898,6 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 } else if matches!(expr_type, Ty::Bool) {
                     let free_reg = self.free_reg();
-                    // TODO: print string "true" or "false"
-                    // have globals and
-
                     // leaq .bool_false(%rip), %rsi
                     // cmp $1, %bool_loc
                     // leaq .bool_true(%rip), %freereg
@@ -907,6 +1045,19 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         self.current_stack = 0;
         self.clear_regs_except(None);
         self.clear_float_regs_except(None);
+
+        // HACK: so when other programs run our programs they don't non-zero exit
+        if func.ident == "main" {
+            self.asm_buf.extend_from_slice(&[
+                Instruction::Leave,
+                Instruction::SizedMov {
+                    src: Location::Const { val: Val::Int(0) },
+                    dst: Location::Register(Register::RAX),
+                    size: 8,
+                },
+                Instruction::Ret,
+            ]);
+        }
 
         self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
     }

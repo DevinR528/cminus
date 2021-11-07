@@ -187,6 +187,10 @@ impl BinOp {
             _ => unreachable!("handle differently {:?}", self),
         }
     }
+
+    crate fn is_cmp(&self) -> bool {
+        matches!(self, Self::Lt | Self::Le | Self::Ge | Self::Gt | Self::Eq | Self::Ne)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -713,6 +717,7 @@ pub enum Pat {
     Enum {
         ident: String,
         variant: String,
+        idx: usize,
         items: Vec<Pat>,
     },
     Array {
@@ -725,11 +730,19 @@ pub enum Pat {
 impl Pat {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, pat: ty::Pat) -> Self {
         match pat {
-            ty::Pat::Enum { ident, variant, items } => Pat::Enum {
-                ident,
-                variant,
-                items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p)).collect(),
-            },
+            ty::Pat::Enum { ident, variant, items } => {
+                let idx = tyctx
+                    .name_enum
+                    .get(&ident)
+                    .and_then(|e| e.variants.iter().position(|v| variant == v.ident))
+                    .unwrap();
+                Pat::Enum {
+                    ident,
+                    variant,
+                    items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p)).collect(),
+                    idx,
+                }
+            }
             ty::Pat::Array { size, items } => Pat::Array {
                 size,
                 items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p)).collect(),
@@ -794,7 +807,7 @@ pub enum Stmt {
     /// While loop `while (expr) { stmts }`
     While { cond: Expr, stmt: Box<Stmt> },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
-    Match { expr: Expr, arms: Vec<MatchArm> },
+    Match { expr: Expr, arms: Vec<MatchArm>, ty: Ty },
     /// Read statment `read(ident)`
     Read(Expr),
     /// Write statement `write(expr)`
@@ -892,10 +905,15 @@ impl Stmt {
                 cond: Expr::lower(tyctx, fold, cond),
                 stmt: box Stmt::lower(tyctx, fold, *stmt),
             },
-            ty::Stmt::Match { expr, arms } => Stmt::Match {
-                expr: Expr::lower(tyctx, fold, expr),
-                arms: arms.into_iter().map(|a| MatchArm::lower(tyctx, fold, a)).collect(),
-            },
+            ty::Stmt::Match { expr, arms } => {
+                let expr = Expr::lower(tyctx, fold, expr);
+                let ty = expr.type_of();
+                Stmt::Match {
+                    expr,
+                    arms: arms.into_iter().map(|a| MatchArm::lower(tyctx, fold, a)).collect(),
+                    ty,
+                }
+            }
             ty::Stmt::Read(expr) => Stmt::Read(Expr::lower(tyctx, fold, expr)),
             ty::Stmt::Write { expr } => Stmt::Write { expr: Expr::lower(tyctx, fold, expr) },
             ty::Stmt::Ret(expr) => {

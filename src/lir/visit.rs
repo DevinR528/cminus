@@ -151,7 +151,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
             visit.visit_expr(cond);
             visit.visit_stmt(stmt);
         }
-        Stmt::Match { expr, arms } => {
+        Stmt::Match { expr, arms, .. } => {
             visit.visit_expr(expr);
             visit.visit_match_arm(arms);
         }

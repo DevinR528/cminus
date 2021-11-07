@@ -1590,6 +1590,10 @@ fn check_used_enum_generics(
     let dumb = rty.as_ref().map(|x| (*x).clone());
     let _: Option<()> = try {
         if let (Ty::Enum { ident, gen }, Ty::Enum { ident: _rid, gen: rgen }) = (lty?, rty?) {
+            // Oops we don't collect anything, if we continue after here the inner `else` panics
+            if gen.is_empty() && rgen.is_empty() {
+                return;
+            }
             let def = tcxt.name_enum.get(ident)?;
             if let Expr::EnumInit { variant, .. } = rexpr {
                 let var = def.variants.iter().find(|v| v.ident == *variant)?;
@@ -1604,6 +1608,7 @@ fn check_used_enum_generics(
                     .filter(|(_, g)| var.types.iter().any(|t| t.is_ty_eq(g)))
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>();
+
                 if !pos.is_empty()
                     && pos.iter().all(|idx| rgen.iter().any(|t| gen.get(*idx).is_ty_eq(&Some(t))))
                 {
@@ -1672,7 +1677,7 @@ fn check_pattern_type(
 ) {
     match ty.as_ref().unwrap() {
         Ty::Array { size, ty: t } => match pat {
-            Pat::Enum { ident, variant, items: _ } => panic!(
+            Pat::Enum { ident, variant, .. } => panic!(
                 "{}",
                 Error::error_with_span(
                     tcxt,
@@ -1719,7 +1724,7 @@ fn check_pattern_type(
             let (_generics, variant_tys) =
                 tcxt.enum_fields.get(ident).expect("matched undefined enum").clone();
             match pat {
-                Pat::Enum { ident: pat_name, variant, items } => {
+                Pat::Enum { ident: pat_name, variant, items, .. } => {
                     assert_eq!(
                         ident,
                         pat_name,
@@ -1807,7 +1812,7 @@ fn check_val_pat(
     bound_vars: &mut BTreeMap<String, Ty>,
 ) {
     match pat {
-        Pat::Enum { ident, variant, items: _ } => panic!(
+        Pat::Enum { ident, variant, .. } => panic!(
             "{}",
             Error::error_with_span(
                 tcxt,
@@ -1815,7 +1820,7 @@ fn check_val_pat(
                 &format!("expected `{}` found `{}::{}`", expected, ident, variant)
             )
         ),
-        Pat::Array { size: _, items: _ } => panic!(
+        Pat::Array { .. } => panic!(
             "{}",
             Error::error_with_span(tcxt, span, &format!("expected `{}` found `{}`", expected, pat))
         ),

@@ -10,6 +10,7 @@
 .float_rformat: .string "%f"
 .bool_true: .string "true"
 .bool_false: .string "false"
+.bool_test: .quad 1
 
 .global addint
 .type addint,@function
@@ -19,10 +20,24 @@ addint:
     mov %rsp, %rbp
     pushq %rdi
     pushq %rsi
-    mov -16(%rbp), %rax
-    add -8(%rbp), %rax
-    mov %rax, %r10
-    mov %r10, %rax
+    mov -16(%rbp), %r11
+    add -8(%rbp), %r11
+    mov %r11, %r12
+    mov %r12, %rax
+    leave
+    ret
+.global fooint
+.type fooint,@function
+
+fooint:
+    pushq %rbp
+    mov %rsp, %rbp
+    pushq %rdi
+    pushq %rsi
+    movq -8(%rbp), %rdi
+    movq -16(%rbp), %rsi
+    call addint
+    mov %rax, %rax
     leave
     ret
 .global main
@@ -34,15 +49,18 @@ main:
     pushq $1
     pushq $1
     pushq $1
-    movq $0, -8(%rbp)
-    movq $1, -16(%rbp)
+    movq $10, -8(%rbp)
+    movq $111, -16(%rbp)
     movq -8(%rbp), %rdi
     movq -16(%rbp), %rsi
-    call addint
+    call fooint
     movq %rax, -24(%rbp)
     mov -24(%rbp), %rsi
     mov $0, %rax
     leaq .int_wformat(%rip), %rdi
     call printf
+    leave
+    movq $0, %rax
+    ret
     leave
     ret

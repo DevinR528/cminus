@@ -17,6 +17,7 @@ use std::{
     env,
     fs::{self},
     path::Path,
+    time::Instant,
 };
 
 use pest::Parser as _;
@@ -73,24 +74,28 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     // println!("{:?}", items);
 
+    let tyck_time = Instant::now();
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
-
     tyck.visit_prog(&items);
     let _res = tyck.report_errors()?;
+    println!("    type checking: {} ns", tyck_time.elapsed().as_nanos());
     // res.unwrap();
 
     // println!("{:#?}", tyck);
 
+    let lower_time = Instant::now();
     let lowered = lir::lower::lower_items(&items, tyck);
-
+    println!("    lowering: {} ns", lower_time.elapsed().as_nanos());
     // println!("{:#?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
 
+    let gen_time = Instant::now();
     let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
     gen.visit_prog(&lowered);
     gen.dump_asm()?;
+    println!("    code generation: {} ns", gen_time.elapsed().as_nanos());
 
     Ok(())
 }

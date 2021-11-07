@@ -201,6 +201,30 @@ impl ToString for CondFlag {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+pub enum JmpCond {
+    NotEq,
+    Eq,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+}
+
+impl ToString for JmpCond {
+    fn to_string(&self) -> String {
+        match self {
+            JmpCond::NotEq => "ne".into(),
+            JmpCond::Eq => "e".into(),
+            JmpCond::Gt => "g".into(),
+            JmpCond::Ge => "ge".into(),
+            JmpCond::Lt => "l".into(),
+            JmpCond::Le => "le".into(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
 pub enum Instruction {
     /// Start a new block with the given label.
     Label(String),
@@ -224,6 +248,11 @@ pub enum Instruction {
     Call(Location),
     /// Jump to the specified `Location`.
     Jmp(Location),
+    /// Conditionally jump to the specified `Location`.
+    CondJmp {
+        loc: Location,
+        cond: JmpCond,
+    },
     /// Clean up stack before returning from a call.
     Leave,
     /// Return from a call.
@@ -287,8 +316,40 @@ pub enum Instruction {
 
 impl Instruction {
     /// The `rhs` is where the value will end up for most operations.
-    pub fn from_binop(lhs: Location, rhs: Location, op: &BinOp) -> Self {
-        Instruction::Math { src: lhs, dst: rhs, op: op.clone() }
+    pub fn from_binop(lhs: Location, rhs: Location, op: &BinOp) -> Vec<Self> {
+        assert!(!op.is_cmp());
+        vec![Instruction::Math { src: lhs, dst: rhs, op: op.clone() }]
+    }
+
+    /// The `rhs` is where the value will end up for most operations.
+    pub fn from_binop_cmp(
+        lhs: Location,
+        rhs: Location,
+        op: &BinOp,
+        cond_reg: Location,
+    ) -> Vec<Self> {
+        match op {
+            BinOp::Lt => todo!(),
+            BinOp::Le => todo!(),
+            BinOp::Ge => todo!(),
+            BinOp::Gt => {
+                vec![
+                    Instruction::Mov {
+                        src: Location::Const { val: Val::Int(0) },
+                        dst: cond_reg.clone(),
+                    },
+                    Instruction::Cmp { src: lhs, dst: rhs },
+                    Instruction::CondMov {
+                        src: Location::NamedOffset(".bool_test".into()),
+                        dst: cond_reg,
+                        cond: CondFlag::NotBelow,
+                    },
+                ]
+            }
+            BinOp::Eq => todo!(),
+            BinOp::Ne => todo!(),
+            _ => unreachable!("not a comparison operator"),
+        }
     }
 
     /// The `rhs` is where the value will end up for most operations.

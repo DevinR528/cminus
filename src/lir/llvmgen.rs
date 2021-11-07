@@ -12,7 +12,7 @@ use inkwell::{
     targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
     types::{BasicType, BasicTypeEnum},
     values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
-    AddressSpace, OptimizationLevel,
+    AddressSpace, IntPredicate, OptimizationLevel,
 };
 
 use crate::lir::{
@@ -421,9 +421,47 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
-            Stmt::If { cond: _, blk: _, els: _ } => todo!(),
+            Stmt::If { cond, blk, els } => {
+                let cond_expr = self.build_value(cond, None).unwrap();
+                let cmp = self.builder.build_int_compare(
+                    IntPredicate::EQ,
+                    cond_expr.into_int_value(),
+                    self.context.i8_type().const_int(1, false),
+                    "ifcond",
+                );
+
+                let then_bb = self.context.append_basic_block(fnval, "then");
+                let else_bb = self.context.append_basic_block(fnval, "else");
+                let cont_bb = self.context.append_basic_block(fnval, "ifcont");
+
+                self.builder.build_conditional_branch(cmp, then_bb, else_bb);
+
+                self.builder.position_at_end(then_bb);
+                for stmt in &blk.stmts {
+                    self.gen_statement(fnval, stmt);
+                }
+                self.builder.build_unconditional_branch(cont_bb);
+                let _then_block = self.builder.get_insert_block().unwrap();
+
+                self.builder.position_at_end(else_bb);
+                if let Some(els) = els {
+                    for stmt in &els.stmts {
+                        self.gen_statement(fnval, stmt);
+                    }
+                }
+                self.builder.build_unconditional_branch(cont_bb);
+                let _else_block = self.builder.get_insert_block().unwrap();
+
+                // Program execution comes back together, merge block
+                self.builder.position_at_end(cont_bb);
+
+                // TODO: this is complicated and seem like an optimization?
+                //
+                // let phi = self.builder.build_phi(type_, "iftmp");
+                // phi.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
+            }
             Stmt::While { cond: _, stmt: _ } => todo!(),
-            Stmt::Match { expr: _, arms: _ } => todo!(),
+            Stmt::Match { expr: _, arms: _, ty: _ } => todo!(),
             Stmt::Read(_) => todo!(),
             Stmt::Write { expr } => {
                 let function = self.module.get_function("printf").unwrap();

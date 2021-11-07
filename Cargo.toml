@@ -1,5 +1,6 @@
 [package]
-name = "cminus"
+name = "enumc"
+authors = ["Devin R <devin.ragotzy@gmail.com>"]
 version = "0.1.0"
 edition = "2018"
 
@@ -13,5 +14,7 @@ either = "1.6.1"
 lazy_static = "1.4.0"
 derive-help = { path = "./derive-help", version = "0.1" }
 
+
+
 [workspace]
-members = ["derive-help"]
+members = ["derive-help", "builder"]

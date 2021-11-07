@@ -1,0 +1,9 @@
+[package]
+name = "builder"
+authors = ["Devin R <devin.ragotzy@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+xshell = "0.1.9"
