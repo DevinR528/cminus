@@ -8,13 +8,15 @@
     btree_drain_filter,
     panic_info_message,
     path_file_prefix,
-    io_error_more
+    io_error_more,
+    const_fn_trait_bound
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
 #![allow(clippy::if_then_panic)]
 
 use std::{
+    alloc::System,
     env,
     fs::{self},
     path::Path,
@@ -24,15 +26,22 @@ use std::{
 use pest::Parser as _;
 use pest_derive::Parser;
 
+mod alloc;
 mod ast;
 mod error;
 mod lir;
 mod typeck;
 mod visit;
 
-use ast::parse::parse_decl;
+use crate::{
+    alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM},
+    ast::parse::parse_decl,
+    lir::visit::Visit as IrVisit,
+    visit::Visit,
+};
 
-use crate::{lir::visit::Visit as IrVisit, visit::Visit};
+#[global_allocator]
+static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 /// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
 /// into a struct with a `CMinusParser::parse` method.
@@ -45,6 +54,8 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Read the file to string
     let prog = fs::read_to_string(path)?;
 
+    let mut parse_mem = Region::new(GLOBAL);
+    let parse_time = Instant::now();
     // Using the generated parser from `grammar.pest` lex/parse the input
     let file = match CMinusParser::parse(Rule::program, &prog) {
         // Parsing passed
@@ -72,22 +83,25 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
             _ => unreachable!(),
         }
     }
+    println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
+    println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
 
-    println!("{:?}", items);
+    // println!("{:?}", items);
 
     let tyck_time = Instant::now();
     let mut tyck = typeck::TyCheckRes::new(&prog, path);
     tyck.visit_prog(&items);
     let _res = tyck.report_errors()?;
-    println!("    type checking: {} ns", tyck_time.elapsed().as_nanos());
+    println!("    type checking:     {}s", tyck_time.elapsed().as_secs_f64());
     // res.unwrap();
 
     // println!("{:#?}", tyck);
 
     let lower_time = Instant::now();
     let lowered = lir::lower::lower_items(&items, tyck);
-    println!("    lowering: {} ns", lower_time.elapsed().as_nanos());
-    println!("{:?}", lowered);
+    println!("    lowering:          {}s", lower_time.elapsed().as_secs_f64());
+
+    // println!("{:?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
@@ -96,7 +110,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut gen = lir::asmgen::CodeGen::new(Path::new(path));
     gen.visit_prog(&lowered);
     gen.dump_asm()?;
-    println!("    code generation: {} ns", gen_time.elapsed().as_nanos());
+    println!("    code generation:   {}s", gen_time.elapsed().as_secs_f64());
 
     Ok(())
 }

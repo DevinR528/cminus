@@ -1,6 +1,9 @@
 use std::{collections::HashSet, fmt};
 
-use crate::lir::lower::{BinOp, Val};
+use crate::lir::{
+    asmgen::{CodeGen, ZERO},
+    lower::{BinOp, Val},
+};
 
 use Register::*;
 
@@ -30,22 +33,22 @@ pub enum Register {
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RAX => "rax".fmt(f),
-            RCX => "rcx".fmt(f),
-            RDX => "rdx".fmt(f),
-            RBX => "rbx".fmt(f),
-            RSP => "rsp".fmt(f),
-            RBP => "rbp".fmt(f),
-            RSI => "rsi".fmt(f),
-            RDI => "rdi".fmt(f),
-            R8 => "r8".fmt(f),
-            R9 => "r9".fmt(f),
-            R10 => "r10".fmt(f),
-            R11 => "r11".fmt(f),
-            R12 => "r12".fmt(f),
-            R13 => "r13".fmt(f),
-            R14 => "r14".fmt(f),
-            R15 => "r15".fmt(f),
+            RAX => "%rax".fmt(f),
+            RCX => "%rcx".fmt(f),
+            RDX => "%rdx".fmt(f),
+            RBX => "%rbx".fmt(f),
+            RSP => "%rsp".fmt(f),
+            RBP => "%rbp".fmt(f),
+            RSI => "%rsi".fmt(f),
+            RDI => "%rdi".fmt(f),
+            R8 => "%r8".fmt(f),
+            R9 => "%r9".fmt(f),
+            R10 => "%r10".fmt(f),
+            R11 => "%r11".fmt(f),
+            R12 => "%r12".fmt(f),
+            R13 => "%r13".fmt(f),
+            R14 => "%r14".fmt(f),
+            R15 => "%r15".fmt(f),
         }
     }
 }
@@ -68,14 +71,14 @@ pub enum FloatRegister {
 impl fmt::Display for FloatRegister {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            XMM0 => "xmm0".fmt(f),
-            XMM1 => "xmm1".fmt(f),
-            XMM2 => "xmm2".fmt(f),
-            XMM3 => "xmm3".fmt(f),
-            XMM4 => "xmm4".fmt(f),
-            XMM5 => "xmm5".fmt(f),
-            XMM6 => "xmm6".fmt(f),
-            XMM7 => "xmm7".fmt(f),
+            XMM0 => "%xmm0".fmt(f),
+            XMM1 => "%xmm1".fmt(f),
+            XMM2 => "%xmm2".fmt(f),
+            XMM3 => "%xmm3".fmt(f),
+            XMM4 => "%xmm4".fmt(f),
+            XMM5 => "%xmm5".fmt(f),
+            XMM6 => "%xmm6".fmt(f),
+            XMM7 => "%xmm7".fmt(f),
         }
     }
 }
@@ -118,33 +121,47 @@ pub enum Location {
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let width = f.width().unwrap_or_default();
         match self {
             Location::RegAddr { reg: _, offset: _, size: _ } => todo!(),
-            Location::Register(reg) => write!(f, "%{}", reg),
-            Location::FloatReg(reg) => write!(f, "%{}", reg),
+            Location::Register(reg) => write!(f, "{:>width$}", reg, width = width),
+            Location::FloatReg(reg) => write!(f, "{:>width$}", reg, width = width),
             Location::Const { val } => match val {
-                Val::Float(v) => write!(f, "${}", (*v as f32).to_bits()),
-                Val::Int(v) => write!(f, "${}", v),
-                Val::Char(v) => write!(f, "${}", v),
-                Val::Bool(v) => write!(f, "${}", if *v { 1 } else { 0 }),
-                Val::Str(v) => write!(f, "${}", v),
+                Val::Float(v) => {
+                    write!(f, "{:>width$}", format!("${}", (*v as f32).to_bits()), width = width)
+                }
+                Val::Int(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
+                Val::Char(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
+                Val::Bool(v) => {
+                    write!(f, "{:>width$}", format!("${}", if *v { 1 } else { 0 }), width = width)
+                }
+                Val::Str(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
             },
             Location::Label(label) => label.fmt(f),
-            Location::NamedOffset(label) => write!(f, "{}(%rip)", label),
+            Location::NamedOffset(label) => {
+                write!(f, "{:>width$}", format!("{}(%rip)", label), width = width)
+            }
             Location::NumberedOffset { offset, reg } => write!(
                 f,
-                "{}(%{})",
-                if *offset == 0 { "".to_owned() } else { format!("-{}", offset) },
-                reg
+                "{:>width$}",
+                format!(
+                    "{}({})",
+                    if *offset == 0 { "".to_owned() } else { format!("-{}", offset) },
+                    reg
+                ),
+                width = width
             ),
             Location::Indexable { end, ele_pos, reg } => {
                 assert!(ele_pos <= end, "array index is out of bounds");
-
                 write!(
                     f,
-                    "{}(%{})",
-                    if *ele_pos == 0 { "".to_owned() } else { format!("-{}", ele_pos) },
-                    reg
+                    "{:>width$}",
+                    format!(
+                        "{}({})",
+                        if *ele_pos == 0 { "".to_owned() } else { format!("-{}", ele_pos) },
+                        reg,
+                    ),
+                    width = width
                 )
             }
         }
@@ -165,6 +182,7 @@ impl Location {
 pub enum Global {
     Text { name: String, content: String },
     Int { name: String, content: i64 },
+    Char { name: String, content: u8 },
 }
 
 #[allow(dead_code)]
@@ -177,9 +195,15 @@ pub enum CondFlag {
     NotAboveEq,
     AboveEq,
     NotBelow,
+    NotBelowEq,
     NoCarry,
     Eq,
+    NotEq,
     Zero,
+    Greater,
+    GreaterEq,
+    Less,
+    LessEq,
 }
 
 impl ToString for CondFlag {
@@ -192,9 +216,15 @@ impl ToString for CondFlag {
             CondFlag::NotAboveEq => "nae".into(),
             CondFlag::AboveEq => "ae".into(),
             CondFlag::NotBelow => "nb".into(),
+            CondFlag::NotBelowEq => "nbe".into(),
             CondFlag::NoCarry => "nc".into(),
             CondFlag::Eq => "e".into(),
+            CondFlag::NotEq => "ne".into(),
             CondFlag::Zero => "z".into(),
+            CondFlag::Greater => "g".into(),
+            CondFlag::GreaterEq => "ge".into(),
+            CondFlag::Less => "l".into(),
+            CondFlag::LessEq => "le".into(),
         }
     }
 }
@@ -234,6 +264,13 @@ pub enum Instruction {
     Push {
         loc: Location,
         size: usize,
+        comment: &'static str,
+    },
+    /// Pop `Location` to the stack.
+    Pop {
+        loc: Location,
+        size: usize,
+        comment: &'static str,
     },
     /// Add space to the stack (alloca).
     ///
@@ -261,8 +298,11 @@ pub enum Instruction {
     Mov {
         src: Location,
         dst: Location,
+        comment: &'static str,
     },
     /// Conditionally move source to destination.
+    ///
+    /// N.B. The `src` arg needs to be a non const. So far we use named rip offset.
     CondMov {
         src: Location,
         dst: Location,
@@ -284,7 +324,7 @@ pub enum Instruction {
         dst: Location,
         size: usize,
     },
-    /// Add source to destination.
+    /// Using `src` to operate on `dst`, leaving the result in `dst`.
     Math {
         /// The left hand side of a binary operation.
         src: Location,
@@ -320,49 +360,129 @@ pub enum Instruction {
 
 impl Instruction {
     /// The `rhs` is where the value will end up for most operations.
-    pub fn from_binop(mut lhs: Location, mut rhs: Location, op: &BinOp) -> Vec<Self> {
+    crate fn from_binop(lhs: Location, rhs: Location, op: &BinOp) -> Vec<Self> {
         assert!(!op.is_cmp());
-        // TODO: audit for consistency
-        // idiv may needs some flip flops too
-        if matches!(op, BinOp::Sub) && !matches!(lhs, Location::Const { .. }) {
-            std::mem::swap(&mut lhs, &mut rhs);
-        }
         vec![Instruction::Math { src: lhs, dst: rhs, op: op.clone() }]
     }
 
     /// The `rhs` is where the value will end up for most operations.
-    pub fn from_binop_cmp(
-        lhs: Location,
-        rhs: Location,
+    crate fn from_binop_cmp(
+        mut lhs: Location,
+        mut rhs: Location,
         op: &BinOp,
         cond_reg: Location,
+        ctxt: &mut CodeGen,
     ) -> Vec<Self> {
+        // So `1 > 2` becomes this `cmp $2, $1` then everything works so we must swap lhs which
+        // would be $1 with rhs which is $2
+        std::mem::swap(&mut lhs, &mut rhs);
+
+        let mut inst = if rhs.is_stack_offset() {
+            let tmp = ctxt.free_reg();
+            let x = vec![Instruction::SizedMov { src: rhs, dst: Location::Register(tmp), size: 8 }];
+            rhs = Location::Register(tmp);
+            x
+        } else {
+            vec![]
+        };
         match op {
-            BinOp::Lt => todo!(),
-            BinOp::Le => todo!(),
-            BinOp::Ge => todo!(),
-            BinOp::Gt => {
-                vec![
+            BinOp::Lt => {
+                inst.extend_from_slice(&[
                     Instruction::Mov {
-                        src: Location::Const { val: Val::Int(0) },
+                        src: ZERO,
                         dst: cond_reg.clone(),
+                        comment: "binary compare move zero",
                     },
                     Instruction::Cmp { src: lhs, dst: rhs },
                     Instruction::CondMov {
                         src: Location::NamedOffset(".bool_test".into()),
                         dst: cond_reg,
-                        cond: CondFlag::NotBelow,
+                        cond: CondFlag::Less,
                     },
-                ]
+                ]);
             }
-            BinOp::Eq => todo!(),
-            BinOp::Ne => todo!(),
+            BinOp::Le => {
+                inst.extend_from_slice(&[
+                    Instruction::Mov {
+                        src: ZERO,
+                        dst: cond_reg.clone(),
+                        comment: "binary compare move zero",
+                    },
+                    Instruction::Cmp { src: lhs, dst: rhs },
+                    Instruction::CondMov {
+                        src: Location::NamedOffset(".bool_test".into()),
+                        dst: cond_reg,
+                        cond: CondFlag::LessEq,
+                    },
+                ]);
+            }
+            BinOp::Ge => {
+                inst.extend_from_slice(&[
+                    Instruction::Mov {
+                        src: ZERO,
+                        dst: cond_reg.clone(),
+                        comment: "binary compare move zero",
+                    },
+                    Instruction::Cmp { src: lhs, dst: rhs },
+                    Instruction::CondMov {
+                        src: Location::NamedOffset(".bool_test".into()),
+                        dst: cond_reg,
+                        cond: CondFlag::GreaterEq,
+                    },
+                ]);
+            }
+            BinOp::Gt => {
+                inst.extend_from_slice(&[
+                    Instruction::Mov {
+                        src: ZERO,
+                        dst: cond_reg.clone(),
+                        comment: "binary compare move zero",
+                    },
+                    Instruction::Cmp { src: lhs, dst: rhs },
+                    Instruction::CondMov {
+                        src: Location::NamedOffset(".bool_test".into()),
+                        dst: cond_reg,
+                        cond: CondFlag::Greater,
+                    },
+                ]);
+            }
+            BinOp::Eq => {
+                inst.extend_from_slice(&[
+                    Instruction::Mov {
+                        src: ZERO,
+                        dst: cond_reg.clone(),
+                        comment: "binary compare move zero",
+                    },
+                    Instruction::Cmp { src: lhs, dst: rhs },
+                    Instruction::CondMov {
+                        src: Location::NamedOffset(".bool_test".into()),
+                        dst: cond_reg,
+                        cond: CondFlag::Eq,
+                    },
+                ]);
+            }
+            BinOp::Ne => {
+                inst.extend_from_slice(&[
+                    Instruction::Mov {
+                        src: ZERO,
+                        dst: cond_reg.clone(),
+                        comment: "binary compare move zero",
+                    },
+                    Instruction::Cmp { src: lhs, dst: rhs },
+                    Instruction::CondMov {
+                        src: Location::NamedOffset(".bool_test".into()),
+                        dst: cond_reg,
+                        cond: CondFlag::NotEq,
+                    },
+                ]);
+            }
             _ => unreachable!("not a comparison operator"),
         }
+        inst
     }
 
     /// The `rhs` is where the value will end up for most operations.
-    pub fn from_binop_float(lhs: Location, rhs: Location, op: &BinOp) -> Self {
+    crate fn from_binop_float(lhs: Location, rhs: Location, op: &BinOp) -> Self {
         Instruction::FloatMath { src: lhs, dst: rhs, op: op.clone() }
     }
 }

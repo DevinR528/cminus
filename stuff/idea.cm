@@ -40,3 +40,13 @@ Result<int, NotInstanceError?> maybe_call_circumference(Shape x) {
         }
     }
 }
+
+// Default struct/enum fields
+struct Foo {
+    size: int,
+    color: string,
+
+    meta: string = "hello",
+    // Or           maybe no type?
+    meta = "hello": string,
+}
