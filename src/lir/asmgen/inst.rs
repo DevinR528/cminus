@@ -185,6 +185,16 @@ pub enum Global {
     Char { name: String, content: u8 },
 }
 
+impl Global {
+    crate fn name(&self) -> &str {
+        match self {
+            Global::Text { name, .. } => name,
+            Global::Int { name, .. } => name,
+            Global::Char { name, .. } => name,
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum CondFlag {
@@ -375,7 +385,9 @@ impl Instruction {
     ) -> Vec<Self> {
         // So `1 > 2` becomes this `cmp $2, $1` then everything works so we must swap lhs which
         // would be $1 with rhs which is $2
-        std::mem::swap(&mut lhs, &mut rhs);
+        if !matches!(lhs, Location::Const { .. }) {
+            std::mem::swap(&mut lhs, &mut rhs);
+        }
 
         let mut inst = if rhs.is_stack_offset() {
             let tmp = ctxt.free_reg();

@@ -175,15 +175,15 @@ impl BinOp {
     crate fn as_instruction(&self) -> &'static str {
         match self {
             BinOp::Mul => "imul",
-            BinOp::Add => "add ",
-            BinOp::Sub => "sub ",
-            BinOp::LeftShift => "shl ",
-            BinOp::RightShift => "shr ",
-            BinOp::And => "and ",
-            BinOp::Or => "or  ",
-            BinOp::BitAnd => "and ",
-            BinOp::BitXor => "xor ",
-            BinOp::BitOr => "or  ",
+            BinOp::Add => "add",
+            BinOp::Sub => "sub",
+            BinOp::LeftShift => "shl",
+            BinOp::RightShift => "shr",
+            BinOp::And => "and",
+            BinOp::Or => "or",
+            BinOp::BitAnd => "and",
+            BinOp::BitXor => "xor",
+            BinOp::BitOr => "or",
             // FIXME: this is not ideal, we only use this for `Instruction::FloatMath` so problem
             // could arise. also how do we know when to take remainder rdx:rax /
             // location remainder is rdx
@@ -620,7 +620,7 @@ impl Ty {
             }
             Ty::Ptr(_) | Ty::Ref(_) | Ty::String => 8,
             Ty::Int => 8,
-            Ty::Char => 4,
+            Ty::Char => 8,
             Ty::Float => 8,
             Ty::Bool => 4,
             Ty::Void => 0,

@@ -152,7 +152,12 @@ impl<'ctx> CodeGen<'ctx> {
                 )
             }
             Instruction::FloatMath { src, dst, op } => {
-                format!("    {}ss{:a$},{:b$}", op.as_instruction(), src, dst, a = FIRST, b = SECOND)
+                // HACK: ewww fix
+                let mut ops = op.as_instruction().to_string();
+                if ops == "imul" {
+                    ops = ops.replace("i", "");
+                }
+                format!("    {}ss{:a$},{:b$}", ops, src, dst, a = FIRST, b = SECOND)
             }
             Instruction::Idiv(loc) => format!("    idiv{:a$}", loc, a = FIRST + 1),
             Instruction::Cvt { src, dst } => {
@@ -312,6 +317,8 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    fn promote_to_float(&mut self, _lval: &mut Location, _rval: &mut Location) {}
+
     #[allow(dead_code)]
     fn deref_to_value(&self, _ptr: Location, _ty: &Ty) {}
 
@@ -415,14 +422,14 @@ impl<'ctx> CodeGen<'ctx> {
                     op: BinOp::Sub,
                 });
             }
-            Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float => {
+            Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float | Ty::Char => {
                 self.asm_buf.push(Instruction::Push {
                     loc: Location::Const { val: ty.null_val() },
                     size: 8,
                     comment: "",
                 });
             }
-            Ty::Char | Ty::Bool => {
+            Ty::Bool => {
                 self.asm_buf.push(Instruction::Push {
                     loc: Location::Const { val: ty.null_val() },
                     size: 4,
@@ -559,7 +566,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 if matches!(ty, Ty::Float) {
                     let register = self.free_float_reg();
-                    let lfloatloc = if let Location::Const { .. } = lloc {
+                    let mut lfloatloc = if let Location::Const { .. } = lloc {
                         self.asm_buf.extend_from_slice(&[
                             // This transfers the constant to the stack then we can push it to a
                             // xmm[x] reg
@@ -579,7 +586,7 @@ impl<'ctx> CodeGen<'ctx> {
                         lloc
                     };
 
-                    let rfloatloc = if rloc.is_stack_offset() {
+                    let mut rfloatloc = if rloc.is_stack_offset() {
                         self.asm_buf.push(Instruction::FloatMov {
                             src: rloc.clone(),
                             dst: Location::FloatReg(register),
@@ -589,11 +596,17 @@ impl<'ctx> CodeGen<'ctx> {
                         rloc
                     };
 
+                    // Do type conversion
+                    // TODO: REMOVE
+                    self.promote_to_float(&mut lfloatloc, &mut rfloatloc);
+
                     self.asm_buf.extend_from_slice(&[Instruction::from_binop_float(
                         lfloatloc,
                         rfloatloc.clone(),
                         op,
                     )]);
+
+                    self.clear_float_regs_except(Some(&rfloatloc));
 
                     rfloatloc
                 } else {
@@ -903,9 +916,12 @@ impl<'ctx> CodeGen<'ctx> {
                 Val::Char(_) => todo!(),
                 Val::Str(s) => {
                     let cleaned = s.replace("\"", "");
-                    let name = format!(".{}", cleaned);
-                    self.globals.insert(s, Global::Text { name: name.clone(), content: cleaned });
-                    Location::NamedOffset(name)
+                    let name = format!(".Sstring_{}", self.asm_buf.len());
+                    let x = self
+                        .globals
+                        .entry(s)
+                        .or_insert(Global::Text { name: name.clone(), content: cleaned });
+                    Location::NamedOffset(x.name().to_string())
                 }
             },
         })
@@ -993,6 +1009,36 @@ impl<'ctx> CodeGen<'ctx> {
                                     dst: Location::FloatReg(register),
                                 },
                                 // Move xmm? value to where it is supposed to be
+                                Instruction::FloatMov {
+                                    src: Location::FloatReg(register),
+                                    dst: lloc,
+                                },
+                                // Ugh stupid printf needs to be 16 bit aligned so we have to do
+                                // our book keeping
+                                Instruction::Math {
+                                    src: Location::Const { val: Val::Int(8) },
+                                    dst: Location::Register(Register::RSP),
+                                    op: BinOp::Sub,
+                                },
+                            ]);
+                        // Promote any non float register to float
+                        // TODO: REMOVE
+                        } else if matches!(
+                            (&lloc, &rloc),
+                            (Location::NumberedOffset { .. }, Location::Register(_))
+                        ) {
+                            let register = self.free_float_reg();
+                            self.clear_float_regs_except(Some(&lloc));
+                            self.asm_buf.extend_from_slice(&[
+                                Instruction::Push {
+                                    loc: rloc,
+                                    size: 8,
+                                    comment: "we are promoting an int to float",
+                                },
+                                Instruction::FloatMov {
+                                    src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                    dst: Location::FloatReg(register),
+                                },
                                 Instruction::FloatMov {
                                     src: Location::FloatReg(register),
                                     dst: lloc,
@@ -1110,7 +1156,88 @@ impl<'ctx> CodeGen<'ctx> {
                     dst: val,
                 }]);
             }
-            Stmt::Read(_) => todo!(),
+            Stmt::Read(expr) => {
+                fn format_str(ty: &Ty) -> &str {
+                    match ty {
+                        Ty::Ptr(_) | Ty::Ref(_) | Ty::Int | Ty::Bool => ".int_rformat",
+                        Ty::String => ".str_rformat",
+                        Ty::Char => ".char_rformat",
+                        Ty::Float => ".float_rformat",
+                        Ty::Array { ty, .. } => format_str(ty),
+                        _ => unreachable!("not valid print strings"),
+                    }
+                }
+
+                if self.total_stack % 16 != 0 {
+                    self.total_stack += 8;
+                    self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
+                }
+
+                let expr_type = expr.type_of();
+                let fmt_str = format_str(&expr_type).to_string();
+                let size = expr_type.size();
+
+                let val = self.build_value(expr, None).unwrap();
+
+                if matches!(expr_type, Ty::String) {
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::Load {
+                            src: val,
+                            dst: Location::Register(Register::RSI),
+                            size: 8,
+                        },
+                        Instruction::Mov {
+                            src: ZERO,
+                            dst: Location::Register(Register::RAX),
+                            comment: "",
+                        },
+                        Instruction::Load {
+                            src: Location::NamedOffset(fmt_str),
+                            dst: Location::Register(Register::RDI),
+                            size,
+                        },
+                        Instruction::Call(Location::Label("scanf".to_owned())),
+                    ]);
+                } else if matches!(expr_type, Ty::Float) {
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::Load {
+                            src: val,
+                            dst: Location::Register(Register::RSI),
+                            size: 8,
+                        },
+                        Instruction::Mov {
+                            src: ZERO,
+                            dst: Location::Register(Register::RAX),
+                            comment: "",
+                        },
+                        Instruction::Load {
+                            src: Location::NamedOffset(fmt_str),
+                            dst: Location::Register(Register::RDI),
+                            size,
+                        },
+                        Instruction::Call(Location::Label("scanf".to_owned())),
+                    ]);
+                } else {
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::Load {
+                            src: val,
+                            dst: Location::Register(Register::RSI),
+                            size: 8,
+                        },
+                        Instruction::Mov {
+                            src: ZERO,
+                            dst: Location::Register(Register::RAX),
+                            comment: "",
+                        },
+                        Instruction::Load {
+                            src: Location::NamedOffset(fmt_str),
+                            dst: Location::Register(Register::RDI),
+                            size,
+                        },
+                        Instruction::Call(Location::Label("scanf".to_owned())),
+                    ]);
+                }
+            }
             Stmt::Write { expr } => {
                 fn format_str(ty: &Ty) -> &str {
                     match ty {
@@ -1150,7 +1277,10 @@ impl<'ctx> CodeGen<'ctx> {
                     val = Location::Register(free);
                 }
                 if matches!(expr_type, Ty::Float) {
-                    assert!(self.total_stack % 16 == 0);
+                    if self.total_stack % 16 != 0 {
+                        self.total_stack += 8;
+                        self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
+                    }
                     if matches!(val, Location::Const { .. }) {
                         if ((self.total_stack + 8) % 16) != 0 {
                             self.asm_buf.push(Instruction::Push {
@@ -1290,6 +1420,25 @@ impl<'ctx> CodeGen<'ctx> {
                             Instruction::Call(Location::Label("printf".to_owned())),
                         ]);
                     }
+                } else if matches!(expr_type, Ty::String) {
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::Load {
+                            src: val,
+                            dst: Location::Register(Register::RSI),
+                            size: 8,
+                        },
+                        Instruction::Mov {
+                            src: ZERO,
+                            dst: Location::Register(Register::RAX),
+                            comment: "",
+                        },
+                        Instruction::Load {
+                            src: Location::NamedOffset(fmt_str),
+                            dst: Location::Register(Register::RDI),
+                            size,
+                        },
+                        Instruction::Call(Location::Label("printf".to_owned())),
+                    ]);
                 } else {
                     self.asm_buf.extend_from_slice(&[
                         Instruction::Mov {
