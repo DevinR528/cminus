@@ -1,2 +1,3 @@
-pub mod parse;
-pub mod types;
+crate mod parse;
+mod precedence;
+crate mod types;

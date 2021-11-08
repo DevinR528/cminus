@@ -1,0 +1,18 @@
+
+T foo<T, U, W>(U x, W y) {
+    U* a;
+    a = &x;
+    W* b;
+    b = &y;
+    T nul;
+    return nul;
+}
+
+void main() {
+    int x;
+    x = foo::<int, char, int>('c', 19);
+    char y;
+    y = foo::<char, char, int>('c', 19);
+    bool z;
+    z = foo::<bool, float, string>(1.1, "boop");
+}

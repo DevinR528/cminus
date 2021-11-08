@@ -1,12 +1,14 @@
 use pest::iterators::{Pair, Pairs};
 
 use crate::{
-    ast::types::{
-        Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit,
-        Func, Generic, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt, Struct,
-        Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
+    ast::{
+        precedence::{Assoc, Operator, PrecClimber},
+        types::{
+            Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field,
+            FieldInit, Func, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt,
+            Struct, Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
+        },
     },
-    precedence::{Assoc, Operator, PrecClimber},
     Rule,
 };
 
@@ -201,14 +203,13 @@ fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
                 ident: ident.as_str().to_string(),
                 method: {
                     let mut f = parse_func(func.clone().into_inner());
-                    f.ident.push_str(&format!(
-                        "<{}>",
-                        type_arguments
+                    f.ident.push_str(
+                        &type_arguments
                             .iter()
                             .map(|t| t.val.to_string())
                             .collect::<Vec<_>>()
-                            .join(",")
-                    ));
+                            .join("0"),
+                    );
                     f
                 },
                 type_arguments,
@@ -220,7 +221,6 @@ fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
 }
 
 fn parse_param(param: Pair<Rule>) -> Param {
-    let span = to_span(&param);
     let Var { ty, ident, span } = parse_var_decl(param.into_inner()).remove(0);
     Param { ty, ident, span }
 }
@@ -329,24 +329,6 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                 ] => {
                     parse_lvalue(var.clone(), expr.clone(), span)
                 }
-                // // var = { field: expr, optional: expr };
-                // [(Rule::expr, var), (Rule::ASSIGN, _),
-                //     (, expr), (Rule::SC, _)
-                // ] => {
-                //     parse_lvalue(var.clone(), expr.clone(), span)
-                // }
-                // // var = { 1, 2, };
-                // [(Rule::expr, var), (Rule::ASSIGN, _),
-                //     (Rule::arr_init, expr), (Rule::SC, _)
-                // ] => {
-                //     parse_lvalue(var.clone(), expr.clone(), span)
-                // }
-                // var = enum::variant(10, false);
-                // [(Rule::expr, var), (Rule::ASSIGN, _),
-                //     (Rule::enum_init, expr), (Rule::SC, _)
-                // ] => {
-                //     parse_lvalue(var.clone(), expr.clone(), span)
-                // }
                 _ => unreachable!("malformed assignment {}", stmt.to_json()),
             }
         }
@@ -357,7 +339,7 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                 .collect::<Vec<_>>()
                 .as_slice()
             {
-                // foo(x,y);
+                // foo(x,y); or foo();
                 [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _),
                     args @ ..,
                 (Rule::RP, _), (Rule::SC, _)] => {
@@ -375,14 +357,6 @@ fn parse_stmt(stmt: Pair<Rule>) -> Statement {
                         }.into_spanned(span)
                     ).into_spanned(span)
                 }
-                // foo();
-                // [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _), (Rule::RP, _), (Rule::SC, _)] => {
-                //     Stmt::Call {
-                //         ident: name.as_str().to_string(),
-                //         args: vec![],
-                //         type_args: parse_type_arguments(type_args.clone()),
-                //     }.into_spanned(span)
-                // }
                 _ => unreachable!("malformed call statement"),
             }
         }
@@ -541,7 +515,7 @@ fn parse_match_arm_pat(pat: Expr, span: Range) -> Pattern {
                 })
                 .collect(),
         },
-        Expr::StructInit { name, fields } => todo!(),
+        Expr::StructInit { .. } => todo!(),
         Expr::ArrayInit { items } => Pat::Array {
             size: items.len(),
             items: items
@@ -566,7 +540,6 @@ fn parse_match_arm_pat(pat: Expr, span: Range) -> Pattern {
 }
 
 fn parse_generics(generics: Pair<Rule>) -> Vec<Type> {
-    let span = to_span(&generics);
     generics
         .into_inner()
         .map(|g| (g.as_rule(), g))
@@ -589,6 +562,7 @@ fn parse_ty(ty: Pair<Rule>) -> Type {
                 Rule::FLOAT => Ty::Float,
                 Rule::CHAR => Ty::Char,
                 Rule::BOOL => Ty::Bool,
+                Rule::STRING => Ty::String,
                 Rule::VOID if addr.as_str().is_empty() => Ty::Void,
                 Rule::ident => Ty::Generic { ident: ty.as_str().to_string(), bound: None },
                 Rule::bound => match ty.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
@@ -653,28 +627,28 @@ fn valid_lval(ex: &Expr) -> Result<(), String> {
             // Valid expressions that are not recursive
             Expr::Ident(..) | Expr::Array { .. } => {}
             Expr::Call { .. } => {
-                return Err("no call expression".to_owned());
+                return Err("call expression is not a valid lvalue".to_owned());
             }
             Expr::TraitMeth { .. } => {
-                return Err("no call expression".to_owned());
+                return Err("call expression is not a valid lvalue".to_owned());
             }
             Expr::Urnary { .. } => {
-                return Err("no urnary expression".to_owned());
+                return Err("urnary expression is not a valid lvalue".to_owned());
             }
             Expr::Binary { .. } => {
-                return Err("no binary expression".to_owned());
+                return Err("binary expression is not a valid lvalue".to_owned());
             }
             Expr::StructInit { .. } => {
-                return Err("no struct init".to_owned());
+                return Err("struct init expression is not a valid lvalue".to_owned());
             }
             Expr::EnumInit { .. } => {
-                return Err("no enum init".to_owned());
+                return Err("enum init expression is not a valid lvalue".to_owned());
             }
             Expr::ArrayInit { .. } => {
-                return Err("no array init".to_owned());
+                return Err("array init expression is not a valid lvalue".to_owned());
             }
             Expr::Value(_) => {
-                return Err("no values".to_owned());
+                return Err("value is not a valid lvalue".to_owned());
             }
         }
     }
@@ -690,9 +664,8 @@ fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> 
     }
 }
 
-fn build_recursive_pointer_ty(mut indir: usize, base_ty: Type, outer_span: Range) -> Type {
+fn build_recursive_pointer_ty(indir: usize, base_ty: Type, outer_span: Range) -> Type {
     if indir > 0 {
-        let span = base_ty.span;
         Ty::Ptr(box build_recursive_pointer_ty(indir - 1, base_ty, outer_span))
             .into_spanned(outer_span)
     } else {
@@ -790,11 +763,11 @@ fn parse_expr(expr: Pair<Rule>) -> Expression {
         Operator::new(Rule::DOT, Assoc::Left) | Operator::new(Rule::ARROW, Assoc::Left),
     ]);
 
-    consume(expr, &climber, true)
+    consume(expr, &climber)
 }
 
-fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Expression {
-    let primary = |p: Pair<'_, _>| consume(p, climber, false);
+fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
+    let primary = |p: Pair<'_, _>| consume(p, climber);
     let infix = |lhs: Expression, op: Pair<Rule>, rhs: Expression| {
         let span = lhs.span.start..rhs.span.end;
         let expr = match op.as_rule() {
@@ -935,6 +908,8 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                                         // has nothing to do with 1 + whatever
                                         climber.climb(p.clone().into_inner(), primary, infix),
                                     ),
+                                    Rule::arr_init => Some(parse_expr(p)),
+                                    Rule::struct_assign => Some(parse_expr(p)),
                                     Rule::CM => None,
                                     _ => unreachable!("malformed arguments in call {:?}", arg_list),
                                 })
@@ -947,7 +922,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                     .into_spanned(span)
                 }
                 // <<T>::trait>()
-                [(Rule::generic, args), (Rule::ident, trait_), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
+                [(Rule::generic, gen_args), (Rule::ident, trait_), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
                 {
                     Expr::TraitMeth {
                         trait_: trait_.as_str().to_string(),
@@ -968,7 +943,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                         } else {
                             vec![]
                         },
-                        type_args: parse_generics(args.clone()),
+                        type_args: parse_generics(gen_args.clone()),
                     }
                     .into_spanned(span)
                 }
@@ -987,7 +962,7 @@ fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>, first: bool) -> Ex
                     Expr::Parens(box inner).into_spanned(span)
                 }
                 [(Rule::enum_init, expr)] => {
-                    let span = to_span(&expr);
+                    let span = to_span(expr);
                     match expr
                         .clone()
                         .into_inner()

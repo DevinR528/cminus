@@ -1,0 +1,25 @@
+// Can I remove implicit casting and type promotion via generics and traits
+// This was called `trait into` but stupid ll(k) parsers think into and int are the same
+
+trait conv<T, U> {
+    U conv(T in);
+}
+
+impl conv<bool, int> {
+    int conv(bool in) {
+        if (in) {
+            return 1;
+        }
+        return 0;
+    }
+}
+
+U transform<T, U>(T in) {
+    return <<T, U>::conv>(in);
+}
+
+void main() {
+    int x;
+    x = <<bool, int>::conv>(false);
+    x = transform::<bool, int>(true);
+}

@@ -1,0 +1,6 @@
+void main() {
+    bool x;
+    x = false;
+    write(x); // prints `false`
+    write(true); // prints `true`
+}

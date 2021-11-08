@@ -90,14 +90,14 @@ type_args = { ("::<" ~ type_ ~ (CM ~ type_)* ~ ">")? }
 
 arr_init = { (LBR ~ expr ~ (CM ~ expr)* ~ CM? ~ RBR) | LBR ~ arr_init ~ (CM ~ arr_init)* ~ CM? ~ RBR }
 
-arg_list = { expr ~ (CM ~ expr)*}
+arg_list = { (struct_assign | arr_init | expr) ~ (CM ~ (struct_assign | arr_init | expr))*}
 
 variable = {
     deref? ~ ident ~ (LBK ~ expr ~ RBK)+
     | deref? ~ ident
 }
 
-const_ = { decimal | charstr | integer | TRUE | FALSE }
+const_ = { decimal | charstr | string | integer | TRUE | FALSE }
 
 op = {
     ARROW | DOT
@@ -124,6 +124,7 @@ type_ = {
         | INT
         | CHAR
         | FLOAT
+        | STRING
         | VOID
         | STRUCT ~ ident ~ generic
         | ENUM ~ ident ~ generic
@@ -153,11 +154,12 @@ charstr = @{ SQ ~ ( SQ ~ SQ | (!SQ ~ ANY) )* ~ SQ }
 string = @{ DQ ~ ( DQ ~ DQ | (!DQ ~ ANY) )* ~ DQ }
 
 keyword = {
-    CHAR | ELSE | EXIT | FLOAT | IF | INT | READ | RETURN | TRAIT | IMPL | STRUCT | ENUM | VOID | WHILE | WRITE | MATCH | TRUE | FALSE
+    CHAR | ELSE | EXIT | FLOAT | STRING | IF | INT | READ | RETURN | TRAIT | IMPL | STRUCT | ENUM | VOID | WHILE | WRITE | MATCH | TRUE | FALSE
 }
 
 // keywords
 CHAR = { "char" }
+STRING = { "string" }
 ELSE = { "else" }
 EXIT = { "exit" }
 FLOAT = { "float" }

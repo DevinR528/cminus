@@ -1,0 +1,6 @@
+void main() {
+    float x, y;
+    x = 10.1;
+    y = x + 1.0;
+    write(y);
+}

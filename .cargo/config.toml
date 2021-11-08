@@ -1,0 +1,2 @@
+# [build]
+# rustflags = [ "-lLLVM-10", "-C", "link-args=-L/usr/lib/llvm-10/lib"]

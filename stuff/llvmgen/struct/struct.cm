@@ -1,0 +1,13 @@
+struct foo {
+    int x;
+    int y[5];
+}
+
+void main() {
+    struct foo bar;
+    bar = foo { x: 10, y: {0, 1, 2, 3, 4} };
+    write(bar.x);
+    write(bar.y[0]);
+    write(bar.y[2]);
+    write(bar.y[4]);
+}

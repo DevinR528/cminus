@@ -22,12 +22,13 @@ impl fmt::Display for Error<'_> {
         let (row, col) = calc_line_col(self.span, self.input);
         write!(
             f,
-            "error: {}\n  --> {}:{}:{}\n{}",
+            "error: {}\n  --> {}:{}:{}\n{}{}",
             self.msg,
             self.name,
             row,
             col,
-            calc_snippet_around(self.span, self.input, row)
+            calc_snippet_around(self.span, self.input, row),
+            self.help.as_deref().unwrap_or(""), // TODO:
         )
     }
 }

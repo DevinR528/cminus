@@ -1,9 +1,6 @@
-use std::fmt::{self, Display, Write};
-
 use crate::ast::types::{
-    Adt, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic, Impl,
-    MatchArm, Param, Statement, Stmt, Struct, Trait, TraitMethod, Ty, Type, Value, Var, Variant,
-    DUMMY,
+    Adt, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Impl, MatchArm,
+    Param, Statement, Stmt, Struct, Trait, Type, Var, Variant,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -39,9 +36,9 @@ pub trait Visit<'ast>: Sized {
         walk_params(self, params)
     }
 
-    fn visit_generics(&mut self, generics: &[Type]) {}
+    fn visit_generics(&mut self, _generics: &[Type]) {}
 
-    fn visit_ty(&mut self, ty: &Type) {
+    fn visit_ty(&mut self, _ty: &Type) {
         // done
     }
 
@@ -79,7 +76,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
 }
 
 crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
-    let Func { ident, params, stmts, ret, generics, span: _ } = func;
+    let Func { ident: _, params, stmts, ret: _, generics: _, span: _ } = func;
     // visit.visit_ident(ident);
     // visit.visit_generics(generics);
     visit.visit_params(params);
@@ -90,7 +87,7 @@ crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
 }
 
 crate fn walk_trait<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Trait) {
-    let Trait { ident, method, generics, span: _ } = tr;
+    let Trait { ident: _, method: _, generics, span: _ } = tr;
     // visit.visit_ident(ident);
     visit.visit_generics(generics);
     // visit.visit_ty(ret);
@@ -101,7 +98,7 @@ crate fn walk_trait<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Trait) {
 }
 
 crate fn walk_impl<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Impl) {
-    let Impl { ident, method, type_arguments, span: _ } = tr;
+    let Impl { ident: _, method, type_arguments: _, span: _ } = tr;
     // visit.visit_ident(ident);
     // for ty in type_arguments {
     //     visit.visit_ty(ty);
@@ -112,14 +109,14 @@ crate fn walk_impl<'ast, V: Visit<'ast>>(visit: &mut V, tr: &'ast Impl) {
 
 crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, adt: &'ast Adt) {
     match adt {
-        Adt::Struct(Struct { ident, fields, generics, span: _ }) => {
+        Adt::Struct(Struct { ident: _, fields, generics: _, span: _ }) => {
             // visit.visit_ident(ident);
-            for Field { ident, ty, span: _ } in fields {
+            for Field { ident: _, ty, span: _ } in fields {
                 visit.visit_ty(ty);
             }
         }
-        Adt::Enum(Enum { ident, variants, generics, .. }) => {
-            for Variant { ident, types, span: _ } in variants {
+        Adt::Enum(Enum { ident: _, variants, generics: _, .. }) => {
+            for Variant { ident: _, types, span: _ } in variants {
                 for ty in types {
                     visit.visit_ty(ty);
                 }
@@ -134,13 +131,13 @@ crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &'ast Var) {
 }
 
 crate fn walk_params<'ast, V: Visit<'ast>>(visit: &mut V, params: &[Param]) {
-    for Param { ident, ty, .. } in params {
+    for Param { ident: _, ty, .. } in params {
         visit.visit_ty(ty);
     }
 }
 
 crate fn walk_match_arm<'ast, V: Visit<'ast>>(visit: &mut V, arms: &'ast [MatchArm]) {
-    for MatchArm { pat, blk: Block { stmts, .. }, .. } in arms {
+    for MatchArm { pat: _, blk: Block { stmts, .. }, .. } in arms {
         for stmt in stmts {
             visit.visit_stmt(stmt);
         }
@@ -196,31 +193,31 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
 
 crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) {
     match &expr.val {
-        Expr::Ident(id) => {
+        Expr::Ident(_id) => {
             // visit.visit_ident(id)
         }
-        Expr::Array { ident, exprs } => {
+        Expr::Array { ident: _, exprs } => {
             // visit.visit_ident(ident);
             for expr in exprs {
                 visit.visit_expr(expr)
             }
         }
-        Expr::Urnary { op, expr } => {
+        Expr::Urnary { op: _, expr } => {
             visit.visit_expr(expr);
         }
-        Expr::Deref { indir, expr } => {
+        Expr::Deref { indir: _, expr } => {
             visit.visit_expr(expr);
         }
         Expr::AddrOf(expr) => {
             visit.visit_expr(expr);
         }
-        Expr::Binary { op, lhs, rhs } => {
+        Expr::Binary { op: _, lhs, rhs } => {
             visit.visit_expr(lhs);
             visit.visit_expr(rhs)
         }
         Expr::Parens(expr) => visit.visit_expr(expr),
-        Expr::StructInit { name, fields } => {
-            for FieldInit { ident, init, span: _ } in fields {
+        Expr::StructInit { name: _, fields } => {
+            for FieldInit { ident: _, init, span: _ } in fields {
                 visit.visit_expr(init);
             }
         }
@@ -238,12 +235,259 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
             visit.visit_expr(lhs);
             visit.visit_expr(rhs)
         }
-        Expr::Call { ident, args, type_args } => {
+        Expr::Call { ident: _, args, type_args: _ } => {
             for expr in args {
                 visit.visit_expr(expr);
             }
         }
-        Expr::TraitMeth { trait_, args, type_args } => {
+        Expr::TraitMeth { trait_: _, args, type_args: _ } => {
+            for expr in args {
+                visit.visit_expr(expr);
+            }
+        }
+        Expr::Value(_) => {
+            // visit.visit_value(val);
+        }
+    }
+}
+
+pub trait VisitMut<'ast>: Sized {
+    fn visit_prog(&mut self, items: &'ast mut [Declaration]) {
+        walk_mut_items(self, items)
+    }
+
+    fn visit_decl(&mut self, item: &'ast mut Declaration) {
+        walk_mut_decl(self, item)
+    }
+
+    fn visit_func(&mut self, func: &'ast mut Func) {
+        walk_mut_func(self, func)
+    }
+
+    fn visit_trait(&mut self, item: &'ast mut Trait) {
+        walk_mut_trait(self, item)
+    }
+
+    fn visit_impl(&mut self, item: &'ast mut Impl) {
+        walk_mut_impl(self, item)
+    }
+
+    fn visit_adt(&mut self, adt: &'ast mut Adt) {
+        walk_mut_adt(self, adt)
+    }
+
+    fn visit_var(&mut self, var: &'ast mut Var) {
+        walk_mut_var(self, var)
+    }
+
+    fn visit_params(&mut self, params: &'ast mut [Param]) {
+        walk_mut_params(self, params)
+    }
+
+    fn visit_generics(&mut self, _generics: &mut [Type]) {}
+
+    fn visit_ty(&mut self, _ty: &mut Type) {}
+
+    fn visit_stmt(&mut self, stmt: &'ast mut Statement) {
+        walk_mut_stmt(self, stmt)
+    }
+
+    fn visit_match_arm(&mut self, arms: &'ast mut [MatchArm]) {
+        walk_mut_match_arm(self, arms)
+    }
+
+    fn visit_expr(&mut self, expr: &'ast mut Expression) {
+        walk_mut_expr(self, expr)
+    }
+}
+
+#[allow(dead_code)]
+crate fn walk_mut_items<'ast, V: VisitMut<'ast>>(visit: &mut V, items: &'ast mut [Declaration]) {
+    for item in items {
+        visit.visit_decl(item);
+    }
+}
+
+crate fn walk_mut_decl<'ast, V: VisitMut<'ast>>(visit: &mut V, item: &'ast mut Declaration) {
+    match &mut item.val {
+        Decl::Func(func) => {
+            visit.visit_func(func);
+        }
+        Decl::Var(var) => {
+            visit.visit_var(var);
+        }
+        Decl::Trait(trait_) => visit.visit_trait(trait_),
+        Decl::Impl(imp) => visit.visit_impl(imp),
+        Decl::Adt(struc) => visit.visit_adt(struc),
+    }
+}
+
+crate fn walk_mut_func<'ast, V: VisitMut<'ast>>(visit: &mut V, func: &'ast mut Func) {
+    let Func { ident: _, params, stmts, ret, generics: _, span: _ } = func;
+    // visit.visit_ident(ident);
+    // visit.visit_generics(generics);
+    visit.visit_params(params);
+    visit.visit_ty(ret);
+    for stmt in stmts {
+        visit.visit_stmt(stmt);
+    }
+}
+
+crate fn walk_mut_trait<'ast, V: VisitMut<'ast>>(visit: &mut V, tr: &'ast mut Trait) {
+    let Trait { ident: _, method: _, generics, span: _ } = tr;
+    // visit.visit_ident(ident);
+    visit.visit_generics(generics);
+    // visit.visit_ty(ret);
+    // match method {
+    //     TraitMethod::Default(f) => visit.visit_func(f),
+    //     TraitMethod::NoBody(f) => visit.visit_func(f),
+    // }
+}
+
+crate fn walk_mut_impl<'ast, V: VisitMut<'ast>>(visit: &mut V, tr: &'ast mut Impl) {
+    let Impl { ident: _, method, type_arguments: _, span: _ } = tr;
+    // visit.visit_ident(ident);
+    // for ty in type_arguments {
+    //     visit.visit_ty(ty);
+    // }
+    // visit.visit_ty(ret);
+    visit.visit_func(method)
+}
+
+crate fn walk_mut_adt<'ast, V: VisitMut<'ast>>(visit: &mut V, adt: &'ast mut Adt) {
+    match adt {
+        Adt::Struct(Struct { ident: _, fields, generics: _, span: _ }) => {
+            // visit.visit_ident(ident);
+            for Field { ident: _, ty, span: _ } in fields {
+                visit.visit_ty(ty);
+            }
+        }
+        Adt::Enum(Enum { ident: _, variants, generics: _, .. }) => {
+            for Variant { ident: _, types, span: _ } in variants {
+                for ty in types {
+                    visit.visit_ty(ty);
+                }
+            }
+        }
+    }
+}
+
+crate fn walk_mut_var<'ast, V: VisitMut<'ast>>(visit: &mut V, var: &'ast mut Var) {
+    // visit.visit_ident(&var.ident);
+    visit.visit_ty(&mut var.ty);
+}
+
+crate fn walk_mut_params<'ast, V: VisitMut<'ast>>(visit: &mut V, params: &'ast mut [Param]) {
+    for Param { ident: _, ty, .. } in params {
+        visit.visit_ty(ty);
+    }
+}
+
+crate fn walk_mut_match_arm<'ast, V: VisitMut<'ast>>(visit: &mut V, arms: &'ast mut [MatchArm]) {
+    for MatchArm { pat: _, blk: Block { stmts, .. }, .. } in arms {
+        for stmt in stmts {
+            visit.visit_stmt(stmt);
+        }
+    }
+}
+
+crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut Statement) {
+    match &mut stmt.val {
+        Stmt::VarDecl(vars) => {
+            for var in vars {
+                visit.visit_var(var)
+            }
+        }
+        Stmt::Assign { lval, rval, .. } => {
+            // visit.visit_ident(ident);
+            visit.visit_expr(lval);
+            visit.visit_expr(rval);
+        }
+        Stmt::Call(expr) => visit.visit_expr(expr),
+        Stmt::TraitMeth(expr) => visit.visit_expr(expr),
+        Stmt::If { cond, blk: Block { stmts, .. }, els } => {
+            visit.visit_expr(cond);
+            for stmt in stmts {
+                visit.visit_stmt(stmt);
+            }
+            if let Some(Block { stmts, .. }) = els {
+                for stmt in stmts {
+                    visit.visit_stmt(stmt);
+                }
+            }
+        }
+        Stmt::While { cond, stmt } => {
+            visit.visit_expr(cond);
+            visit.visit_stmt(stmt);
+        }
+        Stmt::Match { expr, arms } => {
+            visit.visit_expr(expr);
+            visit.visit_match_arm(arms);
+        }
+        Stmt::Read(expr) => {
+            visit.visit_expr(expr);
+        }
+        Stmt::Write { expr } => visit.visit_expr(expr),
+        Stmt::Ret(expr) => visit.visit_expr(expr),
+        Stmt::Exit => {}
+        Stmt::Block(Block { stmts, .. }) => {
+            for stmt in stmts {
+                visit.visit_stmt(stmt);
+            }
+        }
+    }
+}
+
+crate fn walk_mut_expr<'ast, V: VisitMut<'ast>>(visit: &mut V, expr: &'ast mut Expression) {
+    match &mut expr.val {
+        Expr::Ident(_id) => {
+            // visit.visit_ident(id)
+        }
+        Expr::Array { ident: _, exprs } => {
+            // visit.visit_ident(ident);
+            for expr in exprs {
+                visit.visit_expr(expr)
+            }
+        }
+        Expr::Urnary { op: _, expr } => {
+            visit.visit_expr(expr);
+        }
+        Expr::Deref { indir: _, expr } => {
+            visit.visit_expr(expr);
+        }
+        Expr::AddrOf(expr) => {
+            visit.visit_expr(expr);
+        }
+        Expr::Binary { op: _, lhs, rhs } => {
+            visit.visit_expr(lhs);
+            visit.visit_expr(rhs)
+        }
+        Expr::Parens(expr) => visit.visit_expr(expr),
+        Expr::StructInit { name: _, fields } => {
+            for FieldInit { ident: _, init, span: _ } in fields {
+                visit.visit_expr(init);
+            }
+        }
+        Expr::EnumInit { items, .. } => {
+            for expr in items {
+                visit.visit_expr(expr);
+            }
+        }
+        Expr::ArrayInit { items } => {
+            for expr in items {
+                visit.visit_expr(expr);
+            }
+        }
+        Expr::FieldAccess { lhs, rhs } => {
+            visit.visit_expr(lhs);
+            visit.visit_expr(rhs)
+        }
+        Expr::Call { ident: _, args, type_args: _ } => {
+            for expr in args {
+                visit.visit_expr(expr);
+            }
+        }
+        Expr::TraitMeth { trait_: _, args, type_args: _ } => {
             for expr in args {
                 visit.visit_expr(expr);
             }

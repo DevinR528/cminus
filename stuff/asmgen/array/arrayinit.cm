@@ -1,0 +1,18 @@
+void main() {
+    int x;
+    x = 5;
+    int a[5];
+    a = {1, 0, 9, 11, 15};
+
+    write(a[1]);
+    write(a[2]);
+    write(a[3]);
+    write(a[4]);
+
+    write(x);
+
+    int y;
+    y = 10;
+    a[0] = y;
+    write(a[0]);
+}

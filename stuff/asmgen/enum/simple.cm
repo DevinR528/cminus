@@ -1,0 +1,22 @@
+enum option {
+    foo(char)
+    some,
+    none,
+}
+
+void main() {
+    enum option x;
+    x = option::some;
+
+    match x {
+        option::foo(x) -> {
+            write(x);
+        },
+        option::some -> {
+            write(1);
+        },
+        option::none -> {
+            exit;
+        }
+    }
+}
