@@ -1,4 +1,12 @@
-// enums as inheritance
+// Welcome to the `enum` language!!
+//
+// Where we use enums for a bunch a shit.
+
+// To consider...
+//
+//    - Jai's build scripts being built into the `main` file is nice
+//    - Macros/some way of compile time meta programing
+//    - First class compile time types like Zig
 
 
 enum Shape {
@@ -49,4 +57,17 @@ struct Foo {
     meta: string = "hello",
     // Or           maybe no type?
     meta = "hello": string,
+}
+
+// I really like the idea of "compile time" first class types
+T passed_in_type<T: ptr_fam>(it: Type) {
+    printf("%s", it.name); // use just as any other type
+
+    if (it.is_sized()) {
+        // Higher Kinded Types ish?? maybe??
+        // Since the check on Type would be different I wonder if this would work easily
+        return <<T<it>>::ptr_fam>();
+    } else {
+
+    }
 }
