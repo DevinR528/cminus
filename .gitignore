@@ -4,3 +4,6 @@ Cargo.lock
 /CminusParser.tgz
 /out
 /input
+**/build
+.idea
+.vscode

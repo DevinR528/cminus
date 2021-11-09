@@ -13,7 +13,7 @@
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
-#![allow(clippy::if_then_panic)]
+#![allow(clippy::if_then_panic, unused)]
 
 use std::{
     alloc::System,
@@ -23,7 +23,7 @@ use std::{
     time::Instant,
 };
 
-use pest::Parser as _;
+use ::pest::Parser as _;
 
 mod alloc;
 mod ast;

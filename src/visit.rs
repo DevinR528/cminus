@@ -72,6 +72,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
         Decl::Trait(trait_) => visit.visit_trait(trait_),
         Decl::Impl(imp) => visit.visit_impl(imp),
         Decl::Adt(struc) => visit.visit_adt(struc),
+        Decl::Const(co) => {}
     }
 }
 
@@ -319,6 +320,7 @@ crate fn walk_mut_decl<'ast, V: VisitMut<'ast>>(visit: &mut V, item: &'ast mut D
         Decl::Trait(trait_) => visit.visit_trait(trait_),
         Decl::Impl(imp) => visit.visit_impl(imp),
         Decl::Adt(struc) => visit.visit_adt(struc),
+        Decl::Const(_) => {}
     }
 }
 
