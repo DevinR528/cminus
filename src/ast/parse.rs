@@ -1,16 +1,19 @@
 use pest::iterators::{Pair, Pairs};
 
-use crate::{
-    ast::{
-        precedence::{Assoc, Operator, PrecClimber},
-        types::{
-            Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field,
-            FieldInit, Func, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt,
-            Struct, Trait, TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
-        },
+use crate::ast::{
+    precedence::{Assoc, Operator, PrecClimber},
+    types::{
+        Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit,
+        Func, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt, Struct, Trait,
+        TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
     },
-    Rule,
 };
+
+/// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
+/// into a struct with a `CMinusParser::parse` method.
+#[derive(pest_derive::Parser)]
+#[grammar = "../grammar.pest"]
+crate struct CMinusParser;
 
 crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
     pair.into_inner()
