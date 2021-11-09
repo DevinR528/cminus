@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::ast::types::Range;
 
 use super::ast::DUMMY;
@@ -6,6 +8,23 @@ use super::ast::DUMMY;
 pub struct Ident {
     span: Range,
     name: String,
+}
+
+impl PartialEq<str> for Ident {
+    fn eq(&self, other: &str) -> bool {
+        self.name == other
+    }
+}
+impl PartialEq<Ident> for str {
+    fn eq(&self, other: &Ident) -> bool {
+        self == other.name
+    }
+}
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.name.fmt(f)
+    }
 }
 
 impl Ident {

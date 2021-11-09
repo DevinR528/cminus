@@ -53,7 +53,6 @@ keywords! {
     DollarCrate:        "$crate",
     Underscore:         "_",
 
-    // Keywords that are used in stable Rust.
     As:                 "as",
     Break:              "break",
     Const:              "const",
@@ -75,50 +74,10 @@ keywords! {
     Pub:                "pub",
     Ref:                "ref",
     Return:             "return",
-    SelfLower:          "self",
-    SelfUpper:          "Self",
-    Static:             "static",
+    Exit:               "exit",
     Struct:             "struct",
-    Super:              "super",
     Trait:              "trait",
     True:               "true",
-    Type:               "type",
-    Unsafe:             "unsafe",
     Use:                "use",
-    Where:              "where",
     While:              "while",
-
-    // Keywords that are used in unstable Rust or reserved for future use.
-    Abstract:           "abstract",
-    Become:             "become",
-    Box:                "box",
-    Do:                 "do",
-    Final:              "final",
-    Macro:              "macro",
-    Override:           "override",
-    Priv:               "priv",
-    Typeof:             "typeof",
-    Unsized:            "unsized",
-    Virtual:            "virtual",
-    Yield:              "yield",
-
-    // Edition-specific keywords that are used in stable Rust.
-    Async:              "async", // >= 2018 Edition only
-    Await:              "await", // >= 2018 Edition only
-    Dyn:                "dyn", // >= 2018 Edition only
-
-    // Edition-specific keywords that are used in unstable Rust or reserved for future use.
-    Try:                "try", // >= 2018 Edition only
-
-    // Special lifetime names
-    UnderscoreLifetime: "'_",
-    StaticLifetime:     "'static",
-
-    // Weak keywords, have special meaning only in specific contexts.
-    Auto:               "auto",
-    Catch:              "catch",
-    Default:            "default",
-    MacroRules:         "macro_rules",
-    Raw:                "raw",
-    Union:              "union",
 }

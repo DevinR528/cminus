@@ -1,6 +1,7 @@
 use std::{fmt, hash, ops};
 
-use crate::{ast::parsy::Ident, error::Error, typeck::TyCheckRes};
+use crate::ast::parsy::Ident;
+// use crate::{typeck::TyCheckRes, error::Error};
 
 crate trait TypeEquality {
     /// If the two types are considered equal.
@@ -126,7 +127,7 @@ pub enum BinOp {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FieldInit {
-    pub ident: String,
+    pub ident: Ident,
     pub init: Expression,
     pub span: Range,
 }
@@ -134,7 +135,7 @@ pub struct FieldInit {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     /// Access a named variable `a`.
-    Ident(String),
+    Ident(Ident),
     /// Remove indirection, follow a pointer to it's pointee.
     Deref { indir: usize, expr: Box<Expression> },
     /// Add indirection, refer to a variable by it's memory address (pointer).
@@ -142,7 +143,7 @@ pub enum Expr {
     /// Access an array by index `[expr][expr]`.
     ///
     /// Each `exprs` represents an access of a dimension of the array.
-    Array { ident: String, exprs: Vec<Expression> },
+    Array { ident: Ident, exprs: Vec<Expression> },
     /// A urnary operation `!expr`.
     Urnary { op: UnOp, expr: Box<Expression> },
     /// A binary operation `1 + 1`.
@@ -150,15 +151,15 @@ pub enum Expr {
     /// An expression wrapped in parantheses (expr).
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
-    Call { ident: String, args: Vec<Expression>, type_args: Vec<Type> },
+    Call { path: Path, args: Vec<Expression>, type_args: Vec<Type> },
     /// A call to a trait method with possible expression arguments `<<T>::trait>(expr)`.
-    TraitMeth { trait_: String, args: Vec<Expression>, type_args: Vec<Type> },
+    TraitMeth { trait_: Path, args: Vec<Expression>, type_args: Vec<Type> },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<Expression>, rhs: Box<Expression> },
     /// An ADT is initialized with field values.
-    StructInit { name: String, fields: Vec<FieldInit> },
+    StructInit { path: Path, fields: Vec<FieldInit> },
     /// An ADT is initialized with field values.
-    EnumInit { ident: String, variant: String, items: Vec<Expression> },
+    EnumInit { path: Path, variant: Ident, items: Vec<Expression> },
     /// An array initializer `{0, 1, 2}`
     ArrayInit { items: Vec<Expression> },
     /// A literal value `1, "hello", true`
@@ -183,7 +184,7 @@ impl Expr {
             Expr::AddrOf(expr) => expr.val.as_ident_string(),
             Expr::Array { ident, .. } => ident.to_string(),
             // TODO: hmm
-            Expr::Call { ident, .. } => ident.to_string(),
+            Expr::Call { path: ident, .. } => ident.to_string(),
             // TODO: hmm
             Expr::FieldAccess { lhs, rhs } => {
                 let lhs = lhs.val.as_ident_string();
@@ -214,22 +215,28 @@ pub struct Path {
     pub span: Range,
 }
 
+impl fmt::Display for Path {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.segs.iter().map(|id| id.name()).collect::<Vec<_>>().join("::").fmt(f)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     /// A generic type parameter `<T>`.
     ///
     /// N.B. This may be used as a type argument but should not be.
-    Generic { ident: String, bound: Option<String> },
+    Generic { ident: Ident, bound: Option<Path> },
     /// A static array of `size` containing item of `ty`.
     Array { size: usize, ty: Box<Type> },
     /// A struct defined by the user.
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
-    Struct { ident: String, gen: Vec<Type> },
+    Struct { ident: Ident, gen: Vec<Type> },
     /// An enum defined by the user.
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
-    Enum { ident: String, gen: Vec<Type> },
+    Enum { ident: Ident, gen: Vec<Type> },
     /// Any kind of path, this could be a type name or an import path
     Path(Path),
     /// A pointer to a type.
@@ -266,7 +273,7 @@ impl Ty {
     ///
     /// ## Panics
     /// if `Self` is not a `Ty::Generic`.
-    crate fn generic(&self) -> &str {
+    crate fn generic(&self) -> &Ident {
         if let Self::Generic { ident, .. } = self {
             ident
         } else {
@@ -275,7 +282,7 @@ impl Ty {
     }
 
     /// Returns iterator of all generic parameters [`T`, `U`, ..].
-    crate fn generics(&self) -> Vec<&str> {
+    crate fn generics(&self) -> Vec<&Ident> {
         match self {
             Ty::Generic { ident, .. } => vec![ident],
             Ty::Array { ty, .. } => ty.val.generics(),
@@ -392,30 +399,30 @@ impl Ty {
         dim
     }
 
-    crate fn index_dim(
-        &self,
-        tcxt: &TyCheckRes<'_, '_>,
-        exprs: &[Expression],
-        span: Range,
-    ) -> Option<Self> {
-        let mut new = self.clone();
-        for expr in exprs {
-            if let Ty::Array { ty, size } = new {
-                if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
-                    if i >= &(size as isize) {
-                        panic!(
-                            "{}",
-                            Error::error_with_span(tcxt, span, "out of bound of static array")
-                        )
-                    }
-                }
-                new = ty.val;
-            } else {
-                break;
-            }
-        }
-        Some(new)
-    }
+    // crate fn index_dim(
+    //     &self,
+    //     tcxt: &TyCheckRes<'_, '_>,
+    //     exprs: &[Expression],
+    //     span: Range,
+    // ) -> Option<Self> {
+    //     let mut new = self.clone();
+    //     for expr in exprs {
+    //         if let Ty::Array { ty, size } = new {
+    //             if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
+    //                 if i >= &(size as isize) {
+    //                     panic!(
+    //                         "{}",
+    //                         Error::error_with_span(tcxt, span, "out of bound of static array")
+    //                     )
+    //                 }
+    //             }
+    //             new = ty.val;
+    //         } else {
+    //             break;
+    //         }
+    //     }
+    //     Some(new)
+    // }
 }
 
 impl fmt::Display for Ty {
@@ -509,7 +516,7 @@ impl TypeEquality for Ty {
 #[derive(Clone, Debug)]
 pub struct Param {
     pub ty: Type,
-    pub ident: String,
+    pub ident: Ident,
     pub span: Range,
 }
 
@@ -531,7 +538,7 @@ impl fmt::Display for Block {
 
 #[derive(Clone, Debug)]
 pub enum Binding {
-    Wild(String),
+    Wild(Ident),
     Value(Value),
 }
 
@@ -548,13 +555,13 @@ impl fmt::Display for Binding {
 pub enum Pat {
     /// Match an enum variant `option::some(bind)`
     Enum {
-        ident: String,
-        variant: String,
-        items: Vec<Pat>,
+        ident: Path,
+        variant: Ident,
+        items: Vec<Pattern>,
     },
     Array {
         size: usize,
-        items: Vec<Pat>,
+        items: Vec<Pattern>,
     },
     Bind(Binding),
 }
@@ -574,14 +581,14 @@ impl fmt::Display for Pat {
                 } else {
                     format!(
                         "({})",
-                        items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
+                        items.iter().map(|b| b.val.to_string()).collect::<Vec<_>>().join(", ")
                     )
                 },
             ),
             Self::Array { size: _, items } => write!(
                 f,
                 "[{}]",
-                items.iter().map(|b| b.to_string()).collect::<Vec<_>>().join(", ")
+                items.iter().map(|b| b.val.to_string()).collect::<Vec<_>>().join(", ")
             ),
             Self::Bind(b) => write!(f, "{}", b),
         }
@@ -614,7 +621,7 @@ pub enum Stmt {
     /// If statement `if (expr) { stmts }`
     If { cond: Expression, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
-    While { cond: Expression, stmt: Box<Statement> },
+    While { cond: Expression, stmts: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expression, arms: Vec<MatchArm> },
     /// Read statment `read(ident)`
@@ -635,14 +642,14 @@ impl Spany for Stmt {}
 
 #[derive(Clone, Debug)]
 pub struct Field {
-    pub ident: String,
+    pub ident: Ident,
     pub ty: Type,
     pub span: Range,
 }
 
 #[derive(Clone, Debug)]
 pub struct Struct {
-    pub ident: String,
+    pub ident: Ident,
     pub fields: Vec<Field>,
     pub generics: Vec<Type>,
     pub span: Range,
@@ -651,7 +658,7 @@ pub struct Struct {
 #[derive(Clone, Debug)]
 pub struct Variant {
     /// The name of the variant `some`.
-    pub ident: String,
+    pub ident: Ident,
     /// The types contained in the variants "tuple".
     pub types: Vec<Type>,
     pub span: Range,
@@ -660,7 +667,7 @@ pub struct Variant {
 #[derive(Clone, Debug)]
 pub struct Enum {
     /// The name of the enum `<option>::none`.
-    pub ident: String,
+    pub ident: Ident,
     /// The variants of the enum `option::<some(type, type)>`.
     pub variants: Vec<Variant>,
     pub generics: Vec<Type>,
@@ -675,8 +682,8 @@ pub enum Adt {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Generic {
-    pub ident: String,
-    pub bound: (),
+    pub ident: Ident,
+    pub bound: Option<Path>,
     pub span: Range,
 }
 
@@ -687,11 +694,11 @@ pub struct Func {
     /// Name of the function.
     pub ident: Ident,
     /// The generic parameters listed for a function.
-    pub generics: Vec<Type>,
+    pub generics: Vec<Generic>,
     /// the type and identifier of each parameter.
     pub params: Vec<Param>,
     /// All the crap the function does.
-    pub stmts: Vec<Statement>,
+    pub stmts: Block,
     pub span: Range,
 }
 
@@ -702,7 +709,7 @@ impl Default for Func {
             ident: Ident::dummy(),
             generics: vec![],
             params: vec![],
-            stmts: vec![],
+            stmts: Block { stmts: vec![], span: DUMMY },
             span: DUMMY,
         }
     }
@@ -730,7 +737,7 @@ impl TraitMethod {
 
 #[derive(Clone, Debug)]
 pub struct Trait {
-    pub ident: String,
+    pub ident: Ident,
     pub generics: Vec<Type>,
     pub method: TraitMethod,
     pub span: Range,
@@ -738,7 +745,7 @@ pub struct Trait {
 
 #[derive(Clone, Debug)]
 pub struct Impl {
-    pub ident: String,
+    pub ident: Ident,
     pub type_arguments: Vec<Type>,
     pub method: Func,
     pub span: Range,
@@ -761,7 +768,7 @@ pub struct Const {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Var {
     pub ty: Type,
-    pub ident: String,
+    pub ident: Ident,
     pub span: Range,
 }
 
