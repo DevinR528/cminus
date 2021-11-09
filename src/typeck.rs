@@ -172,6 +172,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     impls.push(imp);
                 }
                 Decl::Adt(adt) => self.visit_adt(adt),
+                Decl::Const(co) => {}
             }
         }
         // Stabilize order which I'm not sure how it gets unordered

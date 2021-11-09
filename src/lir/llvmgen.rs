@@ -23,22 +23,46 @@ use crate::lir::{
 impl Ty {
     fn as_llvm_type<'ctx>(&self, context: &'ctx Context) -> BasicTypeEnum<'ctx> {
         match self {
-            Ty::Array { size, ty } => {
-                BasicTypeEnum::ArrayType(ty.as_llvm_type(context).array_type(*size as u32))
-            }
-            Ty::Struct { ident: _, gen: _, def } => BasicTypeEnum::StructType(context.struct_type(
-                &def.fields.iter().map(|f| f.ty.as_llvm_type(context)).collect::<Vec<_>>(),
-                false,
-            )),
-            Ty::Enum { ident, gen: _, def: _ } => {
-                BasicTypeEnum::StructType(context.opaque_struct_type(ident))
-            }
-            Ty::String => BasicTypeEnum::ArrayType(context.i16_type().array_type(0)),
+            Ty::Array { size, ty } => ty.as_llvm_type(context).array_type(*size as u32).into(),
+            Ty::Struct { ident: _, gen: _, def } => context
+                .struct_type(
+                    &def.fields.iter().map(|f| f.ty.as_llvm_type(context)).collect::<Vec<_>>(),
+                    false,
+                )
+                .into(),
+            Ty::Enum { ident, gen: _, def: _ } => context.opaque_struct_type(ident).into(),
+            Ty::String => context.i16_type().array_type(0).into(),
             Ty::Int => context.i64_type().into(),
             Ty::Char => context.i8_type().into(),
             Ty::Float => context.f64_type().into(),
             Ty::Bool => context.bool_type().into(),
             Ty::Ptr(t) => t.as_llvm_type(context).ptr_type(AddressSpace::Generic).into(),
+            hmm => todo!("{:?}", hmm),
+        }
+    }
+    fn as_llvm_null_value<'ctx>(&self, context: &'ctx Context) -> BasicValueEnum<'ctx> {
+        match self {
+            Ty::Array { size, ty } => {
+                ty.as_llvm_type(context).array_type(*size as u32).const_zero().into()
+            }
+            Ty::Struct { ident: _, gen: _, def } => context
+                .struct_type(
+                    &def.fields.iter().map(|f| f.ty.as_llvm_type(context)).collect::<Vec<_>>(),
+                    false,
+                )
+                .const_zero()
+                .into(),
+            Ty::Enum { ident, gen: _, def: _ } => {
+                context.opaque_struct_type(ident).const_zero().into()
+            }
+            Ty::String => context.i16_type().array_type(0).const_zero().into(),
+            Ty::Int => context.i64_type().const_zero().into(),
+            Ty::Char => context.i8_type().const_zero().into(),
+            Ty::Float => context.f64_type().const_zero().into(),
+            Ty::Bool => context.bool_type().const_zero().into(),
+            Ty::Ptr(t) => {
+                t.as_llvm_type(context).ptr_type(AddressSpace::Generic).const_null().into()
+            }
             hmm => todo!("{:?}", hmm),
         }
     }
@@ -399,8 +423,7 @@ impl<'ctx> LLVMGen<'ctx> {
             Stmt::VarDecl(vars) => {
                 for var in vars {
                     let alloca = self.create_entry_block_alloca(&var.ident, &var.ty, fnval);
-                    self.builder
-                        .build_store(alloca, var.ty.as_llvm_type(self.context).const_zero());
+                    self.builder.build_store(alloca, var.ty.as_llvm_null_value(self.context));
                     self.vars.insert(&var.ident, alloca.as_basic_value_enum());
                 }
             }

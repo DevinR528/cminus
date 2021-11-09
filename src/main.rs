@@ -13,7 +13,7 @@
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
-#![allow(clippy::if_then_panic)]
+#![allow(clippy::if_then_panic, unused)]
 
 use std::{
     alloc::System,
@@ -23,8 +23,7 @@ use std::{
     time::Instant,
 };
 
-use pest::Parser as _;
-use pest_derive::Parser;
+use ::pest::Parser as _;
 
 mod alloc;
 mod ast;
@@ -35,19 +34,13 @@ mod visit;
 
 use crate::{
     alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM},
-    ast::parse::parse_decl,
+    ast::parse::{parse_decl, CMinusParser, Rule},
     lir::visit::Visit as IrVisit,
     visit::Visit,
 };
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
-
-/// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
-/// into a struct with a `CMinusParser::parse` method.
-#[derive(Parser)]
-#[grammar = "../grammar.pest"]
-struct CMinusParser;
 
 /// Driver function responsible for lexing and parsing input.
 fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {

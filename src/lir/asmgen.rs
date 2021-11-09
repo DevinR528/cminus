@@ -1179,25 +1179,22 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let val = self.build_value(expr, None).unwrap();
 
-                if matches!(expr_type, Ty::String) {
-                    self.asm_buf.extend_from_slice(&[
-                        Instruction::Load {
-                            src: val,
-                            dst: Location::Register(Register::RSI),
-                            size: 8,
-                        },
-                        Instruction::Mov {
-                            src: ZERO,
-                            dst: Location::Register(Register::RAX),
-                            comment: "",
-                        },
-                        Instruction::Load {
-                            src: Location::NamedOffset(fmt_str),
-                            dst: Location::Register(Register::RDI),
-                            size,
-                        },
-                        Instruction::Call(Location::Label("scanf".to_owned())),
-                    ]);
+                // if matches!(expr_type, Ty::String) {
+                self.asm_buf.extend_from_slice(&[
+                    Instruction::Load { src: val, dst: Location::Register(Register::RSI), size: 8 },
+                    Instruction::Mov {
+                        src: ZERO,
+                        dst: Location::Register(Register::RAX),
+                        comment: "",
+                    },
+                    Instruction::Load {
+                        src: Location::NamedOffset(fmt_str),
+                        dst: Location::Register(Register::RDI),
+                        size,
+                    },
+                    Instruction::Call(Location::Label("scanf".to_owned())),
+                ]);
+                /*
                 } else if matches!(expr_type, Ty::Float) {
                     self.asm_buf.extend_from_slice(&[
                         Instruction::Load {
@@ -1237,6 +1234,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Instruction::Call(Location::Label("scanf".to_owned())),
                     ]);
                 }
+                */
             }
             Stmt::Write { expr } => {
                 fn format_str(ty: &Ty) -> &str {
