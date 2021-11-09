@@ -1128,6 +1128,7 @@ impl Ty {
             ty::Ty::Generic { ident, bound } => {
                 Ty::Generic { ident: ident.clone(), bound: bound.clone() }
             }
+            ty::Ty::Path(_) => todo!(),
             ty::Ty::Func { .. } => {
                 todo!("pretty sure this is an error")
             }
