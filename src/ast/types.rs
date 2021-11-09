@@ -1,6 +1,6 @@
 use std::{fmt, hash, ops};
 
-use crate::{error::Error, typeck::TyCheckRes};
+use crate::{ast::parsy::Ident, error::Error, typeck::TyCheckRes};
 
 crate trait TypeEquality {
     /// If the two types are considered equal.
@@ -209,6 +209,12 @@ impl Expr {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Path {
+    pub segs: Vec<Ident>,
+    pub span: Range,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     /// A generic type parameter `<T>`.
     ///
@@ -224,6 +230,8 @@ pub enum Ty {
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
     Enum { ident: String, gen: Vec<Type> },
+    /// Any kind of path, this could be a type name or an import path
+    Path(Path),
     /// A pointer to a type.
     ///
     /// This is equivalent to indirection, for each layer of `Ty::Ptr(..)` we have
@@ -278,7 +286,10 @@ impl Ty {
             Ty::Func { ret, params, .. } => {
                 params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
             }
-            Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => vec![],
+            Ty::Path(_) => todo!(),
+            Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
+                vec![]
+            }
         }
     }
 
@@ -294,6 +305,7 @@ impl Ty {
             Ty::Func { ret, params, .. } => {
                 ret.has_generics() | params.iter().any(|t| t.has_generics())
             }
+            Ty::Path(_) => todo!(),
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
         }
     }
@@ -445,6 +457,9 @@ impl fmt::Display for Ty {
             ),
             Ty::Ptr(t) => write!(f, "&{}", t.val),
             Ty::Ref(t) => write!(f, "*{}", t.val),
+            Ty::Path(p) => {
+                write!(f, "{}", p.segs.iter().map(|i| i.name()).collect::<Vec<_>>().join("::"))
+            }
             Ty::String => write!(f, "string"),
             Ty::Int => write!(f, "int"),
             Ty::Char => write!(f, "char"),
@@ -670,7 +685,7 @@ pub struct Func {
     /// The return type `int name() { stmts }`
     pub ret: Type,
     /// Name of the function.
-    pub ident: String,
+    pub ident: Ident,
     /// The generic parameters listed for a function.
     pub generics: Vec<Type>,
     /// the type and identifier of each parameter.
@@ -684,7 +699,7 @@ impl Default for Func {
     fn default() -> Self {
         Self {
             ret: Ty::Void.into_spanned(DUMMY),
-            ident: String::new(),
+            ident: Ident::dummy(),
             generics: vec![],
             params: vec![],
             stmts: vec![],
@@ -729,9 +744,20 @@ pub struct Impl {
     pub span: Range,
 }
 
+/// A const declaration.
+///
+/// `const foo: type = expr;`
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Const {
+    pub ty: Type,
+    pub ident: Ident,
+    pub init: Expression,
+    pub span: Range,
+}
+
 /// A variable declaration.
 ///
-/// `struct foo x;` or int x[]
+/// `struct foo x;` or `int x[]`
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Var {
     pub ty: Type,
@@ -746,6 +772,7 @@ pub enum Decl {
     Trait(Trait),
     Impl(Impl),
     Var(Var),
+    Const(Const),
 }
 
 impl Spany for Decl {}
@@ -796,7 +823,7 @@ impl From<ops::Range<usize>> for Range {
     }
 }
 
-const fn to_rng(other: ops::Range<usize>) -> Range {
+crate const fn to_rng(other: ops::Range<usize>) -> Range {
     let (start, end) = (other.start, other.end);
     Range { start, end }
 }
