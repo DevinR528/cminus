@@ -74,7 +74,7 @@ pub enum UnOp {
     OnesComp,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BinOp {
     /// The `*` operator.
     Mul,
