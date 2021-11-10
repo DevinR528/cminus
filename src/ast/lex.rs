@@ -874,42 +874,48 @@ pub enum TokenMatch {
 
 impl PartialEq<TokenKind> for TokenMatch {
     fn eq(&self, other: &TokenKind) -> bool {
-        match (self, other) {
+        matches!(
+            (self, other),
             (TokenMatch::LineComment, LineComment { .. })
-            | (TokenMatch::BlockComment, BlockComment { .. })
-            | (TokenMatch::Whitespace, Whitespace { .. })
-            | (TokenMatch::Ident, Ident)
-            | (TokenMatch::Literal, Literal { .. })
-            | (TokenMatch::Semi, Semi)
-            | (TokenMatch::Comma, Comma)
-            | (TokenMatch::Dot, Dot)
-            | (TokenMatch::OpenParen, OpenParen)
-            | (TokenMatch::CloseParen, CloseParen)
-            | (TokenMatch::OpenBrace, OpenBrace)
-            | (TokenMatch::CloseBrace, CloseParen)
-            | (TokenMatch::OpenBracket, OpenBracket)
-            | (TokenMatch::CloseBracket, CloseBracket)
-            | (TokenMatch::At, At)
-            | (TokenMatch::Pound, Pound)
-            | (TokenMatch::Tilde, Tilde)
-            | (TokenMatch::Question, Question)
-            | (TokenMatch::Colon, Colon)
-            | (TokenMatch::Dollar, Dollar)
-            | (TokenMatch::Eq, Eq)
-            | (TokenMatch::Bang, Bang)
-            | (TokenMatch::Lt, Lt)
-            | (TokenMatch::Gt, Gt)
-            | (TokenMatch::Minus, Minus)
-            | (TokenMatch::And, And)
-            | (TokenMatch::Or, Or)
-            | (TokenMatch::Plus, Plus)
-            | (TokenMatch::Star, Star)
-            | (TokenMatch::Slash, Slash)
-            | (TokenMatch::Caret, Caret)
-            | (TokenMatch::Percent, Percent)
-            | (TokenMatch::Unknown, Unknown) => true,
-            _ => false,
-        }
+                | (TokenMatch::BlockComment, BlockComment { .. })
+                | (TokenMatch::Whitespace, Whitespace { .. })
+                | (TokenMatch::Ident, Ident)
+                | (TokenMatch::Literal, Literal { .. })
+                | (TokenMatch::Semi, Semi)
+                | (TokenMatch::Comma, Comma)
+                | (TokenMatch::Dot, Dot)
+                | (TokenMatch::OpenParen, OpenParen)
+                | (TokenMatch::CloseParen, CloseParen)
+                | (TokenMatch::OpenBrace, OpenBrace)
+                | (TokenMatch::CloseBrace, CloseBrace)
+                | (TokenMatch::OpenBracket, OpenBracket)
+                | (TokenMatch::CloseBracket, CloseBracket)
+                | (TokenMatch::At, At)
+                | (TokenMatch::Pound, Pound)
+                | (TokenMatch::Tilde, Tilde)
+                | (TokenMatch::Question, Question)
+                | (TokenMatch::Colon, Colon)
+                | (TokenMatch::Dollar, Dollar)
+                | (TokenMatch::Eq, Eq)
+                | (TokenMatch::Bang, Bang)
+                | (TokenMatch::Lt, Lt)
+                | (TokenMatch::Gt, Gt)
+                | (TokenMatch::Minus, Minus)
+                | (TokenMatch::And, And)
+                | (TokenMatch::Or, Or)
+                | (TokenMatch::Plus, Plus)
+                | (TokenMatch::Star, Star)
+                | (TokenMatch::Slash, Slash)
+                | (TokenMatch::Caret, Caret)
+                | (TokenMatch::Percent, Percent)
+                | (TokenMatch::Unknown, Unknown)
+        )
+    }
+}
+
+impl PartialEq<TokenMatch> for TokenKind {
+    fn eq(&self, other: &TokenMatch) -> bool {
+        other.eq(self)
     }
 }
 

@@ -19,6 +19,7 @@ macro_rules! keywords {
         pub enum Keywords {
             $($tkn),*
         }
+        pub use Keywords::*;
         impl std::convert::TryFrom<&str> for Keywords {
             type Error = $crate::ast::parsy::error::ParseError;
 
