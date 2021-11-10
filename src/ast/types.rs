@@ -807,7 +807,7 @@ impl<T: TypeEquality> TypeEquality for Option<&T> {
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "${:?}@{:?}", self.val, self.span)
+        write!(f, "${:#?}@{:?}", self.val, self.span)
     }
 }
 
