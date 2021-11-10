@@ -10,6 +10,7 @@ pub enum ParseError {
     InvalidIntLiteral,
     InvalidFloatLiteral,
     Expected(&'static str, String),
+    Error(&'static str),
     Other,
 }
 
@@ -37,6 +38,9 @@ impl fmt::Display for ParseError {
             }
             ParseError::Expected(exp, found) => {
                 write!(f, "Parser encountered error, expected {} found {}", exp, found)
+            }
+            ParseError::Error(exp) => {
+                write!(f, "Parser encountered error, expected {}", exp)
             }
             ParseError::Other => f.write_str("ICE"),
         }
