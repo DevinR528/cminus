@@ -32,9 +32,6 @@ var_name = { addrof? ~ ident ~ (LBK ~ integer ~ RBK)* }
 
 stmt = {
     io_stmt
-    | call_stmt
-    | ret_stmt
-    | exit_stmt
     | math_assign
     | assign
     | if_stmt

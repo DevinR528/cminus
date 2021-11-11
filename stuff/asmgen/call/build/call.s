@@ -41,8 +41,6 @@ main:
     mov $0, %rax
     leaq .int_wformat(%rip), %rdi
     call printf
-    leave
     movq $0, %rax
-    ret
     leave
     ret

@@ -548,9 +548,9 @@ impl fmt::Display for Binding {
 pub enum Pat {
     /// Match an enum variant `option::some(bind)`
     Enum {
-        ident: String,
-        variant: String,
-        items: Vec<Pat>,
+        path: Path,
+        variant: Ident,
+        items: Vec<Pattern>,
     },
     Array {
         size: usize,
@@ -564,10 +564,10 @@ impl Spany for Pat {}
 impl fmt::Display for Pat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Enum { ident, variant, items, .. } => write!(
+            Self::Enum { path, variant, items, .. } => write!(
                 f,
                 "{}::{}{}",
-                ident,
+                path,
                 variant,
                 if items.is_empty() {
                     "".to_owned()
@@ -607,6 +607,8 @@ pub enum Stmt {
     VarDecl(Vec<Var>),
     /// Assignment `lval = rval;`
     Assign { lval: Expression, rval: Expression },
+    /// Assignment operations `lval += rval;`
+    AssignOp { lval: Expression, rval: Expression, op: BinOp },
     /// A call statement `call(arg1, arg2)`
     Call(Expression),
     /// A trait method call `<<T>::trait>(args)`
