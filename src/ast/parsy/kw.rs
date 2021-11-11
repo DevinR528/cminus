@@ -83,10 +83,7 @@ keywords! {
     Super:              "super",
     Trait:              "trait",
     True:               "true",
-    Type:               "type",
-    Unsafe:             "unsafe",
-    Use:                "use",
-    Where:              "where",
+    Import:             "import",
     While:              "while",
 
     // Keywords that are used in unstable Rust or reserved for future use.

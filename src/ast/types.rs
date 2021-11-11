@@ -644,7 +644,7 @@ pub struct Field {
 pub struct Struct {
     pub ident: String,
     pub fields: Vec<Field>,
-    pub generics: Vec<Type>,
+    pub generics: Vec<Generic>,
     pub span: Range,
 }
 
@@ -663,7 +663,7 @@ pub struct Enum {
     pub ident: String,
     /// The variants of the enum `option::<some(type, type)>`.
     pub variants: Vec<Variant>,
-    pub generics: Vec<Type>,
+    pub generics: Vec<Generic>,
     pub span: Range,
 }
 
@@ -730,8 +730,8 @@ impl TraitMethod {
 
 #[derive(Clone, Debug)]
 pub struct Trait {
-    pub ident: String,
-    pub generics: Vec<Type>,
+    pub ident: Ident,
+    pub generics: Vec<Generic>,
     pub method: TraitMethod,
     pub span: Range,
 }
@@ -773,6 +773,7 @@ pub enum Decl {
     Impl(Impl),
     Var(Var),
     Const(Const),
+    Import(Path),
 }
 
 impl Spany for Decl {}
