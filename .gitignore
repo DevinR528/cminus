@@ -1,7 +1,5 @@
 /target
 Cargo.lock
-/CminusParser
-/CminusParser.tgz
-/out
 /input
 .vscode
+.idea

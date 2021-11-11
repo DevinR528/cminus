@@ -79,6 +79,6 @@ keywords! {
     Struct:             "struct",
     Trait:              "trait",
     True:               "true",
-    Use:                "use",
+    Import:             "import",
     While:              "while",
 }
