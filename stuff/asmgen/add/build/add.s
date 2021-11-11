@@ -36,5 +36,3 @@ main:
     leave
     movq $0, %rax
     ret
-    leave
-    ret
