@@ -15,6 +15,15 @@ impl<'input> Error<'input> {
     crate fn error_with_span(tctx: &TyCheckRes<'_, 'input>, span: Range, msg: &str) -> Self {
         Self { name: tctx.name, input: tctx.input, span, msg: msg.to_owned(), help: None }
     }
+
+    crate fn error_from_parts(
+        name: &'input str,
+        input: &'input str,
+        span: Range,
+        msg: &str,
+    ) -> Self {
+        Self { name, input, span, msg: msg.to_owned(), help: None }
+    }
 }
 
 impl fmt::Display for Error<'_> {

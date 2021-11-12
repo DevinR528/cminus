@@ -16,12 +16,14 @@ use inkwell::{
 };
 
 use crate::{
-    ast::parse::Ident,
+    ast::parse::symbol::Ident,
     lir::{
-        lower::{BinOp, CallExpr, Expr, Func, LValue, Stmt, Ty, Val, Var},
+        lower::{BinOp, CallExpr, Expr, Func, LValue, Stmt, Ty, Val},
         visit::Visit,
     },
 };
+
+use super::lower::Const;
 
 impl Ty {
     fn as_llvm_type<'ctx>(&self, context: &'ctx Context) -> BasicTypeEnum<'ctx> {
@@ -427,12 +429,11 @@ impl<'ctx> LLVMGen<'ctx> {
 
     fn gen_statement(&mut self, fnval: FunctionValue<'ctx>, stmt: &'ctx Stmt) {
         match stmt {
-            Stmt::VarDecl(vars) => {
-                for var in vars {
-                    let alloca = self.create_entry_block_alloca(var.ident.name(), &var.ty, fnval);
-                    self.builder.build_store(alloca, var.ty.as_llvm_null_value(self.context));
-                    self.vars.insert(var.ident, alloca.as_basic_value_enum());
-                }
+            Stmt::Const(var) => {
+                let alloca = self.create_entry_block_alloca(var.ident.name(), &var.ty, fnval);
+                self.builder
+                    .build_store(alloca, self.build_value(&var.init, Some(var.ident)).unwrap());
+                self.vars.insert(var.ident, alloca.as_basic_value_enum());
             }
             Stmt::Assign { lval, rval } => {
                 let lptr = self.get_pointer(lval).unwrap();
@@ -559,7 +560,7 @@ impl<'ctx> LLVMGen<'ctx> {
 }
 
 impl<'ast> Visit<'ast> for LLVMGen<'ast> {
-    fn visit_var(&mut self, var: &'ast Var) {
+    fn visit_var(&mut self, var: &'ast Const) {
         let global = self.module.add_global(
             var.ty.as_llvm_type(self.context),
             Some(AddressSpace::Global),

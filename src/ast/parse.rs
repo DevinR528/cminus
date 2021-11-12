@@ -1,19 +1,16 @@
 use std::convert::TryInto;
 
-crate use crate::ast::{
-    lex::{self, TokenKind, TokenMatch},
+use crate::ast::{
+    lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
     parse::symbol::Ident,
     types as ast,
-};
-use crate::ast::{
-    lex::{LiteralKind, Token},
     types::{Path, Spany, Val},
 };
 
-mod error;
+crate mod error;
 crate mod kw;
 mod prec;
-mod symbol;
+crate mod symbol;
 
 use error::ParseError;
 use prec::{AssocOp, Fixit};
@@ -32,6 +29,8 @@ pub struct AstBuilder<'a> {
     input: &'a str,
     input_idx: usize,
     items: Vec<ast::Declaration>,
+    call_stack: [&'static str; 10],
+    stack_idx: usize,
 }
 
 // FIXME: audit the whitespace eating, pretty sure I call it unnecessarily
@@ -50,6 +49,14 @@ impl<'a> AstBuilder<'a> {
 
     pub fn into_items(self) -> Vec<ast::Declaration> {
         self.items
+    }
+
+    fn push_call_stack(&mut self, s: &'static str) {
+        if self.stack_idx >= 10 {
+            self.stack_idx = 0;
+        }
+        self.call_stack[self.stack_idx] = s;
+        self.stack_idx += 1;
     }
 
     pub fn parse(&mut self) -> ParseResult<()> {
@@ -111,7 +118,9 @@ impl<'a> AstBuilder<'a> {
                         break;
                     }
                 }
-                TokenKind::Unknown => return Err(ParseError::Error("encountered unknown token")),
+                TokenKind::Unknown => {
+                    return Err(ParseError::Error("encountered unknown token", self.curr_span()))
+                }
                 tkn => unreachable!("Unknown token {:?}", tkn),
             }
             self.eat_whitespace();
@@ -121,6 +130,7 @@ impl<'a> AstBuilder<'a> {
 
     // Parse `const name: type = expr;`
     fn parse_const(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_const");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Const);
@@ -149,6 +159,7 @@ impl<'a> AstBuilder<'a> {
 
     // Parse `fn name<T>(it: T) -> int { .. }` with or without generics.
     fn parse_fn(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_fn");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Fn);
@@ -185,6 +196,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn parse_impl(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_fn");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Impl);
@@ -208,6 +220,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn parse_struct(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_struct");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Struct);
@@ -228,6 +241,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn parse_enum(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_enum");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Enum);
@@ -248,6 +262,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn parse_trait(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_trait");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Impl);
@@ -255,8 +270,6 @@ impl<'a> AstBuilder<'a> {
 
         let path = self.make_path()?;
         let generics = self.make_generics()?;
-
-        println!("{:?}", self.curr);
 
         self.eat_if(&TokenMatch::OpenBrace);
         self.eat_whitespace();
@@ -269,6 +282,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn parse_import(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_import");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Import);
@@ -284,6 +298,7 @@ impl<'a> AstBuilder<'a> {
 
     // Parse `fn name<T>(it: T) -> int;` with or without generics.
     fn make_trait_fn(&mut self) -> ParseResult<ast::TraitMethod> {
+        self.push_call_stack("make_trait_fn");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Fn);
@@ -327,6 +342,8 @@ impl<'a> AstBuilder<'a> {
 
     /// Parse `name[ws]([ws]type[ws],...)[ws], name(a, b), ..`.
     fn make_variants(&mut self) -> ParseResult<Vec<ast::Variant>> {
+        self.push_call_stack("make_variants");
+
         let mut variants = vec![];
         loop {
             let start = self.input_idx;
@@ -357,6 +374,7 @@ impl<'a> AstBuilder<'a> {
 
     /// Parse `name[ws]:[ws]type[ws],[ws]...`
     fn make_fields(&mut self) -> ParseResult<Vec<ast::Field>> {
+        self.push_call_stack("make_fields");
         let mut params = vec![];
         loop {
             // We have reached the end of the struct def (this allows trailing commas)
@@ -389,6 +407,8 @@ impl<'a> AstBuilder<'a> {
 
     /// parse a list of expressions.
     fn make_field_list(&mut self) -> ParseResult<Vec<ast::FieldInit>> {
+        self.push_call_stack("make_field_list");
+
         Ok(if self.eat_if(&TokenMatch::OpenBrace) {
             let mut exprs = vec![];
             loop {
@@ -426,6 +446,8 @@ impl<'a> AstBuilder<'a> {
         open: &TokenMatch,
         close: &TokenMatch,
     ) -> ParseResult<Vec<ast::Expression>> {
+        self.push_call_stack("make_expr_list");
+
         Ok(if self.eat_if(open) {
             let mut exprs = vec![];
             loop {
@@ -458,6 +480,7 @@ impl<'a> AstBuilder<'a> {
     /// - expression tress
     fn make_expr(&mut self) -> ParseResult<ast::Expression> {
         let start = self.input_idx;
+        self.push_call_stack("make_expr");
         self.eat_whitespace();
 
         if self.curr.kind == TokenMatch::OpenBracket {
@@ -548,7 +571,13 @@ impl<'a> AstBuilder<'a> {
                 match key {
                     kw::Enum => self.make_enum_init(),
                     kw::Struct => self.make_struct_init(),
-                    t => todo!("error {:?}", self.curr),
+                    kw::True => {
+                        Ok(ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span()))
+                    }
+                    kw::False => {
+                        Ok(ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span()))
+                    }
+                    t => Err(ParseError::Error("unexpected keyword", self.curr_span())),
                 }
             } else {
                 // TODO: Refactor out
@@ -636,6 +665,7 @@ impl<'a> AstBuilder<'a> {
                                     return Err(ParseError::Expected(
                                         "a term",
                                         format!("only the {} operand", op),
+                                        self.curr_span(),
                                     ));
                                 }
                                 (None, None) => {
@@ -647,11 +677,13 @@ impl<'a> AstBuilder<'a> {
                     }
                 }
 
-                output.pop().ok_or(ParseError::Error("failed to generate expression"))
+                output.pop().ok_or_else(|| {
+                    ParseError::Error("failed to generate expression", self.curr_span())
+                })
             }
         } else {
             // See the above 4 todos/fixes
-            todo!("{:?}", self.curr);
+            Err(ParseError::Error("no top level expression", self.curr_span()))
         }
     }
 
@@ -664,6 +696,7 @@ impl<'a> AstBuilder<'a> {
     /// - pointers
     /// - addrof maybe
     fn advance_to_op(&mut self) -> ParseResult<(ast::Expression, Option<AssocOp>)> {
+        self.push_call_stack("advance_to_op");
         Ok(if self.curr.kind == TokenMatch::Ident {
             let id = self.make_lh_expr()?;
             self.eat_whitespace();
@@ -759,6 +792,7 @@ impl<'a> AstBuilder<'a> {
     /// - array index
     /// - fn call
     fn make_lh_expr(&mut self) -> ParseResult<ast::Expression> {
+        self.push_call_stack("make_lh_expr");
         Ok(if self.curr.kind == TokenMatch::Ident {
             let start = self.curr_span().start;
 
@@ -871,6 +905,7 @@ impl<'a> AstBuilder<'a> {
 
     /// Build an optional `AssocOp`.
     fn make_op(&mut self) -> ParseResult<Option<AssocOp>> {
+        self.push_call_stack("make_op");
         Ok(match self.curr.kind {
             TokenKind::Eq => {
                 self.eat_if(&TokenMatch::Eq);
@@ -992,6 +1027,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_enum_init(&mut self) -> ParseResult<ast::Expression> {
+        self.push_call_stack("make_enum_init");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Enum);
@@ -1004,6 +1040,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_struct_init(&mut self) -> ParseResult<ast::Expression> {
+        self.push_call_stack("make_struct_init");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Struct);
@@ -1016,6 +1053,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_block(&mut self) -> ParseResult<ast::Block> {
+        self.push_call_stack("(&");
         let start = self.input_idx;
         let mut stmts = vec![];
         // println!("{:?}", self.curr);
@@ -1043,6 +1081,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_stmt(&mut self) -> ParseResult<ast::Statement> {
+        self.push_call_stack("mut ");
         let start = self.input_idx;
         let stmt = if self.eat_if_kw(kw::Let) {
             self.make_assignment()?
@@ -1068,6 +1107,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_assignment(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("make_assignment");
         self.eat_whitespace();
 
         let lval = self.make_lh_expr()?;
@@ -1084,6 +1124,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_if_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("(&");
         self.eat_whitespace();
 
         let cond = self.make_expr()?;
@@ -1104,6 +1145,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_while_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("make_while_stmt");
         self.eat_whitespace();
 
         let cond = self.make_expr()?;
@@ -1117,6 +1159,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_match_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("make_match_stmt");
         self.eat_whitespace();
 
         let expr = self.make_expr()?;
@@ -1134,6 +1177,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_return_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("make_return_stmt");
         self.eat_whitespace();
 
         if self.curr.kind == TokenMatch::Semi {
@@ -1147,6 +1191,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_expr_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("make_expr_stmt");
         // @copypaste We are sort of taking this from `advance_to_op` but limiting the choices to
         // just calls and trait method calls
         Ok(if self.curr.kind == TokenMatch::Ident {
@@ -1154,12 +1199,14 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
 
             match expr.val {
+                // TODO: assingment is also valid here
+                //
+                // `x[0] = 6; x = call; v.v.f = yo;
                 ast::Expr::Ident(_) => {
                     // +=
                     if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
                         self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
                         self.eat_whitespace();
-                        println!("{}", &self.input[self.input_idx..]);
                         let rval = self.make_expr()?;
                         ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
                     // -=
@@ -1177,9 +1224,32 @@ impl<'a> AstBuilder<'a> {
                         todo!("{}", &self.input[self.input_idx..])
                     }
                 }
-                ast::Expr::Deref { indir, expr } => todo!(),
+                ast::Expr::Deref { indir, expr } => {
+                    return Err(ParseError::Error("expression statement", self.curr_span()))
+                }
                 ast::Expr::AddrOf(_) => todo!(),
-                ast::Expr::Array { ident, exprs } => todo!(),
+                ast::Expr::Array { .. } => {
+                    // +=
+                    if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+                    // -=
+                    } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+                    } else if self.curr.kind == TokenMatch::Eq {
+                        self.eat_if(&TokenMatch::Eq);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::Assign { lval: expr, rval }
+                    } else {
+                        todo!("{}", &self.input[self.input_idx..])
+                    }
+                }
                 ast::Expr::Urnary { op, expr } => todo!(),
                 ast::Expr::Binary { op, lhs, rhs } => todo!(),
                 ast::Expr::Parens(_) => todo!(),
@@ -1200,6 +1270,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_arms(&mut self) -> ParseResult<Vec<ast::MatchArm>> {
+        self.push_call_stack("make_arms");
         self.eat_whitespace();
         let mut arms = vec![];
         loop {
@@ -1227,6 +1298,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_pat(&mut self) -> ParseResult<ast::Pattern> {
+        self.push_call_stack("make_pat");
         let start = self.input_idx;
 
         // TODO: make this more robust
@@ -1236,10 +1308,9 @@ impl<'a> AstBuilder<'a> {
             // TODO: make this more robust
             // eventually calling an enum by variant needs to work which is the same as an ident
             if path.segs.len() > 1 {
-                let variant = path
-                    .segs
-                    .pop()
-                    .ok_or_else(|| ParseError::Expected("pattern", "nothing".to_string()))?;
+                let variant = path.segs.pop().ok_or_else(|| {
+                    ParseError::Expected("pattern", "nothing".to_string(), self.curr_span())
+                })?;
 
                 // @PARSE_ENUMS
                 let items = if self.eat_if(&TokenMatch::OpenParen) {
@@ -1307,6 +1378,7 @@ impl<'a> AstBuilder<'a> {
 
     /// Parse `ident[ws]:[ws]type[ws],[ws]ident: type[ws]` everything inside the parens is optional.
     fn make_params(&mut self) -> ParseResult<Vec<ast::Param>> {
+        self.push_call_stack("make_params");
         let mut params = vec![];
         loop {
             let start = self.input_idx;
@@ -1335,6 +1407,7 @@ impl<'a> AstBuilder<'a> {
 
     /// Parse `<ident: ident, ident: ident>[ws]` all optional.
     fn make_generics(&mut self) -> ParseResult<Vec<ast::Generic>> {
+        self.push_call_stack("make_generics");
         let mut gens = vec![];
         if self.eat_if(&TokenMatch::Lt) {
             loop {
@@ -1368,6 +1441,7 @@ impl<'a> AstBuilder<'a> {
 
     /// Parse a literal.
     fn make_literal(&mut self) -> ParseResult<ast::Value> {
+        self.push_call_stack("make_literal");
         // @copypaste
         Ok(match self.curr.kind {
             TokenKind::Ident => {
@@ -1391,13 +1465,22 @@ impl<'a> AstBuilder<'a> {
                 let text = self.input_curr();
 
                 let val = match kind {
-                    LiteralKind::Int { base, empty_int } => Val::Int(text.parse()?),
-                    LiteralKind::Float { base, empty_exponent } => Val::Float(text.parse()?),
+                    LiteralKind::Int { base, empty_int } => Val::Int(
+                        text.parse()
+                            .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
+                    ),
+                    LiteralKind::Float { base, empty_exponent } => Val::Float(
+                        text.parse()
+                            .map_err(|_| ParseError::InvalidFloatLiteral(self.curr_span()))?,
+                    ),
                     LiteralKind::Char { terminated } => {
                         if text.len() == 1 {
                             Val::Char(self.input_curr().chars().next().unwrap())
                         } else {
-                            return Err(ParseError::Error("multi character `char`"));
+                            return Err(ParseError::Error(
+                                "multi character `char`",
+                                self.curr_span(),
+                            ));
                         }
                     }
                     LiteralKind::Str { terminated } => {
@@ -1413,13 +1496,14 @@ impl<'a> AstBuilder<'a> {
             }
             tkn => {
                 todo!("{:?}", tkn)
-                // return Err(ParseError::IncorrectToken);
+                // return Err(Error::IncorrectToken);
             }
         })
     }
 
     /// parse a list of types .
     fn make_types(&mut self, open: &TokenMatch, close: &TokenMatch) -> ParseResult<Vec<ast::Type>> {
+        self.push_call_stack("make_types");
         Ok(if self.eat_if(open) {
             let mut tys = vec![];
             loop {
@@ -1448,6 +1532,8 @@ impl<'a> AstBuilder<'a> {
     ///
     /// This also handles `*type, [lit_int, type]` and user defined items.
     fn make_ty(&mut self) -> ParseResult<ast::Type> {
+        self.push_call_stack("make_ty");
+
         let start = self.input_idx;
         Ok(match self.curr.kind {
             TokenKind::Ident => {
@@ -1488,9 +1574,15 @@ impl<'a> AstBuilder<'a> {
             ..
         } = self.curr.kind
         {
-            self.input_curr().parse()?
+            self.input_curr()
+                .parse()
+                .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?
         } else {
-            return Err(ParseError::Expected("lit", self.input_curr().to_string()));
+            return Err(ParseError::Expected(
+                "lit",
+                self.input_curr().to_string(),
+                self.curr_span(),
+            ));
         };
         // [ -->lit; -->type]
         self.eat_if(&TokenMatch::Literal);

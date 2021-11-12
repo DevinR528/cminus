@@ -1,6 +1,6 @@
 use crate::ast::types::{
-    Adt, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic, Impl,
-    MatchArm, Param, Statement, Stmt, Struct, Trait, Type, Var, Variant,
+    Adt, Block, Const, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic,
+    Impl, MatchArm, Param, Statement, Stmt, Struct, Trait, Type, Variant,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -28,7 +28,7 @@ pub trait Visit<'ast>: Sized {
         walk_adt(self, adt)
     }
 
-    fn visit_var(&mut self, var: &'ast Var) {
+    fn visit_var(&mut self, var: &'ast Const) {
         walk_var(self, var)
     }
 
@@ -66,7 +66,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
         Decl::Func(func) => {
             visit.visit_func(func);
         }
-        Decl::Var(var) => {
+        Decl::Const(var) => {
             visit.visit_var(var);
         }
         Decl::Trait(trait_) => visit.visit_trait(trait_),
@@ -127,7 +127,7 @@ crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, adt: &'ast Adt) {
     }
 }
 
-crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &'ast Var) {
+crate fn walk_var<'ast, V: Visit<'ast>>(visit: &mut V, var: &'ast Const) {
     // visit.visit_ident(&var.ident);
     visit.visit_ty(&var.ty);
 }
@@ -148,11 +148,7 @@ crate fn walk_match_arm<'ast, V: Visit<'ast>>(visit: &mut V, arms: &'ast [MatchA
 
 crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
     match &stmt.val {
-        Stmt::VarDecl(vars) => {
-            for var in vars {
-                visit.visit_var(var)
-            }
-        }
+        Stmt::Const(var) => visit.visit_var(var),
         Stmt::Assign { lval, rval, .. } => {
             // visit.visit_ident(ident);
             visit.visit_expr(lval);
@@ -282,7 +278,7 @@ pub trait VisitMut<'ast>: Sized {
         walk_mut_adt(self, adt)
     }
 
-    fn visit_var(&mut self, var: &'ast mut Var) {
+    fn visit_var(&mut self, var: &'ast mut Const) {
         walk_mut_var(self, var)
     }
 
@@ -319,7 +315,7 @@ crate fn walk_mut_decl<'ast, V: VisitMut<'ast>>(visit: &mut V, item: &'ast mut D
         Decl::Func(func) => {
             visit.visit_func(func);
         }
-        Decl::Var(var) => {
+        Decl::Const(var) => {
             visit.visit_var(var);
         }
         Decl::Trait(trait_) => visit.visit_trait(trait_),
@@ -380,7 +376,7 @@ crate fn walk_mut_adt<'ast, V: VisitMut<'ast>>(visit: &mut V, adt: &'ast mut Adt
     }
 }
 
-crate fn walk_mut_var<'ast, V: VisitMut<'ast>>(visit: &mut V, var: &'ast mut Var) {
+crate fn walk_mut_var<'ast, V: VisitMut<'ast>>(visit: &mut V, var: &'ast mut Const) {
     // visit.visit_ident(&var.ident);
     visit.visit_ty(&mut var.ty);
 }
@@ -401,11 +397,7 @@ crate fn walk_mut_match_arm<'ast, V: VisitMut<'ast>>(visit: &mut V, arms: &'ast 
 
 crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut Statement) {
     match &mut stmt.val {
-        Stmt::VarDecl(vars) => {
-            for var in vars {
-                visit.visit_var(var)
-            }
-        }
+        Stmt::Const(var) => visit.visit_var(var),
         Stmt::Assign { lval, rval, .. } => {
             // visit.visit_ident(ident);
             visit.visit_expr(lval);

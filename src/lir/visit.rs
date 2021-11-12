@@ -1,4 +1,4 @@
-use crate::lir::lower::{Adt, Expr, Func, Impl, Item, MatchArm, Param, Stmt, Trait, Var};
+use crate::lir::lower::{Adt, Const, Expr, Func, Impl, Item, MatchArm, Param, Stmt, Trait};
 
 use super::lower::{Block, FieldInit, LValue};
 
@@ -25,7 +25,7 @@ pub trait Visit<'ast>: Sized {
 
     fn visit_adt(&mut self, _adt: &'ast Adt) {}
 
-    fn visit_var(&mut self, _var: &'ast Var) {}
+    fn visit_var(&mut self, _var: &'ast Const) {}
 
     fn visit_params(&mut self, _params: &[Param]) {}
 
@@ -57,7 +57,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Item) {
         Item::Func(func) => {
             visit.visit_func(func);
         }
-        Item::Var(var) => {
+        Item::Const(var) => {
             visit.visit_var(var);
         }
         Item::Trait(trait_) => visit.visit_trait(trait_),
@@ -116,11 +116,7 @@ crate fn walk_match_arm<'ast, V: Visit<'ast>>(visit: &mut V, arms: &'ast [MatchA
 
 crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
     match stmt {
-        Stmt::VarDecl(vars) => {
-            for var in vars {
-                visit.visit_var(var)
-            }
-        }
+        Stmt::Const(var) => visit.visit_var(var),
         Stmt::Assign { lval, rval, .. } => {
             // visit.visit_ident(ident);
             visit.visit_lval(lval);

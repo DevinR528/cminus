@@ -7,7 +7,7 @@ use std::str::Chars;
 #[derive(Debug)]
 pub struct Cursor<'a> {
     initial_len: usize,
-    chars: Chars<'a>,
+    crate chars: Chars<'a>,
     #[cfg(debug_assertions)]
     prev: char,
 }
