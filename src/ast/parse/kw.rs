@@ -21,14 +21,14 @@ macro_rules! keywords {
         }
         pub use Keywords::*;
         impl std::convert::TryFrom<&str> for Keywords {
-            type Error = $crate::ast::parsy::error::ParseError;
+            type Error = $crate::ast::parse::error::ParseError;
 
             fn try_from(s: &str) -> std::result::Result<Self, Self::Error> {
                 std::result::Result::Ok(match s {
                     $(
                         $rep => Self::$tkn,
                     )*
-                    _ => std::result::Result::Err($crate::ast::parsy::error::ParseError::IncorrectToken)?
+                    _ => return Err($crate::ast::parse::error::ParseError::IncorrectToken)
                 })
             }
         }
@@ -41,7 +41,17 @@ macro_rules! keywords {
                 }
             }
         }
-    };
+
+    pub(super) static INTERN: ::once_cell::sync::Lazy<
+        ::parking_lot::Mutex<$crate::ast::parse::symbol::intern::Interner>
+    > =
+        ::once_cell::sync::Lazy::new(|| {
+            let x = $crate::ast::parse::symbol::intern::Interner::pre_load(&[
+                $( $rep, )*
+            ]);
+            ::parking_lot::Mutex::new(x)
+        });
+    }
 }
 
 // After modifying this list adjust `is_special`, `is_used_keyword`/`is_unused_keyword`,

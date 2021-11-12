@@ -1,11 +1,10 @@
 use std::{fmt, hash, ops};
 
-use crate::ast::parsy::Ident;
-// use crate::{typeck::TyCheckRes, error::Error};
+use crate::{ast::parse::Ident, error::Error, typeck::TyCheckRes};
 
-crate trait TypeEquality {
+crate trait TypeEquality<T = Self> {
     /// If the two types are considered equal.
-    fn is_ty_eq(&self, other: &Self) -> bool;
+    fn is_ty_eq(&self, other: &T) -> bool;
 }
 
 crate trait Spany: Sized {
@@ -21,7 +20,7 @@ pub enum Val {
     Int(isize),
     Char(char),
     Bool(bool),
-    Str(String),
+    Str(Ident),
 }
 
 impl hash::Hash for Val {
@@ -177,27 +176,17 @@ impl Expr {
     //     }
     // }
 
-    crate fn as_ident_string(&self) -> String {
+    crate fn as_ident(&self) -> Ident {
         match self {
-            Expr::Ident(id) => id.to_string(),
-            Expr::Deref { expr, .. } => expr.val.as_ident_string(),
-            Expr::AddrOf(expr) => expr.val.as_ident_string(),
-            Expr::Array { ident, .. } => ident.to_string(),
+            Expr::Ident(id) => *id,
+            Expr::Deref { expr, .. } => expr.val.as_ident(),
+            Expr::AddrOf(expr) => expr.val.as_ident(),
+            Expr::Array { ident, .. } => *ident,
             // TODO: hmm
-            Expr::Call { path: ident, .. } => ident.to_string(),
+            Expr::Call { path: ident, .. } => ident.segs[0],
             // TODO: hmm
-            Expr::FieldAccess { lhs, rhs } => {
-                let lhs = lhs.val.as_ident_string();
-                let start = if lhs.starts_with('*') {
-                    let mut x = lhs.replace("*", "");
-                    x.push_str("->");
-                    x
-                } else {
-                    format!("{}.", lhs)
-                };
-                format!("{}{}", start, rhs.val.as_ident_string())
-            }
-            Expr::StructInit { .. }
+            Expr::FieldAccess { .. }
+            | Expr::StructInit { .. }
             | Expr::EnumInit { .. }
             | Expr::TraitMeth { .. }
             | Expr::Urnary { .. }
@@ -213,6 +202,13 @@ impl Expr {
 pub struct Path {
     pub segs: Vec<Ident>,
     pub span: Range,
+}
+
+impl Path {
+    // This will use a `DUMMY` span. DO NOT USE until after type checking.
+    crate fn single(seg: Ident) -> Self {
+        Self { segs: vec![seg], span: DUMMY }
+    }
 }
 
 impl fmt::Display for Path {
@@ -265,7 +261,7 @@ pub enum Ty {
     /// The empty/never/uninhabited type.
     Void,
     /// This type is only used in resolving rank-1 polymorphism.
-    Func { ident: String, ret: Box<Ty>, params: Vec<Ty> },
+    Func { ident: Ident, ret: Box<Ty>, params: Vec<Ty> },
 }
 
 impl Ty {
@@ -273,9 +269,9 @@ impl Ty {
     ///
     /// ## Panics
     /// if `Self` is not a `Ty::Generic`.
-    crate fn generic(&self) -> &Ident {
+    crate fn generic(&self) -> Ident {
         if let Self::Generic { ident, .. } = self {
-            ident
+            *ident
         } else {
             panic!("type was not a Generic {:?}", self)
         }
@@ -318,7 +314,7 @@ impl Ty {
     }
 
     /// Substitute a generic parameter with a concrete type.
-    crate fn subst_generic(&mut self, generic: &str, subs: &Ty) {
+    crate fn subst_generic(&mut self, generic: Ident, subs: &Ty) {
         match self {
             t @ Ty::Generic { .. } if generic == t.generic() => {
                 *t = subs.clone();
@@ -399,30 +395,30 @@ impl Ty {
         dim
     }
 
-    // crate fn index_dim(
-    //     &self,
-    //     tcxt: &TyCheckRes<'_, '_>,
-    //     exprs: &[Expression],
-    //     span: Range,
-    // ) -> Option<Self> {
-    //     let mut new = self.clone();
-    //     for expr in exprs {
-    //         if let Ty::Array { ty, size } = new {
-    //             if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
-    //                 if i >= &(size as isize) {
-    //                     panic!(
-    //                         "{}",
-    //                         Error::error_with_span(tcxt, span, "out of bound of static array")
-    //                     )
-    //                 }
-    //             }
-    //             new = ty.val;
-    //         } else {
-    //             break;
-    //         }
-    //     }
-    //     Some(new)
-    // }
+    crate fn index_dim(
+        &self,
+        tcxt: &TyCheckRes<'_, '_>,
+        exprs: &[Expression],
+        span: Range,
+    ) -> Option<Self> {
+        let mut new = self.clone();
+        for expr in exprs {
+            if let Ty::Array { ty, size } = new {
+                if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
+                    if i >= &(size as isize) {
+                        panic!(
+                            "{}",
+                            Error::error_with_span(tcxt, span, "out of bound of static array")
+                        )
+                    }
+                }
+                new = ty.val;
+            } else {
+                break;
+            }
+        }
+        Some(new)
+    }
 }
 
 impl fmt::Display for Ty {
@@ -508,6 +504,15 @@ impl TypeEquality for Ty {
             | (Ty::Void, Ty::Void) => true,
             (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => i1.eq(i2),
             (Ty::Func { .. }, _) => unreachable!("Func type should never be checked"),
+            _ => false,
+        }
+    }
+}
+
+impl TypeEquality<Ty> for Generic {
+    fn is_ty_eq(&self, other: &Ty) -> bool {
+        match other {
+            Ty::Generic { ident, bound } => self.ident.eq(ident) && self.bound.eq(bound),
             _ => false,
         }
     }
@@ -689,6 +694,12 @@ pub struct Generic {
     pub span: Range,
 }
 
+impl Generic {
+    crate fn to_type(&self) -> Ty {
+        Ty::Generic { ident: self.ident, bound: self.bound.clone() }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Func {
     /// The return type `int name() { stmts }`
@@ -739,7 +750,7 @@ impl TraitMethod {
 
 #[derive(Clone, Debug)]
 pub struct Trait {
-    pub ident: Ident,
+    pub path: Path,
     pub generics: Vec<Generic>,
     pub method: TraitMethod,
     pub span: Range,
@@ -747,7 +758,7 @@ pub struct Trait {
 
 #[derive(Clone, Debug)]
 pub struct Impl {
-    pub ident: Ident,
+    pub path: Path,
     pub type_arguments: Vec<Type>,
     pub method: Func,
     pub span: Range,

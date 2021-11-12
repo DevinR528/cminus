@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
 use crate::{
-    ast::types::{self as ty, Spany, Ty, DUMMY},
+    ast::{
+        parse::Ident,
+        types::{self as ty, Generic, Path, Spany, Ty, DUMMY},
+    },
     error::Error,
     typeck::{
         generic::{GenericArgument, Node},
@@ -10,21 +11,24 @@ use crate::{
     visit::VisitMut,
 };
 
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
 struct GenSubstitution<'a> {
-    generic: &'a Ty,
+    generic: &'a Generic,
     ty: &'a Ty,
     tcxt: &'a TyCheckRes<'a, 'a>,
 }
 
 impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
     fn visit_func(&mut self, func: &'ast mut ty::Func) {
-        func.ident.push_str(&self.ty.to_string());
+        func.ident =
+            Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty.to_string()));
         crate::visit::walk_mut_func(self, func);
     }
 
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         if let Some(t) = self.tcxt.expr_ty.get(expr) {
-            if t.generic() == self.generic.generic() {
+            if t.generic() == self.generic.ident {
                 self.tcxt.mono_expr_ty.borrow_mut().insert(expr.clone(), self.ty.clone());
             }
         }
@@ -33,7 +37,7 @@ impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
 
     fn visit_ty(&mut self, ty: &mut ty::Type) {
         // println!("{:?} {:?} {:?}", self.generic, self.ty, ty);
-        ty.val.subst_generic(self.generic.generic(), self.ty)
+        ty.val.subst_generic(self.generic.ident, self.ty)
     }
 }
 
@@ -52,6 +56,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         let mut x = None;
         if let ty::Expr::TraitMeth { trait_, type_args: _, args } = &mut expr.val {
+            let ident = trait_.segs.last().unwrap();
             if let Some(i) =
                 self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
             {
@@ -60,12 +65,19 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                     // Incase there is a function/trait method call as an argument
                     self.visit_expr(arg);
                 }
-                let ident = format!(
-                    "{}{}",
-                    trait_,
-                    self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+                let ident = Ident::new(
+                    DUMMY,
+                    &format!(
+                        "{}{}",
+                        trait_,
+                        self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+                    ),
                 );
-                x = Some(ty::Expr::Call { ident, args, type_args: vec![i.method.ret.clone()] });
+                x = Some(ty::Expr::Call {
+                    path: Path::single(ident),
+                    args,
+                    type_args: vec![i.method.ret.clone()],
+                });
             } else {
                 panic!(
                     "{}",
@@ -98,8 +110,9 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
             ..
         }) = &mut stmt.val
         {
+            let ident = trait_.segs.last().unwrap();
             if let Some(i) =
-                self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
+                self.tcxt.trait_solve.impls.get(&trait_).and_then(|imp| imp.get(&self.type_args))
             {
                 let mut args = args.clone();
                 for arg in &mut args {
@@ -111,8 +124,12 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                     self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
                 );
                 x = Some(ty::Stmt::Call(
-                    ty::Expr::Call { ident, args, type_args: vec![i.method.ret.clone()] }
-                        .into_spanned(DUMMY),
+                    ty::Expr::Call {
+                        path: trait_.clone(),
+                        args,
+                        type_args: vec![i.method.ret.clone()],
+                    }
+                    .into_spanned(DUMMY),
                 ));
             } else {
                 panic!(
@@ -154,7 +171,7 @@ impl TyCheckRes<'_, '_> {
             // are dependent on the mono of `foo`
             let relations = self.generic_res.generic_dag().get(&node).unwrap();
             for node in relations.child_iter().filter(|n| matches!(n, Node::Func(_))) {
-                let dep_func = self.var_func.name_func.get(node.name()).unwrap();
+                let dep_func = self.var_func.name_func.get(&node.name()).unwrap();
                 let mono_dep_funcs = sub_mono_generic(dep_func, res_list, self);
                 mono_items.extend_from_slice(&mono_dep_funcs)
             }
@@ -172,7 +189,7 @@ fn sub_mono_generic(
 ) -> Vec<ty::Func> {
     // We know that there is at least one generic so getting the zeroth value should be fine
     let number_of_specializations = res_list.get(&0).map_or(0, |m| m.len());
-    let mut map: HashMap<_, Vec<_>> = HashMap::new();
+    let mut map: HashMap<_, Vec<_>> = HashMap::default();
     for arg in res_list.iter().flat_map(|(_, a)| a) {
         map.entry(arg.instance_id).or_default().push(arg);
     }
@@ -184,11 +201,14 @@ fn sub_mono_generic(
         for (i, gen) in generics.iter().enumerate() {
             let gen_param = functions[idx].generics.get(gen.gen_idx).unwrap().clone();
             // Replace ALL uses of this generic and remove the generic parameters
-            let mut subs = GenSubstitution { generic: &gen_param.val, ty: &gen.ty, tcxt };
+            let mut subs = GenSubstitution { generic: &gen_param, ty: &gen.ty, tcxt };
             subs.visit_func(&mut functions[idx]);
 
+            // CLEANUP: build the string then make a new ident so we aren't doing many little
+            // allocs
             if i != generics.len() - 1 {
-                functions[idx].ident.push('0');
+                functions[idx].ident =
+                    Ident::new(DUMMY, &format!("{}0", functions[idx].ident.name()));
             }
         }
 

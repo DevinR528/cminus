@@ -1,4 +1,5 @@
 use crate::{
+    ast::parse::Ident,
     lir::lower::{BinOp, Expr, UnOp, Val},
     typeck::TyCheckRes,
 };
@@ -72,7 +73,7 @@ impl Expr {
                     expr.const_fold(tcxt);
                 }
             }
-            Expr::Call { ident: _, args, type_args: _, .. } => {
+            Expr::Call { args, .. } => {
                 for expr in args {
                     expr.const_fold(tcxt);
                 }
@@ -82,7 +83,7 @@ impl Expr {
                     expr.const_fold(tcxt);
                 }
             }
-            Expr::StructInit { name: _, fields, .. } => {
+            Expr::StructInit { fields, .. } => {
                 for expr in fields {
                     expr.init.const_fold(tcxt);
                 }
@@ -212,7 +213,9 @@ fn bool_op(a: bool, b: bool, op: &BinOp) -> Val {
     }
 }
 
-fn str_op(a: &str, b: &str, op: &BinOp) -> Val {
+fn str_op(a: &Ident, b: &Ident, op: &BinOp) -> Val {
+    let a = a.name();
+    let b = b.name();
     match op {
         BinOp::Lt => Val::Bool(a < b),
         BinOp::Le => Val::Bool(a <= b),

@@ -1,5 +1,4 @@
 crate mod lex;
-// crate mod parse;
-crate mod parsy;
+crate mod parse;
 mod precedence;
 crate mod types;

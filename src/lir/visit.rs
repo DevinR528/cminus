@@ -147,9 +147,11 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
                 }
             }
         }
-        Stmt::While { cond, stmt } => {
+        Stmt::While { cond, stmts } => {
             visit.visit_expr(cond);
-            visit.visit_stmt(stmt);
+            for stmt in &stmts.stmts {
+                visit.visit_stmt(stmt);
+            }
         }
         Stmt::Match { expr, arms, .. } => {
             visit.visit_expr(expr);
@@ -194,7 +196,7 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expr) {
             visit.visit_expr(rhs)
         }
         Expr::Parens(expr) => visit.visit_expr(expr),
-        Expr::StructInit { name: _, fields, .. } => {
+        Expr::StructInit { path: _, fields, .. } => {
             for FieldInit { ident: _, init, ty: _ } in fields {
                 visit.visit_expr(init);
             }
@@ -213,7 +215,7 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expr) {
             visit.visit_expr(lhs);
             visit.visit_expr(rhs)
         }
-        Expr::Call { ident: _, args, type_args: _, .. } => {
+        Expr::Call { path: _, args, type_args: _, .. } => {
             for expr in args {
                 visit.visit_expr(expr);
             }

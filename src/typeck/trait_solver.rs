@@ -1,10 +1,12 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    fmt,
-};
+use std::fmt;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
-    ast::types::{Impl, Trait, Ty},
+    ast::{
+        parse::Ident,
+        types::{Impl, Path, Trait, Ty},
+    },
     typeck::generic::Node,
 };
 
@@ -20,12 +22,12 @@ crate struct ToUnify<'ast> {
 #[derive(Default)]
 crate struct TraitSolve<'ast> {
     /// The name of the trait to the declaration.
-    crate traits: BTreeMap<String, &'ast Trait>,
+    crate traits: HashMap<Path, &'ast Trait>,
     /// The name of the trait to each type implementation.
     ///
     /// This would consider `trait foo<int, bool>` distinct from `trait foo<bool, int>`.
-    crate impls: BTreeMap<String, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
-    proof_stack: BTreeMap<String, Vec<ToUnify<'ast>>>,
+    crate impls: HashMap<Path, HashMap<Vec<&'ast Ty>, &'ast Impl>>,
+    proof_stack: HashMap<Ident, Vec<ToUnify<'ast>>>,
 }
 
 impl fmt::Debug for TraitSolve<'_> {
@@ -46,15 +48,15 @@ impl fmt::Debug for TraitSolve<'_> {
 
 impl<'ast> TraitSolve<'ast> {
     crate fn add_trait(&mut self, t: &'ast Trait) -> Option<&'ast Trait> {
-        self.traits.insert(t.ident.to_string(), t)
+        self.traits.insert(t.path.clone(), t)
     }
 
     crate fn add_impl(&mut self, t: &'ast Impl) -> Result<(), String> {
-        if !self.traits.contains_key(&t.ident) {
+        if !self.traits.contains_key(&t.path) {
             return Err("no trait".to_owned());
         }
         let set = t.type_arguments.iter().map(|t| &t.val).collect();
-        if self.impls.entry(t.ident.to_string()).or_default().insert(set, t).is_some() {
+        if self.impls.entry(t.path.clone()).or_default().insert(set, t).is_some() {
             return Err("found duplicate impl".to_owned());
         }
         Ok(())
@@ -63,12 +65,12 @@ impl<'ast> TraitSolve<'ast> {
     #[allow(clippy::wrong_self_convention)]
     crate fn to_solve(
         &mut self,
-        trait_: &str,
+        trait_: Ident,
         solution_stack: Vec<&'ast Ty>,
         chain: Option<Vec<Node>>,
     ) {
         self.proof_stack
-            .entry(trait_.to_owned())
+            .entry(trait_)
             .or_default()
             .push(ToUnify { solution_stack, chain: chain.into_iter().flatten().collect() });
     }

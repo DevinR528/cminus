@@ -1,10 +1,15 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::VecDeque,
     fmt,
     hash::{Hash, Hasher},
 };
 
-use crate::ast::types::{Expr, Ty, Var};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+use crate::ast::{
+    parse::Ident,
+    types::{Expr, Path, Ty, Var},
+};
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 crate enum TyRegion<'ast> {
@@ -21,21 +26,21 @@ impl fmt::Debug for TyRegion<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 crate enum Node {
-    Func(String),
-    Trait(String),
-    Enum(String),
-    Struct(String),
+    Func(Ident),
+    Trait(Ident),
+    Enum(Ident),
+    Struct(Ident),
 }
 
 impl Node {
-    crate fn name(&self) -> &str {
+    crate fn name(&self) -> Ident {
         match self {
-            Node::Func(s) => s,
-            Node::Trait(s) => s,
-            Node::Enum(s) => s,
-            Node::Struct(s) => s,
+            Node::Func(s) => *s,
+            Node::Trait(s) => *s,
+            Node::Enum(s) => *s,
+            Node::Struct(s) => *s,
         }
     }
 }
@@ -69,13 +74,13 @@ impl PartialEq for GenericArgument<'_> {
 }
 impl Eq for GenericArgument<'_> {}
 
-#[derive(Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, PartialEq, Eq)]
 crate struct GenericParam {
     /// Generic type name `T` to possible bounds `T: add`.
-    generics: BTreeMap<String, Option<String>>,
+    generics: HashMap<Ident, Option<Path>>,
     /// Any dependent generic types. When monomorphizing these will be walked to create
     /// mono variants of each type.
-    children: BTreeMap<Node, GenericParam>,
+    children: HashMap<Node, GenericParam>,
 }
 
 crate struct GenericParamIter<'a> {
@@ -94,8 +99,8 @@ impl<'a> Iterator for GenericParamIter<'a> {
 }
 
 impl GenericParam {
-    fn insert_generic(&mut self, id: &str, bound: Option<String>) {
-        self.generics.insert(id.to_owned(), bound);
+    fn insert_generic(&mut self, id: Ident, bound: Option<Path>) {
+        self.generics.insert(id, bound);
     }
 
     crate fn child_iter(&self) -> GenericParamIter {
@@ -108,7 +113,7 @@ crate struct GenericResolver<'ast> {
     /// Mapping of region name (function or struct/enum) to the generic arguments.
     ///
     /// These are the "resolved" types.
-    node_resolved: BTreeMap<Node, HashMap<usize, HashSet<GenericArgument<'ast>>>>,
+    node_resolved: HashMap<Node, HashMap<usize, HashSet<GenericArgument<'ast>>>>,
     /// Mapping of declaration (function or struct or enum) to the generic parameter.
     ///
     /// If a function defines a dependent statement that relationship is preserved.
@@ -119,7 +124,7 @@ crate struct GenericResolver<'ast> {
     ///     return abc;
     /// }
     /// ```
-    item_generics: BTreeMap<Node, GenericParam>,
+    item_generics: HashMap<Node, GenericParam>,
 }
 
 impl<'ast> GenericResolver<'ast> {
@@ -130,7 +135,7 @@ impl<'ast> GenericResolver<'ast> {
         self.node_resolved.get(node)
     }
 
-    crate fn generic_dag(&self) -> &BTreeMap<Node, GenericParam> {
+    crate fn generic_dag(&self) -> &HashMap<Node, GenericParam> {
         &self.item_generics
     }
 
@@ -144,7 +149,7 @@ impl<'ast> GenericResolver<'ast> {
                 self.item_generics
                     .entry(node.clone())
                     .or_default()
-                    .insert_generic(ident, bound.clone());
+                    .insert_generic(*ident, bound.clone());
             }
             Ty::Array { size: _, ty: _ } => todo!(),
             Ty::Struct { ident: _, gen } => {
@@ -175,18 +180,18 @@ impl<'ast> GenericResolver<'ast> {
         &mut self,
         stack: &[Node],
         _expr: &[TyRegion<'ast>],
-        id: &str,
-        bound: Option<String>,
+        id: Ident,
+        bound: Option<Path>,
     ) -> Option<GenericParam> {
         // println!("GEN STACK {:?} {:?}\n", stack, expr);
         let mut iter = stack.iter();
         let gp = self.item_generics.get_mut(iter.next()?)?;
 
-        let mut generics = BTreeMap::new();
+        let mut generics = HashMap::default();
         generics.insert(id.to_owned(), bound);
 
         gp.children
-            .insert(iter.next()?.clone(), GenericParam { generics, children: BTreeMap::default() })
+            .insert(iter.next()?.clone(), GenericParam { generics, children: HashMap::default() })
     }
 
     crate fn push_resolved_child(
@@ -229,7 +234,7 @@ impl<'ast> GenericResolver<'ast> {
         // println!("collect {:?} {:?}", ty, stack);
         match &ty {
             Ty::Generic { ident, bound } => {
-                self.push_generic_child(stack, exprs, ident, bound.clone());
+                self.push_generic_child(stack, exprs, *ident, bound.clone());
             }
             Ty::Array { size: _, ty } => {
                 self.collect_generic_usage(&ty.val, instance_id, gen_idx, exprs, stack)
@@ -239,7 +244,7 @@ impl<'ast> GenericResolver<'ast> {
                     for t in gen.iter() {
                         if let Ty::Generic { ident, bound } = &t.val {
                             stack.push(Node::Struct(struct_name.clone()));
-                            self.push_generic_child(stack, exprs, ident, bound.clone());
+                            self.push_generic_child(stack, exprs, *ident, bound.clone());
                         } else {
                             self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
                         }
@@ -254,7 +259,7 @@ impl<'ast> GenericResolver<'ast> {
                     for t in gen.iter() {
                         if let Ty::Generic { ident, bound } = &t.val {
                             stack.push(Node::Enum(enum_name.clone()));
-                            self.push_generic_child(stack, exprs, ident, bound.clone());
+                            self.push_generic_child(stack, exprs, *ident, bound.clone());
                         } else {
                             self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
                         }

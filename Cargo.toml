@@ -16,7 +16,9 @@ either = { version = "1.6", optional = true }
 lazy_static = "1.4"
 derive-help = { path = "./derive-help", version = "0.1" }
 unicode-xid = "0.2"
-
+rustc-hash = "1.1"
+parking_lot = "0.11"
+once_cell = "1.8"
 
 [workspace]
 members = ["derive-help", "builder"]
