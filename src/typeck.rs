@@ -186,7 +186,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // Stabilize order which I'm not sure how it gets unordered
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for func in funcs {
-            self.curr_fn = Some(func.ident.clone());
+            self.curr_fn = Some(func.ident);
 
             crate::visit::walk_func(self, func);
 
@@ -210,7 +210,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // stabilize order
         impls.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for trait_ in impls {
-            self.curr_fn = Some(trait_.method.ident.clone());
+            self.curr_fn = Some(trait_.method.ident);
             crate::visit::walk_func(self, &trait_.method);
             self.curr_fn.take();
         }
@@ -263,9 +263,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
             // Current function scope (also the name)
-            self.curr_fn = Some(func.ident.clone());
+            self.curr_fn = Some(func.ident);
 
-            if self.var_func.insert(func.span, func.ident.clone()).is_some() {
+            if self.var_func.insert(func.span, func.ident).is_some() {
                 self.errors.push(Error::error_with_span(
                     self,
                     func.span,
@@ -283,7 +283,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.generic_res.collect_generic_params(
                     &Node::Func(func.ident),
                     &Ty::Func {
-                        ident: func.ident.clone(),
+                        ident: func.ident,
                         ret: box func.ret.val.clone(),
                         params: func
                             .generics
@@ -304,7 +304,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.unique_id(),
                     0,
                     &[],
-                    &mut vec![Node::Func(func.ident.clone())],
+                    &mut vec![Node::Func(func.ident)],
                 );
 
                 let matching_gen = func.generics.iter().any(|g| g.ident == *ty.val.generics()[0]);
@@ -341,7 +341,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_adt(&mut self, adt: &'ast Adt) {
         match adt {
             Adt::Struct(struc) => {
-                if self.name_struct.insert(struc.ident.clone(), struc).is_some() {
+                if self.name_struct.insert(struc.ident, struc).is_some() {
                     self.errors.push(Error::error_with_span(
                         self,
                         struc.span,
@@ -351,7 +351,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 if !struc.generics.is_empty() {
                     self.generic_res.collect_generic_params(
-                        &Node::Struct(struc.ident.clone()),
+                        &Node::Struct(struc.ident),
                         &Ty::Struct {
                             ident: struc.ident,
                             gen: struc
@@ -374,7 +374,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 if !en.generics.is_empty() {
                     self.generic_res.collect_generic_params(
-                        &Node::Enum(en.ident.clone()),
+                        &Node::Enum(en.ident),
                         &Ty::Enum {
                             ident: en.ident,
                             gen: en
@@ -391,8 +391,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_var(&mut self, var: &'ast Var) {
         #[allow(clippy::if-then-panic)]
-        if let Some(fn_id) = self.curr_fn.clone() {
-            let node = Node::Func(fn_id.clone());
+        if let Some(fn_id) = self.curr_fn {
+            let node = Node::Func(fn_id);
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
 
             self.generic_res.collect_generic_usage(
@@ -408,7 +408,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 .func_refs
                 .entry(fn_id)
                 .or_default()
-                .insert(var.ident.clone(), var.ty.val.clone())
+                .insert(var.ident, var.ty.val.clone())
                 .is_some()
             {
                 panic!(
@@ -420,7 +420,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     )
                 );
             }
-        } else if self.global.insert(var.ident.clone(), var.ty.val.clone()).is_some() {
+        } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
             panic!(
                 "{}",
                 Error::error_with_span(
@@ -430,11 +430,11 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 )
             );
         }
-        self.var_func.unsed_vars.insert(var.ident.clone(), (var.span, Cell::new(false)));
+        self.var_func.unsed_vars.insert(var.ident, (var.span, Cell::new(false)));
     }
 
     fn visit_params(&mut self, params: &[Param]) {
-        if let Some(fn_id) = self.curr_fn.clone() {
+        if let Some(fn_id) = self.curr_fn {
             for Param { ident, ty, span } in params {
                 // TODO: Do this for returns and any place we match for Ty::Generic {..}
                 if ty.val.has_generics() {
@@ -443,7 +443,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         self.unique_id(),
                         0,
                         &[],
-                        &mut vec![Node::Func(fn_id.clone())],
+                        &mut vec![Node::Func(fn_id)],
                     );
 
                     let matching_gen = self
@@ -469,9 +469,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 if self
                     .var_func
                     .func_refs
-                    .entry(fn_id.clone())
+                    .entry(fn_id)
                     .or_default()
-                    .insert(ident.clone(), ty.val.clone())
+                    .insert(*ident, ty.val.clone())
                     .is_some()
                 {
                     self.errors.push(Error::error_with_span(
@@ -480,7 +480,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         &format!("duplicate param name `{}`", ident),
                     ));
                 }
-                self.var_func.unsed_vars.insert(ident.clone(), (*span, Cell::new(false)));
+                self.var_func.unsed_vars.insert(*ident, (*span, Cell::new(false)));
             }
         } else {
             panic!("{}", Error::error_with_span(self, DUMMY, &format!("{:?}", params)))
@@ -923,7 +923,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .insert(
                         expr,
                         Ty::Struct {
-                            ident: name.clone(),
+                            ident: name,
                             gen: struc
                                 .generics
                                 .iter()
@@ -1415,7 +1415,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                 self.tcxt
                                     .var_func
                                     .func_refs
-                                    .entry(fn_name.clone())
+                                    .entry(fn_name)
                                     .or_default()
                                     .insert(*variable, ty.clone());
                             }

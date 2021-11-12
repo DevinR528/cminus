@@ -483,7 +483,7 @@ impl<'ctx> CodeGen<'ctx> {
             LValue::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
             LValue::Deref { indir: _, expr: _, ty: _ } => todo!(),
             LValue::Array { ident, exprs, ty } => {
-                let arr = self.vars.get(&ident)?.clone();
+                let arr = self.vars.get(ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty {
                     ty.size()
                 } else {
@@ -924,7 +924,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let x = self
                         .globals
                         .entry(*s)
-                        .or_insert(Global::Text { name: name.clone(), content: cleaned });
+                        .or_insert(Global::Text { name, content: cleaned });
                     Location::NamedOffset(x.name().to_string())
                 }
             },
