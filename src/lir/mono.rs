@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        parse::Ident,
+        parse::symbol::Ident,
         types::{self as ty, Generic, Path, Spany, Ty, DUMMY},
     },
     error::Error,
@@ -21,8 +21,7 @@ struct GenSubstitution<'a> {
 
 impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
     fn visit_func(&mut self, func: &'ast mut ty::Func) {
-        func.ident =
-            Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty));
+        func.ident = Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty));
         crate::visit::walk_mut_func(self, func);
     }
 

@@ -7,21 +7,21 @@ use std::{
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::ast::{
-    parse::Ident,
-    types::{Expr, Path, Ty, Var},
+    parse::symbol::Ident,
+    types::{Const, Expr, Path, Ty},
 };
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 crate enum TyRegion<'ast> {
     Expr(&'ast Expr),
-    VarDecl(&'ast Var),
+    Const(&'ast Const),
 }
 
 impl fmt::Debug for TyRegion<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Expr(_e) => write!(f, "Expr(..)"),
-            Self::VarDecl(e) => write!(f, "VarDecl({})", e.ident),
+            Self::Const(e) => write!(f, "Const({})", e.ident),
         }
     }
 }
@@ -146,10 +146,7 @@ impl<'ast> GenericResolver<'ast> {
     crate fn collect_generic_params(&mut self, node: &Node, ty: &Ty) {
         match ty {
             Ty::Generic { ident, bound } => {
-                self.item_generics
-                    .entry(*node)
-                    .or_default()
-                    .insert_generic(*ident, bound.clone());
+                self.item_generics.entry(*node).or_default().insert_generic(*ident, bound.clone());
             }
             Ty::Array { size: _, ty: _ } => todo!(),
             Ty::Struct { ident: _, gen } => {
@@ -190,8 +187,7 @@ impl<'ast> GenericResolver<'ast> {
         let mut generics = HashMap::default();
         generics.insert(id.to_owned(), bound);
 
-        gp.children
-            .insert(*iter.next()?, GenericParam { generics, children: HashMap::default() })
+        gp.children.insert(*iter.next()?, GenericParam { generics, children: HashMap::default() })
     }
 
     crate fn push_resolved_child(

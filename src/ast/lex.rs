@@ -44,9 +44,7 @@ pub enum TokenKind {
         terminated: bool,
     },
     /// Whitespace characters sequence.
-    Whitespace {
-        kind: WhitespaceKind,
-    },
+    Whitespace,
     /// "ident" or "continue"
     /// At this step keywords are also considered identifiers.
     Ident,
@@ -142,12 +140,6 @@ pub enum LiteralKind {
     RawStr { n_hashes: u16, err: Option<RawStrError> },
     /// "br"abc"", "br#"abc"#", "br####"ab"###"c"####", "br#"a"
     RawByteStr { n_hashes: u16, err: Option<RawStrError> },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum WhitespaceKind {
-    Space,
-    NewLine,
 }
 
 /// Error produced validating a raw string. Represents cases like:
@@ -468,36 +460,8 @@ impl Cursor<'_> {
 
     fn whitespace(&mut self) -> TokenKind {
         debug_assert!(is_whitespace(self.prev()));
-
-        // Usual ASCII suspects
-        // '\u{0009}'   // \t
-        // | '\u{000A}' // \n
-        // | '\u{000B}' // vertical tab
-        // | '\u{000C}' // form feed
-        // | '\u{000D}' // \r
-        // | '\u{0020}' // space
-
-        // // NEXT LINE from latin1
-        // | '\u{0085}'
-
-        // // Bidi markers
-        // | '\u{200E}' // LEFT-TO-RIGHT MARK
-        // | '\u{200F}' // RIGHT-TO-LEFT MARK
-
-        // // Dedicated whitespace characters from Unicode
-        // | '\u{2028}' // LINE SEPARATOR
-        // | '\u{2029}' // PARAGRAPH SEPARATOR
-        match self.prev() {
-            '\u{0020}' => Whitespace { kind: WhitespaceKind::Space },
-            '\u{000A}' | '\u{2028}' | '\u{2029}' | '\u{2085}' => {
-                Whitespace { kind: WhitespaceKind::NewLine }
-            }
-            '\u{000D}' if self.first() == '\u{000A}' => {
-                self.bump();
-                Whitespace { kind: WhitespaceKind::NewLine }
-            }
-            tkn => unreachable!("Implement more whitespace {:?}", tkn),
-        }
+        self.eat_while(is_whitespace);
+        Whitespace
     }
 
     fn ident(&mut self) -> TokenKind {

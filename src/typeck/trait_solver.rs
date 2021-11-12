@@ -4,7 +4,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
     ast::{
-        parse::Ident,
+        parse::symbol::Ident,
         types::{Impl, Path, Trait, Ty},
     },
     typeck::generic::Node,

@@ -28,7 +28,7 @@ macro_rules! keywords {
                     $(
                         $rep => Self::$tkn,
                     )*
-                    _ => return Err($crate::ast::parse::error::ParseError::IncorrectToken)
+                    _ => return Err($crate::ast::parse::error::ParseError::IncorrectToken($crate::ast::types::DUMMY))
                 })
             }
         }

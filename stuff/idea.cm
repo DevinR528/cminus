@@ -17,7 +17,7 @@ enum Shape {
 }
 
 // So here is inheritance
-int area(Shape x) {
+fn area(x: Shape) -> int {
     match x {
         Shape::Circle { rad } -> {
             return (rad * rad) * 3.141;
@@ -29,7 +29,7 @@ int area(Shape x) {
 }
 
 // This would be made really nice with variants as types
-int circumference(Shape::Circle x) {
+fn circumference(x: Shape::Circle) -> int {
     return x.rad * 2 * 3.141;
 }
 
@@ -37,7 +37,7 @@ enum Result<T, E> {
     Ok(E), Err(E)
 }
 
-Result<int, NotInstanceError?> maybe_call_circumference(Shape x) {
+fn maybe_call_circumference(Shape x) -> Result<int, NotInstanceError?> {
     match x {
         circle @ Shape::Circle { .. } -> {
             // The type of circle is `Shape::Circle`
@@ -60,7 +60,7 @@ struct Foo {
 }
 
 // I really like the idea of "compile time" first class types
-T passed_in_type<T: ptr_fam>(it: Type) {
+fn passed_in_type<T: ptr_fam>(it: Type) -> T {
     printf("%s", it.name); // use just as any other type
 
     if (it.is_sized()) {
@@ -71,3 +71,12 @@ T passed_in_type<T: ptr_fam>(it: Type) {
 
     }
 }
+
+// old parser
+//     lexing & parsing:  0.008508331s
+//     lexing & parsing:  allocations: 1950 bytes: 151840
+//     type checking:     0.001378848s
+
+// new parser + interner
+//     lexing & parsing:  0.001438135s
+//     lexing & parsing:  allocations: 261 bytes: 83463
