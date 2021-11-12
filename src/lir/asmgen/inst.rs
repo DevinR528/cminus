@@ -1,4 +1,6 @@
-use std::{collections::HashSet, fmt};
+use std::fmt;
+
+use rustc_hash::FxHashSet as HashSet;
 
 use crate::lir::{
     asmgen::{CodeGen, ZERO},

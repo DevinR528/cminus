@@ -1,5 +1,7 @@
+use std::fmt;
+
 use crate::ast::{
-    parsy::{Token, TokenKind as token},
+    parse::{Token, TokenKind as token},
     types::{BinOp, UnOp},
 };
 
@@ -48,14 +50,49 @@ pub enum AssocOp {
     Assign,
     /// `?=` where ? is one of the BinOpToken
     AssignOp(BinOp),
-    /// `as`
-    As,
-    /// `..` range
-    DotDot,
-    /// `..=` range
-    DotDotEq,
-    /// `:`
-    Colon,
+}
+
+impl fmt::Display for AssocOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AssocOp::Add => '+'.fmt(f),
+            AssocOp::Subtract => '-'.fmt(f),
+            AssocOp::Multiply => '*'.fmt(f),
+            AssocOp::Divide => '/'.fmt(f),
+            AssocOp::Modulus => '%'.fmt(f),
+            AssocOp::LAnd => "&&".fmt(f),
+            AssocOp::LOr => "||".fmt(f),
+            AssocOp::BitXor => '^'.fmt(f),
+            AssocOp::BitAnd => '&'.fmt(f),
+            AssocOp::BitOr => '|'.fmt(f),
+            AssocOp::ShiftLeft => "<<".fmt(f),
+            AssocOp::ShiftRight => ">>".fmt(f),
+            AssocOp::Equal => "==".fmt(f),
+            AssocOp::Less => '<'.fmt(f),
+            AssocOp::LessEqual => "<=".fmt(f),
+            AssocOp::NotEqual => "!=".fmt(f),
+            AssocOp::Greater => '>'.fmt(f),
+            AssocOp::GreaterEqual => ">=".fmt(f),
+            AssocOp::Assign => '='.fmt(f),
+            AssocOp::AssignOp(op) => format!(
+                "{}=",
+                match op {
+                    BinOp::Mul => "*",
+                    BinOp::Div => "/",
+                    BinOp::Rem => "%",
+                    BinOp::Add => "+",
+                    BinOp::Sub => "-",
+                    BinOp::LeftShift => "<<",
+                    BinOp::RightShift => ">>",
+                    BinOp::BitAnd => "&",
+                    BinOp::BitXor => "^",
+                    BinOp::BitOr => "|",
+                    _ => unreachable!("illegal assign op"),
+                }
+            )
+            .fmt(f),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -73,7 +110,6 @@ impl AssocOp {
     pub fn precedence(&self) -> usize {
         use AssocOp::*;
         match *self {
-            As | Colon => 14,
             Multiply | Divide | Modulus => 13,
             Add | Subtract => 12,
             ShiftLeft | ShiftRight => 11,
@@ -83,7 +119,6 @@ impl AssocOp {
             Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual => 7,
             LAnd => 6,
             LOr => 5,
-            DotDot | DotDotEq => 4,
             Assign | AssignOp(_) => 2,
         }
     }
@@ -94,10 +129,9 @@ impl AssocOp {
         // NOTE: it is a bug to have an operators that has same precedence but different fixities!
         match *self {
             Assign | AssignOp(_) => Fixit::Right,
-            As | Multiply | Divide | Modulus | Add | Subtract | ShiftLeft | ShiftRight | BitAnd
+            Multiply | Divide | Modulus | Add | Subtract | ShiftLeft | ShiftRight | BitAnd
             | BitXor | BitOr | Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual
-            | LAnd | LOr | Colon => Fixit::Left,
-            DotDot | DotDotEq => Fixit::None,
+            | LAnd | LOr => Fixit::Left,
         }
     }
 
@@ -105,9 +139,8 @@ impl AssocOp {
         use AssocOp::*;
         match *self {
             Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual => true,
-            Assign | AssignOp(_) | As | Multiply | Divide | Modulus | Add | Subtract
-            | ShiftLeft | ShiftRight | BitAnd | BitXor | BitOr | LAnd | LOr | DotDot | DotDotEq
-            | Colon => false,
+            Assign | AssignOp(_) | Multiply | Divide | Modulus | Add | Subtract | ShiftLeft
+            | ShiftRight | BitAnd | BitXor | BitOr | LAnd | LOr => false,
         }
     }
 
@@ -115,15 +148,15 @@ impl AssocOp {
         use AssocOp::*;
         match *self {
             Assign | AssignOp(_) => true,
-            Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual | As | Multiply
-            | Divide | Modulus | Add | Subtract | ShiftLeft | ShiftRight | BitAnd | BitXor
-            | BitOr | LAnd | LOr | DotDot | DotDotEq | Colon => false,
+            Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual | Multiply | Divide
+            | Modulus | Add | Subtract | ShiftLeft | ShiftRight | BitAnd | BitXor | BitOr
+            | LAnd | LOr => false,
         }
     }
 
-    pub fn to_ast_binop(&self) -> Option<BinOp> {
+    pub fn to_ast_binop(self) -> Option<BinOp> {
         use AssocOp::*;
-        match *self {
+        match self {
             Less => Some(BinOp::Lt),
             Greater => Some(BinOp::Gt),
             LessEqual => Some(BinOp::Le),
@@ -142,7 +175,7 @@ impl AssocOp {
             BitOr => Some(BinOp::BitOr),
             LAnd => Some(BinOp::And),
             LOr => Some(BinOp::Or),
-            Assign | AssignOp(_) | As | DotDot | DotDotEq | Colon => None,
+            Assign | AssignOp(_) => None,
         }
     }
 }

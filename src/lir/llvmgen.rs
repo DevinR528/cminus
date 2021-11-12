@@ -15,9 +15,12 @@ use inkwell::{
     AddressSpace, IntPredicate, OptimizationLevel,
 };
 
-use crate::lir::{
-    lower::{BinOp, CallExpr, Expr, Func, LValue, Stmt, Ty, Val, Var},
-    visit::Visit,
+use crate::{
+    ast::parse::Ident,
+    lir::{
+        lower::{BinOp, CallExpr, Expr, Func, LValue, Stmt, Ty, Val, Var},
+        visit::Visit,
+    },
 };
 
 impl Ty {
@@ -30,7 +33,7 @@ impl Ty {
                     false,
                 )
                 .into(),
-            Ty::Enum { ident, gen: _, def: _ } => context.opaque_struct_type(ident).into(),
+            Ty::Enum { ident, gen: _, def: _ } => context.opaque_struct_type(ident.name()).into(),
             Ty::String => context.i16_type().array_type(0).into(),
             Ty::Int => context.i64_type().into(),
             Ty::Char => context.i8_type().into(),
@@ -53,7 +56,7 @@ impl Ty {
                 .const_zero()
                 .into(),
             Ty::Enum { ident, gen: _, def: _ } => {
-                context.opaque_struct_type(ident).const_zero().into()
+                context.opaque_struct_type(ident.name()).const_zero().into()
             }
             Ty::String => context.i16_type().array_type(0).const_zero().into(),
             Ty::Int => context.i64_type().const_zero().into(),
@@ -76,7 +79,7 @@ crate struct LLVMGen<'ctx> {
     execution_engine: ExecutionEngine<'ctx>,
     pass: PassManager<FunctionValue<'ctx>>,
     machine: TargetMachine,
-    vars: HashMap<&'ctx str, BasicValueEnum<'ctx>>,
+    vars: HashMap<Ident, BasicValueEnum<'ctx>>,
     path: &'ctx Path,
 }
 
@@ -233,10 +236,10 @@ impl<'ctx> LLVMGen<'ctx> {
 
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<BasicValueEnum<'ctx>> {
         Some(match expr {
-            LValue::Ident { ident, ty: _ } => self.vars.get(ident.as_str()).copied()?,
+            LValue::Ident { ident, ty: _ } => self.vars.get(ident).copied()?,
             LValue::Deref { indir: _, expr, .. } => self.get_pointer(expr)?,
             LValue::Array { ident, exprs, ty: _ } => {
-                let arr_ptr = self.vars.get(ident.as_str()).copied()?;
+                let arr_ptr = self.vars.get(ident).copied()?;
                 self.index_arr(arr_ptr.into_pointer_value(), exprs)?.into()
             }
             LValue::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
@@ -246,10 +249,10 @@ impl<'ctx> LLVMGen<'ctx> {
     fn build_value(
         &self,
         expr: &'ctx Expr,
-        assigned: Option<&str>,
+        assigned: Option<Ident>,
     ) -> Option<BasicValueEnum<'ctx>> {
         Some(match expr {
-            Expr::Ident { ident, ty: _ } => self.vars.get(ident.as_str()).copied()?,
+            Expr::Ident { ident, ty: _ } => self.vars.get(ident).copied()?,
             Expr::Deref { indir: _, expr, ty } => {
                 let mut ptr = self.build_value(expr, None)?;
                 let mut t = ty;
@@ -264,7 +267,7 @@ impl<'ctx> LLVMGen<'ctx> {
                 val
             }
             Expr::Array { ident, exprs, ty: _ } => {
-                let arr_ptr = self.vars.get(ident.as_str()).copied()?;
+                let arr_ptr = self.vars.get(ident).copied()?;
                 let idx_ptr = self.index_arr(arr_ptr.into_pointer_value(), exprs)?;
                 self.builder.build_load(idx_ptr, "arr_ele")
             }
@@ -320,8 +323,9 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
             }
             Expr::Parens(_) => todo!(),
-            Expr::Call { ident, args, type_args: _, def: _ } => {
-                let func = self.module.get_function(ident).unwrap();
+            Expr::Call { path, args, .. } => {
+                let ident = path.segs.last().unwrap();
+                let func = self.module.get_function(ident.name()).unwrap();
                 let args =
                     args.iter().map(|e| self.build_value(e, None).unwrap()).collect::<Vec<_>>();
                 match self.builder.build_call(func, &args, "calltmp").try_as_basic_value() {
@@ -333,8 +337,10 @@ impl<'ctx> LLVMGen<'ctx> {
             Expr::FieldAccess { lhs, def, rhs, field_idx } => {
                 let struct_ptr = self.build_value(lhs, None).unwrap().into_pointer_value();
 
-                let field =
-                    self.builder.build_struct_gep(struct_ptr, *field_idx, &def.ident).unwrap();
+                let field = self
+                    .builder
+                    .build_struct_gep(struct_ptr, *field_idx, &def.ident.name())
+                    .unwrap();
                 match &**rhs {
                     Expr::Ident { ident, .. } => {
                         self.builder.build_load(field, &format!("{}.{}", def.ident, ident))
@@ -349,8 +355,8 @@ impl<'ctx> LLVMGen<'ctx> {
                     _ => unreachable!("not a possible right side field access"),
                 }
             }
-            Expr::StructInit { name, fields, def: _ } => {
-                let struct_ptr = self.vars.get(assigned?).copied()?.into_pointer_value();
+            Expr::StructInit { path, fields, def: _ } => {
+                let struct_ptr = self.vars.get(&assigned?).copied()?.into_pointer_value();
                 for (idx, field) in fields.iter().enumerate() {
                     let val = self.build_value(&field.init, None).unwrap();
                     let ptr = self
@@ -358,7 +364,7 @@ impl<'ctx> LLVMGen<'ctx> {
                         .build_struct_gep(
                             struct_ptr,
                             idx as u32,
-                            &format!("{}.{}.init", name, field.ident),
+                            &format!("{}.{}.init", path, field.ident),
                         )
                         .unwrap();
 
@@ -372,7 +378,7 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
                 struct_ptr.into()
             }
-            Expr::EnumInit { ident: _, variant: _, items: _, def: _ } => todo!(),
+            Expr::EnumInit { .. } => todo!(),
             Expr::ArrayInit { items, ty } => {
                 let memptr = self.builder.build_alloca(ty.as_llvm_type(self.context), "arrinit");
                 for (idx, expr) in items.iter().enumerate() {
@@ -408,7 +414,8 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
                 Val::Str(s) => BasicValueEnum::ArrayValue(
                     self.context.i8_type().const_array(
-                        &s.as_bytes()
+                        &s.name()
+                            .as_bytes()
                             .iter()
                             .map(|b| self.context.i8_type().const_int(*b as u64, false))
                             .collect::<Vec<_>>(),
@@ -422,9 +429,9 @@ impl<'ctx> LLVMGen<'ctx> {
         match stmt {
             Stmt::VarDecl(vars) => {
                 for var in vars {
-                    let alloca = self.create_entry_block_alloca(&var.ident, &var.ty, fnval);
+                    let alloca = self.create_entry_block_alloca(&var.ident.name(), &var.ty, fnval);
                     self.builder.build_store(alloca, var.ty.as_llvm_null_value(self.context));
-                    self.vars.insert(&var.ident, alloca.as_basic_value_enum());
+                    self.vars.insert(var.ident, alloca.as_basic_value_enum());
                 }
             }
             Stmt::Assign { lval, rval } => {
@@ -432,8 +439,9 @@ impl<'ctx> LLVMGen<'ctx> {
                 let rvalue = self.build_value(rval, lval.as_ident()).unwrap();
                 self.coerce_store_ptr_val(lptr, rvalue);
             }
-            Stmt::Call { expr: CallExpr { ident, args, type_args: _ }, def: _ } => {
-                let func = self.module.get_function(ident).unwrap();
+            Stmt::Call { expr: CallExpr { path, args, .. }, .. } => {
+                let ident = path.segs.last().unwrap();
+                let func = self.module.get_function(ident.name()).unwrap();
                 let args =
                     args.iter().map(|e| self.build_value(e, None).unwrap()).collect::<Vec<_>>();
                 match self.builder.build_call(func, &args, "calltmp").try_as_basic_value() {
@@ -483,8 +491,8 @@ impl<'ctx> LLVMGen<'ctx> {
                 // let phi = self.builder.build_phi(type_, "iftmp");
                 // phi.add_incoming(&[(&then_val, then_bb), (&else_val, else_bb)]);
             }
-            Stmt::While { cond: _, stmt: _ } => todo!(),
-            Stmt::Match { expr: _, arms: _, ty: _ } => todo!(),
+            Stmt::While { .. } => todo!(),
+            Stmt::Match { .. } => todo!(),
             Stmt::Read(_) => todo!(),
             Stmt::Write { expr } => {
                 let function = self.module.get_function("printf").unwrap();
@@ -540,10 +548,10 @@ impl<'ctx> LLVMGen<'ctx> {
         } else {
             func.ret.as_llvm_type(self.context).fn_type(&args_types, false)
         };
-        let fn_val = self.module.add_function(&func.ident, fn_type, None);
+        let fn_val = self.module.add_function(func.ident.name(), fn_type, None);
 
         for (i, arg) in fn_val.get_param_iter().enumerate() {
-            arg.set_name(&func.params[i].ident);
+            arg.set_name(func.params[i].ident.name());
         }
 
         Ok(fn_val)
@@ -555,9 +563,9 @@ impl<'ast> Visit<'ast> for LLVMGen<'ast> {
         let global = self.module.add_global(
             var.ty.as_llvm_type(self.context),
             Some(AddressSpace::Global),
-            &var.ident,
+            var.ident.name(),
         );
-        self.vars.insert(&var.ident, global.as_basic_value_enum());
+        self.vars.insert(var.ident, global.as_basic_value_enum());
     }
 
     fn visit_func(&mut self, func: &'ast Func) {
@@ -567,7 +575,7 @@ impl<'ast> Visit<'ast> for LLVMGen<'ast> {
             return;
         }
 
-        let entry = self.context.append_basic_block(function, &func.ident);
+        let entry = self.context.append_basic_block(function, func.ident.name());
 
         self.builder.position_at_end(entry);
 
@@ -575,10 +583,13 @@ impl<'ast> Visit<'ast> for LLVMGen<'ast> {
         // build variables map
 
         for (i, arg) in function.get_param_iter().enumerate() {
-            let alloca =
-                self.create_entry_block_alloca(&func.params[i].ident, &func.params[i].ty, function);
+            let alloca = self.create_entry_block_alloca(
+                &func.params[i].ident.name(),
+                &func.params[i].ty,
+                function,
+            );
             self.builder.build_store(alloca, arg);
-            self.vars.insert(&func.params[i].ident, alloca.as_basic_value_enum());
+            self.vars.insert(func.params[i].ident, alloca.as_basic_value_enum());
         }
 
         for stmt in &func.stmts {

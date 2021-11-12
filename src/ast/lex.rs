@@ -112,7 +112,7 @@ pub enum TokenKind {
     /// "%"
     Percent,
 
-    EOF,
+    Eof,
 
     /// Unknown token, not expected by the lexer, e.g. "№"
     Unknown,
