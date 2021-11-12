@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{
     ast::{
-        parse::Ident,
+        parse::symbol::Ident,
         types::{self as ty, Path, Spanned, DUMMY},
     },
     error::Error,
@@ -803,7 +803,7 @@ pub struct TraitMethExpr {
 #[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Stmt {
     /// Variable declaration `int x;`
-    VarDecl(Vec<Var>),
+    Const(Const),
     /// Assignment `lval = rval;`
     Assign { lval: LValue, rval: Expr },
     /// A call statement `call(arg1, arg2)`
@@ -841,15 +841,12 @@ pub enum Stmt {
 impl Stmt {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut s: ty::Statement) -> Self {
         match s.val.clone() {
-            ty::Stmt::VarDecl(var) => Stmt::VarDecl(
-                var.iter()
-                    .map(|var| Var {
-                        ty: Ty::lower(tyctx, &var.ty.val),
-                        ident: var.ident,
-                        is_global: false,
-                    })
-                    .collect(),
-            ),
+            ty::Stmt::Const(var) => Stmt::Const(Const {
+                ty: Ty::lower(tyctx, &var.ty.val),
+                ident: var.ident,
+                init: Expr::lower(tyctx, fold, var.init),
+                is_global: false,
+            }),
             ty::Stmt::Assign { lval, rval } => Stmt::Assign {
                 lval: LValue::lower(tyctx, fold, lval),
                 rval: Expr::lower(tyctx, fold, rval),
@@ -1105,9 +1102,10 @@ impl Impl {
 ///
 /// `struct foo x;` or int x[]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Var {
+pub struct Const {
     pub ty: Ty,
     pub ident: Ident,
+    pub init: Expr,
     pub is_global: bool,
 }
 
@@ -1118,7 +1116,7 @@ pub enum Item {
     Func(Func),
     Trait(Trait),
     Impl(Impl),
-    Var(Var),
+    Const(Const),
 }
 
 impl Ty {
@@ -1149,9 +1147,7 @@ impl Ty {
             ty::Ty::Float => Ty::Float,
             ty::Ty::Bool => Ty::Bool,
             ty::Ty::Void => Ty::Void,
-            ty::Ty::Generic { ident, bound } => {
-                Ty::Generic { ident: *ident, bound: bound.clone() }
-            }
+            ty::Ty::Generic { ident, bound } => Ty::Generic { ident: *ident, bound: bound.clone() },
             ty::Ty::Path(_) => todo!(),
             ty::Ty::Func { .. } => {
                 todo!("pretty sure this is an error")
@@ -1179,9 +1175,10 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
             ty::Decl::Impl(i) => {
                 lowered.push(Item::Func(Func::lower(&tyctx, &fold, &i.method)));
             }
-            ty::Decl::Var(var) => lowered.push(Item::Var(Var {
+            ty::Decl::Const(var) => lowered.push(Item::Const(Const {
                 ty: Ty::lower(&tyctx, &var.ty.val),
                 ident: var.ident,
+                init: Expr::lower(&tyctx, &fold, var.init.clone()),
                 is_global: true,
             })),
             _ => {}

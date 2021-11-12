@@ -8,10 +8,10 @@ use std::{
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
-    ast::parse::Ident,
+    ast::parse::symbol::Ident,
     lir::{
         asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
-        lower::{BinOp, Expr, Func, LValue, Pat, Stmt, Ty, UnOp, Val, Var},
+        lower::{BinOp, Const, Expr, Func, LValue, Pat, Stmt, Ty, UnOp, Val},
         visit::Visit,
     },
 };
@@ -921,10 +921,8 @@ impl<'ctx> CodeGen<'ctx> {
                 Val::Str(s) => {
                     let cleaned = s.name().replace("\"", "");
                     let name = format!(".Sstring_{}", self.asm_buf.len());
-                    let x = self
-                        .globals
-                        .entry(*s)
-                        .or_insert(Global::Text { name, content: cleaned });
+                    let x =
+                        self.globals.entry(*s).or_insert(Global::Text { name, content: cleaned });
                     Location::NamedOffset(x.name().to_string())
                 }
             },
@@ -933,10 +931,9 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn gen_statement(&mut self, stmt: &'ctx Stmt) {
         match stmt {
-            Stmt::VarDecl(vars) => {
-                for var in vars {
-                    self.alloc_stack(var.ident, &var.ty);
-                }
+            Stmt::Const(var) => {
+                // TODO: deal with initializer
+                self.alloc_stack(var.ident, &var.ty);
             }
             Stmt::Assign { lval, rval } => {
                 if let Some(global) = self.globals.get_mut(&lval.as_ident().unwrap()) {
@@ -1480,7 +1477,7 @@ impl<'ctx> CodeGen<'ctx> {
 }
 
 impl<'ast> Visit<'ast> for CodeGen<'ast> {
-    fn visit_var(&mut self, var: &'ast Var) {
+    fn visit_var(&mut self, var: &'ast Const) {
         let name = format!(".Lglobal_{}", var.ident);
         match var.ty {
             Ty::Generic { .. }

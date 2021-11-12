@@ -1,5 +1,5 @@
 use crate::{
-    ast::parse::Ident,
+    ast::parse::symbol::Ident,
     lir::lower::{BinOp, Expr, UnOp, Val},
     typeck::TyCheckRes,
 };
