@@ -1,15 +1,19 @@
 use std::{
-    collections::{HashMap, HashSet},
     fs::{create_dir_all, OpenOptions},
     io::{ErrorKind, Write},
     path::Path,
     vec,
 };
 
-use crate::lir::{
-    asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
-    lower::{BinOp, Expr, Func, LValue, Pat, Stmt, Ty, UnOp, Val, Var},
-    visit::Visit,
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+
+use crate::{
+    ast::parse::Ident,
+    lir::{
+        asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
+        lower::{BinOp, Expr, Func, LValue, Pat, Stmt, Ty, UnOp, Val, Var},
+        visit::Visit,
+    },
 };
 
 mod inst;
@@ -35,12 +39,12 @@ const ONE: Location = Location::Const { val: Val::Int(1) };
 #[derive(Debug)]
 crate struct CodeGen<'ctx> {
     asm_buf: Vec<Instruction>,
-    globals: HashMap<&'ctx str, Global>,
+    globals: HashMap<Ident, Global>,
     used_regs: HashSet<Register>,
     used_float_regs: HashSet<FloatRegister>,
     current_stack: usize,
     total_stack: usize,
-    vars: HashMap<&'ctx str, Location>,
+    vars: HashMap<Ident, Location>,
     path: &'ctx Path,
 }
 
@@ -48,12 +52,12 @@ impl<'ctx> CodeGen<'ctx> {
     crate fn new(path: &'ctx Path) -> CodeGen<'ctx> {
         Self {
             asm_buf: vec![],
-            globals: HashMap::new(),
-            used_regs: HashSet::new(),
-            used_float_regs: HashSet::new(),
+            globals: HashMap::default(),
+            used_regs: HashSet::default(),
+            used_float_regs: HashSet::default(),
             current_stack: 0,
             total_stack: 0,
-            vars: HashMap::new(),
+            vars: HashMap::default(),
             path,
         }
     }
@@ -440,7 +444,7 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn alloc_stack(&mut self, name: &'ctx str, ty: &Ty) -> Location {
+    fn alloc_stack(&mut self, name: Ident, ty: &Ty) -> Location {
         self.push_stack(ty);
 
         self.current_stack += ty.size();
@@ -452,7 +456,7 @@ impl<'ctx> CodeGen<'ctx> {
         ref_loc
     }
 
-    fn alloc_arg(&mut self, count: usize, name: &'ctx str, ty: &Ty) -> Location {
+    fn alloc_arg(&mut self, count: usize, name: Ident, ty: &Ty) -> Location {
         let size = match ty {
             // An array is converted to a pointer like thing
             Ty::Array { .. } => 8,
@@ -476,10 +480,10 @@ impl<'ctx> CodeGen<'ctx> {
 
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<Location> {
         Some(match expr {
-            LValue::Ident { ident, ty: _ } => self.vars.get(ident.as_str())?.clone(),
+            LValue::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
             LValue::Deref { indir: _, expr: _, ty: _ } => todo!(),
             LValue::Array { ident, exprs, ty } => {
-                let arr = self.vars.get(ident.as_str())?.clone();
+                let arr = self.vars.get(&ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty {
                     ty.size()
                 } else {
@@ -491,13 +495,13 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
-    fn build_value(&mut self, expr: &'ctx Expr, assigned: Option<&str>) -> Option<Location> {
+    fn build_value(&mut self, expr: &'ctx Expr, assigned: Option<Ident>) -> Option<Location> {
         Some(match expr {
-            Expr::Ident { ident, ty: _ } => self.vars.get(ident.as_str())?.clone(),
+            Expr::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
             Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
             Expr::AddrOf(_) => todo!(),
             Expr::Array { ident, exprs, ty } => {
-                let arr = self.vars.get(ident.as_str())?.clone();
+                let arr = self.vars.get(ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty {
                     ty.size()
                 } else {
@@ -767,7 +771,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Parens(ex) => self.build_value(ex, assigned)?,
-            Expr::Call { ident, args, type_args, def: _ } => {
+            Expr::Call { path, args, type_args, def: _ } => {
                 for (idx, arg) in args.iter().enumerate() {
                     let val = self.build_value(arg, None).unwrap();
                     let ty = arg.type_of();
@@ -787,11 +791,11 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 let ident = if type_args.is_empty() {
-                    ident.to_owned()
+                    path.to_string()
                 } else {
                     format!(
                         "{}{}",
-                        ident,
+                        path,
                         type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
                     )
                 };
@@ -824,12 +828,12 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::Call(Location::Label(ident)));
                 Location::Register(Register::RAX)
             }
-            Expr::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
-            Expr::StructInit { name: _, fields: _, def: _ } => {
+            Expr::FieldAccess { .. } => todo!(),
+            Expr::StructInit { .. } => {
                 todo!()
             }
-            Expr::EnumInit { ident: _, variant, items, def } => {
-                let lval: Option<Location> = try { self.vars.get(assigned?)?.clone() };
+            Expr::EnumInit { path: _, variant, items, def } => {
+                let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
                 let tag = def.variants.iter().position(|v| variant == &v.ident).unwrap();
                 if let Some(mov_to @ Location::NumberedOffset { .. }) = &lval {
                     self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
@@ -880,7 +884,7 @@ impl<'ctx> CodeGen<'ctx> {
                     t => unreachable!("not an array for array init {:?}", t),
                 };
 
-                let lval: Option<Location> = try { self.vars.get(assigned?)?.clone() };
+                let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
 
                 for (idx, item) in items.iter().enumerate() {
                     let rval = self.build_value(item, None).unwrap();
@@ -915,11 +919,11 @@ impl<'ctx> CodeGen<'ctx> {
                 Val::Float(_) | Val::Int(_) | Val::Bool(_) => Location::Const { val: val.clone() },
                 Val::Char(_) => todo!(),
                 Val::Str(s) => {
-                    let cleaned = s.replace("\"", "");
+                    let cleaned = s.name().replace("\"", "");
                     let name = format!(".Sstring_{}", self.asm_buf.len());
                     let x = self
                         .globals
-                        .entry(s)
+                        .entry(*s)
                         .or_insert(Global::Text { name: name.clone(), content: cleaned });
                     Location::NamedOffset(x.name().to_string())
                 }
@@ -931,16 +935,16 @@ impl<'ctx> CodeGen<'ctx> {
         match stmt {
             Stmt::VarDecl(vars) => {
                 for var in vars {
-                    self.alloc_stack(&var.ident, &var.ty);
+                    self.alloc_stack(var.ident, &var.ty);
                 }
             }
             Stmt::Assign { lval, rval } => {
-                if let Some(global) = self.globals.get_mut(lval.as_ident().unwrap()) {
+                if let Some(global) = self.globals.get_mut(&lval.as_ident().unwrap()) {
                     match rval {
                         Expr::Ident { ident: _, ty: _ } => todo!(),
-                        Expr::StructInit { name: _, fields: _, def: _ } => todo!(),
-                        Expr::EnumInit { ident: _, variant: _, items: _, def: _ } => todo!(),
-                        Expr::ArrayInit { items: _, ty: _ } => todo!(),
+                        Expr::StructInit { .. } => todo!(),
+                        Expr::EnumInit { .. } => todo!(),
+                        Expr::ArrayInit { .. } => todo!(),
                         Expr::Value(val) => match val {
                             Val::Float(_) => todo!(),
                             Val::Int(num) => match global {
@@ -963,7 +967,7 @@ impl<'ctx> CodeGen<'ctx> {
                             },
                             Val::Str(s) => match global {
                                 Global::Text { name: _, content } => {
-                                    *content = s.clone();
+                                    *content = s.name().to_string();
                                 }
                                 _ => todo!(),
                             },
@@ -1125,7 +1129,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
-            Stmt::While { cond: _, stmt: _ } => todo!(),
+            Stmt::While { .. } => todo!(),
             Stmt::Match { expr, arms, ty: _ } => {
                 let val = self.build_value(expr, None).unwrap();
 
@@ -1486,25 +1490,23 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
             | Ty::Ptr(_)
             | Ty::Ref(_) => todo!(),
             Ty::String => {
-                self.globals.insert(
-                    &var.ident,
-                    Global::Text { name: name.clone(), content: String::new() },
-                );
+                self.globals
+                    .insert(var.ident, Global::Text { name: name.clone(), content: String::new() });
             }
             Ty::Char => {
-                self.globals.insert(&var.ident, Global::Char { name: name.clone(), content: 0xff });
+                self.globals.insert(var.ident, Global::Char { name: name.clone(), content: 0xff });
             }
             Ty::Float => todo!(),
             Ty::Int => {
-                self.globals.insert(&var.ident, Global::Int { name: name.clone(), content: 0x0 });
+                self.globals.insert(var.ident, Global::Int { name: name.clone(), content: 0x0 });
             }
 
             Ty::Bool => {
-                self.globals.insert(&var.ident, Global::Int { name: name.clone(), content: 0x0 });
+                self.globals.insert(var.ident, Global::Int { name: name.clone(), content: 0x0 });
             }
             Ty::Void => unreachable!(),
         };
-        self.vars.insert(&var.ident, Location::NamedOffset(name));
+        self.vars.insert(var.ident, Location::NamedOffset(name));
     }
 
     fn visit_func(&mut self, func: &'ast Func) {
@@ -1517,7 +1519,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                 ".global {name}\n.type {name},@function\n",
                 name = func.ident
             )),
-            Instruction::Label(func.ident.clone()),
+            Instruction::Label(func.ident.name().to_string()),
             Instruction::Push { loc: Location::Register(Register::RBP), size: 8, comment: "" },
             Instruction::Mov {
                 src: Location::Register(Register::RSP),
@@ -1527,8 +1529,8 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         ]);
 
         for (i, arg) in func.params.iter().enumerate() {
-            let alloca = self.alloc_arg(i, &arg.ident, &arg.ty);
-            self.vars.insert(&arg.ident, alloca);
+            let alloca = self.alloc_arg(i, arg.ident, &arg.ty);
+            self.vars.insert(arg.ident, alloca);
         }
 
         for stmt in &func.stmts {
@@ -1540,7 +1542,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         self.clear_float_regs_except(None);
 
         // HACK: so when other programs run our programs they don't non-zero exit
-        if func.ident == "main" {
+        if func.ident.name() == "main" {
             self.asm_buf.push(Instruction::SizedMov {
                 src: ZERO,
                 dst: Location::Register(Register::RAX),

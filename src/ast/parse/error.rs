@@ -14,6 +14,8 @@ pub enum ParseError {
     Other,
 }
 
+impl Error for ParseError {}
+
 impl From<ParseIntError> for ParseError {
     fn from(_: ParseIntError) -> Self {
         Self::InvalidIntLiteral
