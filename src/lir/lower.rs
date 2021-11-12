@@ -1,7 +1,10 @@
 use std::fmt;
 
 use crate::{
-    ast::types::{self as ty, Spanned, DUMMY},
+    ast::{
+        parse::Ident,
+        types::{self as ty, Path, Spanned, DUMMY},
+    },
     error::Error,
     lir::{const_fold::Folder, mono::TraitRes},
     typeck::TyCheckRes,
@@ -14,7 +17,7 @@ pub enum Val {
     Int(isize),
     Char(char),
     Bool(bool),
-    Str(String),
+    Str(Ident),
 }
 
 impl Val {
@@ -199,7 +202,7 @@ impl BinOp {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldInit {
-    pub ident: String,
+    pub ident: Ident,
     pub init: Expr,
     pub ty: Ty,
 }
@@ -217,7 +220,7 @@ impl FieldInit {
 #[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Expr {
     /// Access a named variable `a`.
-    Ident { ident: String, ty: Ty },
+    Ident { ident: Ident, ty: Ty },
     /// Remove indirection, follow a pointer to it's pointee.
     Deref { indir: usize, expr: Box<Expr>, ty: Ty },
     /// Add indirection, refer to a variable by it's memory address (pointer).
@@ -225,7 +228,7 @@ pub enum Expr {
     /// Access an array by index `[expr][expr]`.
     ///
     /// Each `exprs` represents an access of a dimension of the array.
-    Array { ident: String, exprs: Vec<Expr>, ty: Ty },
+    Array { ident: Ident, exprs: Vec<Expr>, ty: Ty },
     /// A urnary operation `!expr`.
     Urnary { op: UnOp, expr: Box<Expr>, ty: Ty },
     /// A binary operation `1 + 1`.
@@ -234,7 +237,7 @@ pub enum Expr {
     Parens(Box<Expr>),
     /// A function call with possible expression arguments `call(expr)`.
     Call {
-        ident: String,
+        path: Path,
         args: Vec<Expr>,
         type_args: Vec<Ty>,
         #[dbg_ignore]
@@ -242,7 +245,7 @@ pub enum Expr {
     },
     /// A call to a trait method with possible expression arguments `<<T>::trait>(expr)`.
     TraitMeth {
-        trait_: String,
+        trait_: Path,
         args: Vec<Expr>,
         type_args: Vec<Ty>,
         #[dbg_ignore]
@@ -251,9 +254,9 @@ pub enum Expr {
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<Expr>, def: Struct, rhs: Box<Expr>, field_idx: u32 },
     /// An ADT is initialized with field values.
-    StructInit { name: String, fields: Vec<FieldInit>, def: Struct },
+    StructInit { path: Path, fields: Vec<FieldInit>, def: Struct },
     /// An ADT is initialized with field values.
-    EnumInit { ident: String, variant: String, items: Vec<Expr>, def: Enum },
+    EnumInit { path: Path, variant: Ident, items: Vec<Expr>, def: Enum },
     /// An array initializer `{0, 1, 2}`
     ArrayInit { items: Vec<Expr>, ty: Ty },
     /// A literal value `1, "hello", true`
@@ -264,7 +267,7 @@ impl Expr {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut ex: ty::Expression) -> Self {
         let mut typ = tyctx.expr_ty.get(&ex).cloned().unwrap_or_else(|| match &mut ex.val {
             // HACK: pass the return value to lower via `type_args` see `TraitRes::visit_expr`
-            ty::Expr::Call { ident: _, args: _, type_args } => type_args.remove(0).val,
+            ty::Expr::Call { path: _, args: _, type_args } => type_args.remove(0).val,
             ty::Expr::TraitMeth { trait_: _, args: _, type_args } => type_args.remove(0).val,
             _ => unreachable!("only trait impl calls and function calls are replaced"),
         });
@@ -334,12 +337,13 @@ impl Expr {
                 ty,
             },
             ty::Expr::Parens(expr) => Expr::Parens(box Expr::lower(tyctx, fold, *expr)),
-            ty::Expr::Call { ident, args, type_args } => {
+            ty::Expr::Call { path, args, type_args } => {
+                let ident = path.segs.last().unwrap();
                 if type_args.iter().any(|arg| !arg.val.has_generics()) {}
 
                 let func = tyctx.var_func.name_func.get(&ident).expect("function is defined");
                 Expr::Call {
-                    ident,
+                    path,
                     args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
                     type_args: type_args.into_iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
                     def: Func::lower(tyctx, fold, func),
@@ -349,11 +353,12 @@ impl Expr {
                 if type_args.iter().any(|arg| arg.val.has_generics()) {}
 
                 let f = ty::Impl {
-                    ident: trait_.clone(),
+                    path: trait_.clone(),
                     type_arguments: type_args.clone(),
                     method: ty::Func::default(),
                     span: DUMMY,
                 };
+                let ident = trait_.segs.last().unwrap();
                 let func = tyctx
                     .trait_solve
                     .impls
@@ -370,10 +375,11 @@ impl Expr {
                     def: Impl::lower(tyctx, fold, func),
                 }
             }
-            ty::Expr::StructInit { name, fields } => {
-                let struc = tyctx.name_struct.get(&name).expect("struct is defined");
+            ty::Expr::StructInit { path, fields } => {
+                let ident = path.segs.last().unwrap();
+                let struc = tyctx.name_struct.get(ident).expect("struct is defined");
                 Expr::StructInit {
-                    name,
+                    path,
                     fields: fields
                         .into_iter()
                         .zip(&struc.fields)
@@ -382,10 +388,11 @@ impl Expr {
                     def: Struct::lower(tyctx, (*struc).clone()),
                 }
             }
-            ty::Expr::EnumInit { ident, variant, items } => {
+            ty::Expr::EnumInit { path, variant, items } => {
+                let ident = path.segs.last().unwrap();
                 let enu = tyctx.name_enum.get(&ident).expect("struct is defined");
                 Expr::EnumInit {
-                    ident,
+                    path,
                     variant,
                     items: items.into_iter().map(|f| Expr::lower(tyctx, fold, f)).collect(),
                     def: Enum::lower(tyctx, (*enu).clone()),
@@ -412,17 +419,21 @@ impl Expr {
             Expr::Urnary { op: _, expr: _, ty } => ty.clone(),
             Expr::Binary { op: _, lhs: _, rhs: _, ty } => ty.clone(),
             Expr::Parens(expr) => expr.type_of(),
-            Expr::Call { ident: _, args: _, type_args: _, def } => def.ret.clone(),
+            Expr::Call { def, .. } => def.ret.clone(),
             Expr::TraitMeth { trait_: _, args: _, type_args: _, def } => def.method.ret.clone(),
             Expr::FieldAccess { lhs: _, def, rhs: _, field_idx } => {
                 def.fields[*field_idx as usize].ty.clone()
             }
-            Expr::StructInit { name: _, fields: _, def } => {
-                Ty::Struct { ident: def.ident.clone(), gen: def.generics.clone(), def: def.clone() }
-            }
-            Expr::EnumInit { ident: _, variant: _, items: _, def } => {
-                Ty::Enum { ident: def.ident.clone(), gen: def.generics.clone(), def: def.clone() }
-            }
+            Expr::StructInit { def, .. } => Ty::Struct {
+                ident: def.ident,
+                gen: def.generics.iter().map(|g| g.to_type()).collect(),
+                def: def.clone(),
+            },
+            Expr::EnumInit { def, .. } => Ty::Enum {
+                ident: def.ident.clone(),
+                gen: def.generics.iter().map(|g| g.to_type()).collect(),
+                def: def.clone(),
+            },
             Expr::ArrayInit { items: _, ty } => ty.clone(),
             Expr::Value(v) => v.type_of(),
         }
@@ -432,13 +443,13 @@ impl Expr {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LValue {
     /// Access a named variable `a`.
-    Ident { ident: String, ty: Ty },
+    Ident { ident: Ident, ty: Ty },
     /// Remove indirection, follow a pointer to it's pointee.
     Deref { indir: usize, expr: Box<LValue>, ty: Ty },
     /// Access an array by index `[expr][expr]`.
     ///
     /// Each `exprs` represents an access of a dimension of the array.
-    Array { ident: String, exprs: Vec<Expr>, ty: Ty },
+    Array { ident: Ident, exprs: Vec<Expr>, ty: Ty },
     /// Access the fields of a struct `expr.expr.expr;`.
     FieldAccess { lhs: Box<LValue>, def: Struct, rhs: Box<LValue>, field_idx: u32 },
 }
@@ -446,7 +457,7 @@ pub enum LValue {
 impl LValue {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, ex: ty::Expression) -> Self {
         match ex.val {
-            ty::Expr::Ident(ref ident) => {
+            ty::Expr::Ident(ident) => {
                 let ty = Ty::lower(
                     tyctx,
                     &tyctx.type_of_ident(ident, ex.span).unwrap_or_else(|| {
@@ -456,7 +467,7 @@ impl LValue {
                         )
                     }),
                 );
-                LValue::Ident { ident: ident.to_string(), ty }
+                LValue::Ident { ident, ty }
             }
             ty::Expr::Deref { indir, expr } => {
                 let lvar = LValue::lower(tyctx, fold, *expr);
@@ -466,7 +477,7 @@ impl LValue {
             ty::Expr::Array { ident, exprs } => {
                 let ty = Ty::lower(
                     tyctx,
-                    &tyctx.type_of_ident(&ident, ex.span).expect("type checking missed ident"),
+                    &tyctx.type_of_ident(ident, ex.span).expect("type checking missed ident"),
                 );
                 LValue::Array {
                     ident,
@@ -526,7 +537,7 @@ impl LValue {
                             indir,
                             expr: box Spanned { val: ty::Expr::Ident(ident), .. },
                         } => {
-                            let inner_ty = tyctx.type_of_ident(&ident, rhs.span).unwrap();
+                            let inner_ty = tyctx.type_of_ident(ident, rhs.span).unwrap();
                             LValue::Deref {
                                 indir,
                                 expr: box LValue::Ident { ident, ty: Ty::lower(tyctx, &inner_ty) },
@@ -547,11 +558,11 @@ impl LValue {
         }
     }
 
-    crate fn as_ident(&self) -> Option<&str> {
+    crate fn as_ident(&self) -> Option<Ident> {
         Some(match self {
-            LValue::Ident { ident, ty: _ } => ident,
+            LValue::Ident { ident, ty: _ } => *ident,
             LValue::Deref { indir: _, expr, .. } => expr.as_ident()?,
-            LValue::Array { ident, .. } => ident,
+            LValue::Array { ident, .. } => *ident,
             LValue::FieldAccess { lhs, rhs: _, .. } => lhs.as_ident()?,
         })
     }
@@ -572,17 +583,17 @@ pub enum Ty {
     /// A generic type parameter `<T>`.
     ///
     /// N.B. This may be used as a type argument but should not be.
-    Generic { ident: String, bound: Option<String> },
+    Generic { ident: Ident, bound: Option<Path> },
     /// A static array of `size` containing item of `ty`.
     Array { size: usize, ty: Box<Ty> },
     /// A struct defined by the user.
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
-    Struct { ident: String, gen: Vec<Ty>, def: Struct },
+    Struct { ident: Ident, gen: Vec<Ty>, def: Struct },
     /// An enum defined by the user.
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
-    Enum { ident: String, gen: Vec<Ty>, def: Enum },
+    Enum { ident: Ident, gen: Vec<Ty>, def: Enum },
     /// A pointer to a type.
     ///
     /// This is equivalent to indirection, for each layer of `Ty::Ptr(..)` we have
@@ -689,7 +700,7 @@ impl fmt::Display for Ty {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Param {
     pub ty: Ty,
-    pub ident: String,
+    pub ident: Ident,
 }
 
 impl Param {
@@ -711,7 +722,7 @@ impl Block {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Binding {
-    Wild(String),
+    Wild(Ident),
     Value(Val),
 }
 
@@ -719,8 +730,8 @@ pub enum Binding {
 pub enum Pat {
     /// Match an enum variant `option::some(bind)`
     Enum {
-        ident: String,
-        variant: String,
+        path: Path,
+        variant: Ident,
         idx: usize,
         items: Vec<Pat>,
     },
@@ -734,22 +745,23 @@ pub enum Pat {
 impl Pat {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, pat: ty::Pat) -> Self {
         match pat {
-            ty::Pat::Enum { ident, variant, items } => {
+            ty::Pat::Enum { path, variant, items } => {
+                let ident = path.segs.last().unwrap();
                 let idx = tyctx
                     .name_enum
                     .get(&ident)
                     .and_then(|e| e.variants.iter().position(|v| variant == v.ident))
                     .unwrap();
                 Pat::Enum {
-                    ident,
+                    path,
                     variant,
-                    items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p)).collect(),
+                    items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p.val)).collect(),
                     idx,
                 }
             }
             ty::Pat::Array { size, items } => Pat::Array {
                 size,
-                items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p)).collect(),
+                items: items.into_iter().map(|p| Pat::lower(tyctx, fold, p.val)).collect(),
             },
             ty::Pat::Bind(b) => Pat::Bind(match b {
                 ty::Binding::Wild(w) => Binding::Wild(w),
@@ -776,14 +788,14 @@ impl MatchArm {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallExpr {
-    pub ident: String,
+    pub path: Path,
     pub args: Vec<Expr>,
     pub type_args: Vec<Ty>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraitMethExpr {
-    pub trait_: String,
+    pub trait_: Path,
     pub args: Vec<Expr>,
     pub type_args: Vec<Ty>,
 }
@@ -809,7 +821,7 @@ pub enum Stmt {
     /// If statement `if (expr) { stmts }`
     If { cond: Expr, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
-    While { cond: Expr, stmt: Box<Stmt> },
+    While { cond: Expr, stmts: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expr, arms: Vec<MatchArm>, ty: Ty },
     /// Read statment `read(ident)`
@@ -843,16 +855,17 @@ impl Stmt {
                 rval: Expr::lower(tyctx, fold, rval),
             },
             ty::Stmt::Call(ty::Spanned {
-                val: ty::Expr::Call { ident, args, type_args }, ..
+                val: ty::Expr::Call { path, args, type_args }, ..
             }) => {
+                let ident = path.segs.last().unwrap();
                 if type_args.iter().all(|arg| !arg.val.has_generics()) {
                     TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
                         .visit_stmt(&mut s);
                 }
-                let func = tyctx.var_func.name_func.get(&ident).expect("function is defined");
+                let func = tyctx.var_func.name_func.get(ident).expect("function is defined");
                 Stmt::Call {
                     expr: CallExpr {
-                        ident,
+                        path,
                         args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
                         type_args: type_args
                             .into_iter()
@@ -874,7 +887,7 @@ impl Stmt {
 
                 // TODO: here and in Expr, not sure how OK this is...
                 let f = ty::Impl {
-                    ident: trait_.clone(),
+                    path: trait_.clone(),
                     type_arguments: type_args.clone(),
                     method: ty::Func::default(),
                     span: DUMMY,
@@ -905,9 +918,9 @@ impl Stmt {
                 blk: Block::lower(tyctx, fold, blk),
                 els: els.map(|e| Block::lower(tyctx, fold, e)),
             },
-            ty::Stmt::While { cond, stmt } => Stmt::While {
+            ty::Stmt::While { cond, stmts } => Stmt::While {
                 cond: Expr::lower(tyctx, fold, cond),
-                stmt: box Stmt::lower(tyctx, fold, *stmt),
+                stmts: Block::lower(tyctx, fold, stmts),
             },
             ty::Stmt::Match { expr, arms } => {
                 let expr = Expr::lower(tyctx, fold, expr);
@@ -929,13 +942,14 @@ impl Stmt {
             ty::Stmt::Block(ty::Block { stmts, .. }) => Stmt::Block(Block {
                 stmts: stmts.into_iter().map(|s| Stmt::lower(tyctx, fold, s)).collect(),
             }),
+            ty::Stmt::AssignOp { lval, rval, op } => todo!(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Field {
-    pub ident: String,
+    pub ident: Ident,
     pub ty: Ty,
 }
 
@@ -947,9 +961,9 @@ impl Field {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Struct {
-    pub ident: String,
+    pub ident: Ident,
     pub fields: Vec<Field>,
-    pub generics: Vec<Ty>,
+    pub generics: Vec<Generic>,
 }
 
 impl Struct {
@@ -958,7 +972,7 @@ impl Struct {
             ident: s.ident,
             fields: s.fields.into_iter().map(|v| Field::lower(tyctx, v)).collect(),
             // TODO: any generic needs to be gone by this point
-            generics: s.generics.into_iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
+            generics: s.generics.into_iter().map(|t| Generic::lower(tyctx, t)).collect(),
         }
     }
 }
@@ -966,7 +980,7 @@ impl Struct {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Variant {
     /// The name of the variant `some`.
-    pub ident: String,
+    pub ident: Ident,
     /// The types contained in the variants "tuple".
     pub types: Vec<Ty>,
 }
@@ -983,10 +997,10 @@ impl Variant {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Enum {
     /// The name of the enum `<option>::none`.
-    pub ident: String,
+    pub ident: Ident,
     /// The variants of the enum `option::<some(ty, type)>`.
     pub variants: Vec<Variant>,
-    pub generics: Vec<Ty>,
+    pub generics: Vec<Generic>,
 }
 
 impl Enum {
@@ -995,7 +1009,7 @@ impl Enum {
             ident: e.ident,
             variants: e.variants.into_iter().map(|v| Variant::lower(tyctx, v)).collect(),
             // TODO: any generic needs to be gone by this point
-            generics: e.generics.into_iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
+            generics: e.generics.into_iter().map(|t| Generic::lower(tyctx, t)).collect(),
         }
     }
 }
@@ -1009,8 +1023,18 @@ pub enum Adt {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Generic {
-    pub ident: String,
-    pub bound: (),
+    pub ident: Ident,
+    pub bound: Option<Path>,
+}
+
+impl Generic {
+    fn lower(tyctx: &TyCheckRes<'_, '_>, g: ty::Generic) -> Self {
+        Generic { ident: g.ident, bound: g.bound }
+    }
+
+    crate fn to_type(&self) -> Ty {
+        Ty::Generic { ident: self.ident, bound: self.bound.clone() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1018,7 +1042,7 @@ pub struct Func {
     /// The return type `int name() { stmts }`
     pub ret: Ty,
     /// Name of the function.
-    pub ident: String,
+    pub ident: Ident,
     /// The generic parameters listed for a function.
     pub generics: Vec<Ty>,
     /// the type and identifier of each parameter.
@@ -1031,10 +1055,10 @@ impl Func {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, func: &ty::Func) -> Self {
         Func {
             ret: Ty::lower(tyctx, &func.ret.val),
-            ident: func.ident.clone(),
+            ident: func.ident,
             params: func.params.iter().map(|p| Param::lower(tyctx, p.clone())).collect(),
-            generics: func.generics.iter().map(|g| Ty::lower(tyctx, &g.val)).collect(),
-            stmts: func.stmts.iter().map(|s| Stmt::lower(tyctx, fold, s.clone())).collect(),
+            generics: func.generics.iter().map(|g| Ty::lower(tyctx, &g.to_type())).collect(),
+            stmts: func.stmts.stmts.iter().map(|s| Stmt::lower(tyctx, fold, s.clone())).collect(),
         }
     }
 }
@@ -1055,14 +1079,14 @@ impl TraitMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trait {
-    pub ident: String,
+    pub ident: Ident,
     pub generics: Vec<Ty>,
     pub method: TraitMethod,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Impl {
-    pub ident: String,
+    pub ident: Path,
     pub type_arguments: Vec<Ty>,
     pub method: Func,
 }
@@ -1070,7 +1094,7 @@ pub struct Impl {
 impl Impl {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, imp: &ty::Impl) -> Self {
         Impl {
-            ident: imp.ident.clone(),
+            ident: imp.path.clone(),
             type_arguments: imp.type_arguments.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
             method: Func::lower(tyctx, fold, &imp.method),
         }
@@ -1083,7 +1107,7 @@ impl Impl {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Var {
     pub ty: Ty,
-    pub ident: String,
+    pub ident: Ident,
     pub is_global: bool,
 }
 
@@ -1157,7 +1181,7 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
             }
             ty::Decl::Var(var) => lowered.push(Item::Var(Var {
                 ty: Ty::lower(&tyctx, &var.ty.val),
-                ident: var.ident.clone(),
+                ident: var.ident,
                 is_global: true,
             })),
             _ => {}

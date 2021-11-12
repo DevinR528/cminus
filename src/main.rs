@@ -9,7 +9,8 @@
     panic_info_message,
     path_file_prefix,
     io_error_more,
-    const_fn_trait_bound
+    const_fn_trait_bound,
+    hash_drain_filter
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -34,7 +35,7 @@ mod visit;
 
 use crate::{
     alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM},
-    ast::parse::{parse_decl, CMinusParser, Rule},
+    ast::parse::AstBuilder,
     lir::visit::Visit as IrVisit,
     visit::Visit,
 };
@@ -49,33 +50,11 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let mut parse_mem = Region::new(GLOBAL);
     let parse_time = Instant::now();
-    // Using the generated parser from `grammar.pest` lex/parse the input
-    let file = match CMinusParser::parse(Rule::program, &prog) {
-        // Parsing passed
-        Ok(mut parsed) => {
-            parsed.next().expect("CMinusParser will always have a parse tree if parsing succeeded")
-        }
-        // Parsing has failed prints error like
-        Err(err) => {
-            println!("{:?}", err);
-            return Err(err.to_string().into());
-        }
-    };
 
-    // println!("{}", file.to_json());
+    let mut parser = AstBuilder::new(&prog);
+    parser.parse()?;
+    let mut items = parser.into_items();
 
-    // This is AST construction which is where operator precedence happens.
-    // It does work correctly (see src/precedence.rs and src/ast/parse.rs (parse_expr) for more
-    // details)
-    //
-    let mut items = vec![];
-    for item in file.into_inner() {
-        match item.as_rule() {
-            Rule::decl => items.extend(parse_decl(item)),
-            Rule::EOI => break,
-            _ => unreachable!(),
-        }
-    }
     println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
     println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
 
@@ -187,14 +166,30 @@ fn dump_lowered_items(lowered: Vec<lir::lower::Item>) {
                 println!(
                     "struct {}<{}>",
                     adt.ident,
-                    adt.generics.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                    adt.generics
+                        .iter()
+                        .map(|t| format!(
+                            "{}: {}",
+                            t.ident,
+                            t.bound.as_ref().map(|p| p.to_string()).unwrap_or("".into())
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 );
             }
             lir::lower::Item::Adt(lir::lower::Adt::Enum(adt)) => {
                 println!(
                     "enum {}<{}>",
                     adt.ident,
-                    adt.generics.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                    adt.generics
+                        .iter()
+                        .map(|t| format!(
+                            "{}: {}",
+                            t.ident,
+                            t.bound.as_ref().map(|p| p.to_string()).unwrap_or("".into())
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 );
             }
             lir::lower::Item::Func(f) => {
@@ -225,7 +220,10 @@ fn dump_lowered_items(lowered: Vec<lir::lower::Item>) {
                 println!(
                     "impl {}<{}>({}) -> {}",
                     i.ident,
-                    i.type_arguments.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
+                    i.type_arguments.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(
+                        ",
+"
+                    ),
                     i.method.params.iter().map(|p| p.ty.to_string()).collect::<Vec<_>>().join(", "),
                     i.method.ret,
                 );
@@ -233,141 +231,4 @@ fn dump_lowered_items(lowered: Vec<lir::lower::Item>) {
             lir::lower::Item::Var(_v) => todo!(),
         }
     }
-}
-
-#[test]
-#[ignore = "file_system"]
-fn parse_all() {
-    let mut dirs = fs::read_dir("./input").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
-    dirs.sort_by_key(|a| a.path());
-
-    for f in dirs.into_iter() {
-        let path = f.path();
-        if path.is_file() && path.extension() == Some(Path::new("cm").as_os_str()) {
-            println!("{}", path.display());
-            process_file(&path.as_os_str().to_string_lossy()).unwrap();
-        }
-    }
-}
-
-#[test]
-#[ignore = "file_system"]
-fn open_all() {
-    let mut dirs = fs::read_dir(".").unwrap().filter_map(|f| f.ok()).collect::<Vec<_>>();
-    dirs.sort_by_key(|a| a.path());
-
-    for f in dirs.into_iter() {
-        let path = f.path();
-        if path.is_file() && path.extension() == Some(Path::new("pdf").as_os_str()) {
-            println!("{}", path.display());
-            std::process::Command::new("firefox")
-                .arg(path.as_os_str())
-                .status()
-                .expect("failed to execute `dot -Tpdf ...`");
-        }
-    }
-}
-
-#[test]
-fn fn_with_float() {
-    const VARS: &str = "
-void foo() {
-    x = 1.1;
-}
-";
-    let file = match CMinusParser::parse(Rule::program, VARS) {
-        Ok(mut parsed) => parsed.next().unwrap(),
-        Err(err) => panic!("{}", err),
-    };
-
-    println!("{:?}", file);
-}
-
-#[test]
-fn var_decls() {
-    const DECLS: &str = "
-int x,y;
-int a[15];
-float vector[100];
-";
-    let file = match CMinusParser::parse(Rule::program, DECLS) {
-        Ok(mut parsed) => parsed.next().unwrap(),
-        Err(err) => panic!("{}", err),
-    };
-
-    println!("{:?}", file);
-}
-
-#[test]
-fn fn_decls() {
-    const FNS: &str = "
-int decls() {
-  return 7;
-}
-
-float foo() {
-  return 7.3;
-}
-
-void main() {
-  write(decls());
-  write(foo());
-    exit;
-}
-";
-    let file = match CMinusParser::parse(Rule::program, FNS) {
-        Ok(mut parsed) => parsed.next().unwrap(),
-        Err(err) => panic!("{}\n{:?}", err, err),
-    };
-
-    println!("{:?}", file);
-}
-
-#[test]
-fn precedence() {
-    const ORD: &str = "
-void foo() {
-    x = 1 + 1 + 1;
-    y = x == 3;
-    z = (x > 1) || (y < 1);
-}
-";
-    let file = match CMinusParser::parse(Rule::program, ORD) {
-        Ok(mut parsed) => parsed.next().unwrap(),
-        Err(err) => panic!("{}", err),
-    };
-
-    println!("{}", file.to_json());
-}
-
-#[test]
-fn a_buncho_precedence() {
-    const ORDER: &str = "
-void main () {
- int i,j,k,l,m;
-
-    i=1; j=2; k=3; l=4;
-
-    m=i<j;
-    write(m);
-    write(i == j);
-    write(i == i);
-    write(l>k);
-    write(j>=j);
-    write(k<=i);
-    write(i!=j);
-    write(!(l>k));
-    write((i > j) || (l > k));
-    write((j > i) && (k > l));
-    write((i == j) || ((i<j)&&(k!=l)));
-
-    exit;
-}
-";
-    let file = match CMinusParser::parse(Rule::program, ORDER) {
-        Ok(mut parsed) => parsed.next().unwrap(),
-        Err(err) => panic!("{}", err),
-    };
-
-    println!("{}", file.to_json());
 }

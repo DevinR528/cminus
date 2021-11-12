@@ -1,1098 +1,1986 @@
-use pest::iterators::{Pair, Pairs};
+use std::convert::TryInto;
 
+crate use crate::ast::{
+    lex::{self, TokenKind, TokenMatch},
+    parse::symbol::Ident,
+    types as ast,
+};
 use crate::ast::{
-    precedence::{Assoc, Operator, PrecClimber},
-    types::{
-        Adt, BinOp, Binding, Block, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit,
-        Func, Impl, MatchArm, Param, Pat, Pattern, Range, Spany, Statement, Stmt, Struct, Trait,
-        TraitMethod, Ty, Type, UnOp, Val, Var, Variant,
-    },
+    lex::{LiteralKind, Token},
+    types::{Path, Spany, Val},
 };
 
-/// This is a procedural macro (fancy Rust macro) that expands the `grammar.pest` file
-/// into a struct with a `CMinusParser::parse` method.
-#[derive(pest_derive::Parser)]
-#[grammar = "../grammar.pest"]
-crate struct CMinusParser;
+mod error;
+crate mod kw;
+mod prec;
+mod symbol;
 
-crate fn parse_decl(pair: Pair<'_, Rule>) -> Vec<Declaration> {
-    pair.into_inner()
-        .flat_map(|decl| {
-            let span = to_span(&decl);
-            match decl.as_rule() {
-                Rule::func_decl => {
-                    vec![Decl::Func(parse_func(decl.into_inner())).into_spanned(span)]
-                }
-                Rule::var_decl => parse_var_decl(decl.into_inner())
-                    .into_iter()
-                    .map(|var| Decl::Var(var).into_spanned(span))
-                    .collect(),
-                Rule::adt_decl => {
-                    vec![Decl::Adt(parse_adt(decl.into_inner(), span)).into_spanned(span)]
-                }
-                Rule::trait_decl => {
-                    vec![Decl::Trait(parse_trait(decl.into_inner(), span)).into_spanned(span)]
-                }
-                Rule::trait_impl => {
-                    vec![Decl::Impl(parse_impl(decl.into_inner(), span)).into_spanned(span)]
-                }
-                _ => unreachable!("malformed declaration"),
-            }
-        })
-        .collect()
+use error::ParseError;
+use prec::{AssocOp, Fixit};
+
+use self::lex::Base;
+
+pub type ParseResult<T> = Result<T, ParseError>;
+
+// TODO: this is basically one file = one mod/crate/program unit add mod linking or
+// whatever.
+/// Create an AST from input `str`.
+#[derive(Debug, Default)]
+pub struct AstBuilder<'a> {
+    tokens: Vec<lex::Token>,
+    curr: lex::Token,
+    input: &'a str,
+    input_idx: usize,
+    items: Vec<ast::Declaration>,
 }
 
-fn parse_adt(struct_: Pairs<Rule>, span: Range) -> Adt {
-    match struct_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::STRUCT, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), fields @ .., (Rule::RBR, _)] => {
-            Adt::Struct(Struct {
-                ident: ident.as_str().to_string(),
-                fields: fields
-                    .iter()
-                    .map(|(_, p)| {
-                        match p
-                            .clone()
-                            .into_inner()
-                            .map(|p| (p.as_rule(), p))
-                            .collect::<Vec<_>>()
-                            .as_slice()
-                        {
-                            [(Rule::param, param), (Rule::SC, _)] => {
-                                parse_struct_field_decl(param.clone())
-                            }
-                            _ => unreachable!("malformed struct fields"),
-                        }
-                    })
-                    .collect(),
-                generics: parse_generics(gen.clone()),
-                span,
-            })
-        }
-        [(Rule::ENUM, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), fields @ .., (Rule::RBR, _)] => {
-            Adt::Enum(Enum {
-                ident: ident.as_str().to_string(),
-                variants: fields
-                    .iter()
-                    .filter_map(|(r, p)| match r {
-                        Rule::variant => Some(parse_variant_decl(p.clone())),
-                        Rule::CM => None,
-                        _ => unreachable!("malformed variant {}", p.to_json()),
-                    })
-                    .collect(),
-                generics: parse_generics(gen.clone()),
-                span,
-            })
-        }
-        _ => unreachable!("malformed function parameter {}", struct_.to_json()),
+// FIXME: audit the whitespace eating, pretty sure I call it unnecessarily
+impl<'a> AstBuilder<'a> {
+    pub fn new(input: &'a str) -> Self {
+        let mut tokens =
+            lex::tokenize(input).chain(Some(Token::new(TokenKind::Eof, 0))).collect::<Vec<_>>();
+        // println!("{:#?}", tokens);
+        let curr = tokens.remove(0);
+        Self { tokens, curr, input, ..Default::default() }
     }
-}
 
-fn parse_struct_field_decl(param: Pair<Rule>) -> Field {
-    match param.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::type_, ty), (Rule::var_name, var)] => {
-            let ty = parse_ty(ty.clone());
-            let span = to_span(var);
-            match var.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice()
-            {
-                [(Rule::addrof, addr), (Rule::ident, id), array_parts @ ..] => {
-                    let inner_span = (addr.as_span().start()..id.as_span().end()).into();
-                    let ty = {
-                        let indirection = addr.as_str().matches('*').count();
-                        build_recursive_pointer_ty(indirection, ty, inner_span)
-                    };
-                    if !array_parts.is_empty() {
-                        Field {
-                            ty: build_recursive_ty(
-                                array_parts.iter().filter_map(|(r, p)| match r {
-                                    Rule::integer => {
-                                        Some(p.as_str().parse().expect("invalid integer"))
-                                    }
-                                    Rule::LBK | Rule::RBK => None,
-                                    _ => unreachable!("malformed array access"),
-                                }),
-                                ty,
-                            ),
-                            ident: id.as_str().to_string(),
-                            span,
+    pub fn items(&self) -> &[ast::Declaration] {
+        &self.items
+    }
+
+    pub fn into_items(self) -> Vec<ast::Declaration> {
+        self.items
+    }
+
+    pub fn parse(&mut self) -> ParseResult<()> {
+        loop {
+            if self.curr.kind == TokenKind::Eof {
+                break;
+            }
+
+            match self.curr.kind {
+                // Ignore
+                TokenKind::LineComment { .. }
+                | TokenKind::BlockComment { .. }
+                | TokenKind::Whitespace { .. } => {
+                    self.eat_tkn();
+                    continue;
+                }
+                TokenKind::Ident => {
+                    // println!("{}", self.input_curr());
+                    let keyword: kw::Keywords = self.input_curr().try_into()?;
+                    match keyword {
+                        kw::Const => {
+                            let item = self.parse_const()?;
+                            self.items.push(item);
                         }
-                    } else {
-                        Field { ty, ident: id.as_str().to_string(), span: inner_span }
+                        kw::Fn => {
+                            let item = self.parse_fn()?;
+                            self.items.push(item);
+                        }
+                        kw::Impl => {
+                            let item = self.parse_impl()?;
+                            self.items.push(item);
+                        }
+                        kw::Struct => {
+                            let item = self.parse_struct()?;
+                            self.items.push(item);
+                        }
+                        kw::Enum => {
+                            let item = self.parse_enum()?;
+                            self.items.push(item);
+                        }
+                        kw::Trait => {
+                            let item = self.parse_trait()?;
+                            self.items.push(item);
+                        }
+                        kw::Import => {
+                            let item = self.parse_import()?;
+                            self.items.push(item);
+                        }
+                        tkn => unreachable!("Token is unaccounted for `{}`", tkn.text()),
                     }
                 }
-                _ => unreachable!("malformed variable"),
+                TokenKind::Pound => {
+                    self.eat_attr();
+                    continue;
+                }
+                TokenKind::CloseBrace => {
+                    self.eat_if(&TokenMatch::CloseBrace);
+                    if self.curr.kind == TokenKind::Eof {
+                        break;
+                    }
+                }
+                TokenKind::Unknown => return Err(ParseError::Error("encountered unknown token")),
+                tkn => unreachable!("Unknown token {:?}", tkn),
             }
+            self.eat_whitespace();
         }
-        _ => unreachable!("malformed function parameter"),
+        Ok(())
     }
-}
 
-fn parse_variant_decl(variant: Pair<Rule>) -> Variant {
-    let span = to_span(&variant);
-    match variant.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::ident, id), content_tuple @ ..] => Variant {
-            ident: id.as_str().to_string(),
-            types: if content_tuple.is_empty() {
-                vec![]
+    // Parse `const name: type = expr;`
+    fn parse_const(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Const);
+        self.eat_whitespace();
+
+        let id = self.make_ident()?;
+        self.eat_whitespace();
+
+        self.eat_if(&TokenMatch::Colon);
+        self.eat_whitespace();
+
+        let ty = self.make_ty()?;
+
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Eq);
+        self.eat_whitespace();
+
+        let expr = self.make_expr()?;
+
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Semi);
+
+        let span = ast::to_rng(start..self.input_idx);
+        Ok(ast::Decl::Const(ast::Const { ident: id, ty, init: expr, span }).into_spanned(span))
+    }
+
+    // Parse `fn name<T>(it: T) -> int { .. }` with or without generics.
+    fn parse_fn(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Fn);
+        self.eat_whitespace();
+
+        let ident = self.make_ident()?;
+
+        let generics = self.make_generics()?;
+
+        self.eat_if(&TokenMatch::OpenParen);
+        self.eat_whitespace();
+
+        let params =
+            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
+
+        self.eat_if(&TokenMatch::CloseParen);
+        self.eat_whitespace();
+
+        let ret = if self.eat_seq(&[TokenMatch::Minus, TokenMatch::Gt]) {
+            self.eat_whitespace();
+            self.make_ty()?
+        } else {
+            self.eat_whitespace();
+            ast::Ty::Void.into_spanned(self.curr_span())
+        };
+        self.eat_whitespace();
+
+        let stmts = self.make_block()?;
+
+        let span = ast::to_rng(start..self.input_idx);
+
+        Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
+            .into_spanned(span))
+    }
+
+    fn parse_impl(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Impl);
+        self.eat_whitespace();
+
+        let path = self.make_path()?;
+        let type_arguments = self.make_types(&TokenMatch::Lt, &TokenMatch::Gt)?;
+
+        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_whitespace();
+
+        let method = if let ast::Decl::Func(func) = self.parse_fn()?.val {
+            func
+        } else {
+            unreachable!("we should error before this [parse func in impl]")
+        };
+
+        self.eat_if(&TokenMatch::CloseBrace);
+        let span = ast::to_rng(start..self.input_idx);
+        Ok(ast::Decl::Impl(ast::Impl { path, type_arguments, method, span }).into_spanned(span))
+    }
+
+    fn parse_struct(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Struct);
+        self.eat_whitespace();
+
+        let ident = self.make_ident()?;
+        let generics = self.make_generics()?;
+
+        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_whitespace();
+
+        let fields = self.make_fields()?;
+
+        self.eat_if(&TokenMatch::CloseBrace);
+        let span = ast::to_rng(start..self.input_idx);
+        Ok(ast::Decl::Adt(ast::Adt::Struct(ast::Struct { ident, fields, generics, span }))
+            .into_spanned(span))
+    }
+
+    fn parse_enum(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Enum);
+        self.eat_whitespace();
+
+        let ident = self.make_ident()?;
+        let generics = self.make_generics()?;
+
+        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_whitespace();
+
+        let variants = self.make_variants()?;
+
+        self.eat_if(&TokenMatch::CloseBrace);
+        let span = ast::to_rng(start..self.input_idx);
+        Ok(ast::Decl::Adt(ast::Adt::Enum(ast::Enum { ident, variants, generics, span }))
+            .into_spanned(span))
+    }
+
+    fn parse_trait(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Impl);
+        self.eat_whitespace();
+
+        let path = self.make_path()?;
+        let generics = self.make_generics()?;
+
+        println!("{:?}", self.curr);
+
+        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_whitespace();
+
+        let method = self.make_trait_fn()?;
+
+        self.eat_if(&TokenMatch::CloseBrace);
+        let span = ast::to_rng(start..self.input_idx);
+        Ok(ast::Decl::Trait(ast::Trait { path, generics, method, span }).into_spanned(span))
+    }
+
+    fn parse_import(&mut self) -> ParseResult<ast::Declaration> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Import);
+        self.eat_whitespace();
+
+        let path = self.make_path()?;
+
+        self.eat_if(&TokenMatch::Semi);
+
+        let span = ast::to_rng(start..self.input_idx);
+        Ok(ast::Decl::Import(path).into_spanned(span))
+    }
+
+    // Parse `fn name<T>(it: T) -> int;` with or without generics.
+    fn make_trait_fn(&mut self) -> ParseResult<ast::TraitMethod> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Fn);
+        self.eat_whitespace();
+
+        let ident = self.make_ident()?;
+
+        let generics = self.make_generics()?;
+
+        self.eat_if(&TokenMatch::OpenParen);
+        self.eat_whitespace();
+
+        let params =
+            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
+
+        self.eat_if(&TokenMatch::CloseParen);
+        self.eat_whitespace();
+
+        let ret = if self.eat_seq(&[TokenMatch::Minus, TokenMatch::Gt]) {
+            self.eat_whitespace();
+            self.make_ty()?
+        } else {
+            self.eat_whitespace();
+            ast::Ty::Void.into_spanned(self.curr_span())
+        };
+        self.eat_whitespace();
+
+        let default = self.eat_if(&TokenMatch::Semi);
+
+        Ok(if default {
+            let stmts = self.make_block()?;
+
+            let span = ast::to_rng(start..self.input_idx);
+            ast::TraitMethod::Default(ast::Func { ident, ret, generics, params, stmts, span })
+        } else {
+            let stmts = ast::Block { stmts: vec![], span: self.curr_span() };
+            let span = ast::to_rng(start..self.input_idx);
+            ast::TraitMethod::NoBody(ast::Func { ident, ret, generics, params, stmts, span })
+        })
+    }
+
+    /// Parse `name[ws]([ws]type[ws],...)[ws], name(a, b), ..`.
+    fn make_variants(&mut self) -> ParseResult<Vec<ast::Variant>> {
+        let mut variants = vec![];
+        loop {
+            let start = self.input_idx;
+
+            // We have reached the end of the enum def (this allows trailing commas)
+            if self.curr.kind == TokenMatch::CloseBrace {
+                break;
+            }
+
+            let ident = self.make_ident()?;
+            let types = self.make_types(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
+
+            let span = ast::to_rng(start..self.curr_span().end);
+            variants.push(ast::Variant { ident, types, span });
+
+            self.eat_whitespace();
+            if self.eat_if(&TokenMatch::Comma) {
+                self.eat_whitespace();
+                continue;
             } else {
-                match content_tuple {
-                    [(Rule::LP, _), (Rule::type_, ty), rest @ ..] => vec![parse_ty(ty.clone())]
-                        .into_iter()
-                        .chain(rest.iter().filter_map(|(r, n)| match r {
-                            Rule::type_ => Some(parse_ty(n.clone())),
-                            Rule::CM | Rule::RP => None,
-                            _ => {
-                                unreachable!("malformed variant tuple declaration {}", n.to_json())
-                            }
-                        }))
-                        .collect(),
-                    _ => unreachable!("malformed variant declaration"),
-                }
-            },
-            span,
-        },
-        _ => unreachable!("malformed enum variant"),
+                break;
+            }
+        }
+
+        self.eat_whitespace();
+        Ok(variants)
     }
-}
 
-fn parse_trait(trait_: Pairs<Rule>, span: Range) -> Trait {
-    match trait_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::TRAIT, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), (Rule::trait_item, item), (Rule::RBR, _)] => {
-            Trait {
-                ident: ident.as_str().to_string(),
-                method: match item
-                    .clone()
-                    .into_inner()
-                    .map(|p| (p.as_rule(), p))
-                    .collect::<Vec<_>>()
-                    .as_slice()
-                {
-                    [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen), (Rule::LP, _), (Rule::param_list, params), (Rule::RP, _), (Rule::SC, sc)] => {
-                        TraitMethod::NoBody(Func {
-                            ret: parse_ty(ty.clone()),
-                            ident: ident.as_str().to_string(),
-                            params: params
-                                .clone()
-                                .into_inner()
-                                .filter_map(|param| match param.as_rule() {
-                                    Rule::param => Some(parse_param(param)),
-                                    Rule::CM => None,
-                                    _ => unreachable!("malformed call statement"),
-                                })
-                                .collect(),
-                            stmts: vec![],
-                            generics: parse_generics(gen.clone()),
-                            span: (ty.as_span().start()..sc.as_span().end()).into(),
-                        })
-                    }
-                    [(Rule::func_decl, func)] => {
-                        TraitMethod::Default(parse_func(func.clone().into_inner()))
-                    }
-                    _ => unreachable!("malformed trait item"),
-                },
-                generics: parse_generics(gen.clone()),
-                span,
+    /// Parse `name[ws]:[ws]type[ws],[ws]...`
+    fn make_fields(&mut self) -> ParseResult<Vec<ast::Field>> {
+        let mut params = vec![];
+        loop {
+            // We have reached the end of the struct def (this allows trailing commas)
+            if self.curr.kind == TokenMatch::CloseBrace {
+                break;
+            }
+            let start = self.input_idx;
+            let ident = self.make_ident()?;
+
+            self.eat_if(&TokenMatch::Colon);
+            self.eat_whitespace();
+
+            let ty = self.make_ty()?;
+
+            let span = ast::to_rng(start..self.curr_span().end);
+            params.push(ast::Field { ident, ty, span });
+
+            self.eat_whitespace();
+            if self.eat_if(&TokenMatch::Comma) {
+                self.eat_whitespace();
+                continue;
+            } else {
+                break;
             }
         }
-        _ => unreachable!("malformed trait declaration {}", trait_.to_json()),
+
+        self.eat_whitespace();
+        Ok(params)
     }
-}
 
-fn parse_impl(trait_: Pairs<Rule>, span: Range) -> Impl {
-    match trait_.clone().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::IMPL, _), (Rule::ident, ident), (Rule::generic, gen), (Rule::LBR, _), (Rule::func_decl, func), (Rule::RBR, _)] =>
-        {
-            let type_arguments = parse_generics(gen.clone());
-            Impl {
-                ident: ident.as_str().to_string(),
-                method: {
-                    let mut f = parse_func(func.clone().into_inner());
-                    f.ident.push_str(
-                        &type_arguments
-                            .iter()
-                            .map(|t| t.val.to_string())
-                            .collect::<Vec<_>>()
-                            .join("0"),
-                    );
-                    f
-                },
-                type_arguments,
-                span,
-            }
-        }
-        _ => unreachable!("malformed trait declaration {}", trait_.to_json()),
-    }
-}
-
-fn parse_param(param: Pair<Rule>) -> Param {
-    let Var { ty, ident, span } = parse_var_decl(param.into_inner()).remove(0);
-    Param { ty, ident, span }
-}
-
-#[rustfmt::skip]
-fn parse_func(func: Pairs<Rule>) -> Func {
-    // println!("func = {}", func.to_json());
-    match func.into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        // int foo(int a, int b) { stmts }
-        [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen),
-         (Rule::LP, _), (Rule::param_list, params), (Rule::RP, _), (Rule::LBR, _),
-         action @ ..,
-         (Rule::RBR, rbr)
-        ] => {
-            Func {
-                ret: parse_ty(ty.clone()),
-                ident: ident.as_str().to_string(),
-                params: params.clone().into_inner().filter_map(|param| match param.as_rule() {
-                    Rule::param => Some(parse_param(param)),
-                    Rule::CM => None,
-                    _ => unreachable!("malformed call statement"),
-                }).collect(),
-                stmts: action.iter().map(|(r, s)| match r {
-                    Rule::stmt => parse_stmt(s.clone()),
-                    Rule::var_decl => Stmt::VarDecl(
-                        parse_var_decl(s.clone().into_inner())).into_spanned(to_span(s)
-                    ),
-                    _ => unreachable!("malformed statement"),
-                }).collect(),
-                generics: parse_generics(gen.clone()),
-                span: (ty.as_span().start()..rbr.as_span().end()).into(),
-            }
-        }
-        // int foo() { stmts }
-        [(Rule::type_, ty), (Rule::ident, ident), (Rule::generic, gen),
-         (Rule::LP, _), (Rule::RP, _), (Rule::LBR, _),
-         action @ ..,
-         (Rule::RBR, rbr)
-        ] => {
-            Func {
-                ret: parse_ty(ty.clone()),
-                ident: ident.as_str().to_string(),
-                params: vec![],
-                stmts: action.iter().map(|(r, s)| match r {
-                    Rule::stmt => parse_stmt(s.clone()),
-                    Rule::var_decl => Stmt::VarDecl(
-                        parse_var_decl(s.clone().into_inner())
-                    ).into_spanned(to_span(s)),
-                    _ => unreachable!("malformed statement"),
-                }).collect(),
-                generics: parse_generics(gen.clone()),
-                span: (ty.as_span().start()..rbr.as_span().end()).into(),
-            }
-        }
-        _ => unreachable!("malformed function"),
-    }
-}
-
-fn parse_stmt(stmt: Pair<Rule>) -> Statement {
-    let stmt = stmt.into_inner().next().unwrap();
-    let span = to_span(&stmt);
-    #[rustfmt::skip]
-    match stmt.as_rule() {
-        Rule::math_assign => {
-            match stmt.clone()
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // x += 1;
-                [(Rule::expr, expr), (Rule::SC, _)] => {
-                    match parse_expr(expr.clone()).val {
-                        Expr::Binary { op, lhs, rhs } => {
-                            let rhs_span = rhs.span;
-                            Stmt::Assign {
-                                lval: *lhs.clone(),
-                                rval: Expr::Binary {
-                                    op: match op {
-                                        BinOp::AddAssign => BinOp::Add,
-                                        BinOp::SubAssign => BinOp::Sub,
-                                        _ => unreachable!("invalid expression statement {}", stmt.to_json())
-                                    },
-                                    lhs,
-                                    rhs,
-                                }.into_spanned(rhs_span),
-                            }
-                        },
-                        meth @ Expr::TraitMeth { .. } => Stmt::TraitMeth(meth.into_spanned(to_span(expr))),
-                        _ => todo!("{}", stmt.to_json()),
-                    }.into_spanned(span)
+    /// parse a list of expressions.
+    fn make_field_list(&mut self) -> ParseResult<Vec<ast::FieldInit>> {
+        Ok(if self.eat_if(&TokenMatch::OpenBrace) {
+            let mut exprs = vec![];
+            loop {
+                self.eat_whitespace();
+                // We have reached the end of the list (trailing comma or empty)
+                if self.eat_if(&TokenMatch::CloseBrace) {
+                    break;
                 }
-                _ => unreachable!("malformed expression statement {}", stmt.to_json()),
-            }
-        }
-        Rule::assign => {
-            match stmt.clone()
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // [*]var = [*]expr;
-                [(Rule::expr, var), (Rule::ASSIGN, _),
-                    (Rule::expr | Rule::struct_assign | Rule::arr_init, expr), (Rule::SC, _)
-                ] => {
-                    parse_lvalue(var.clone(), expr.clone(), span)
-                }
-                _ => unreachable!("malformed assignment {}", stmt.to_json()),
-            }
-        }
-        Rule::call_stmt => {
-            match stmt
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // foo(x,y); or foo();
-                [(Rule::ident, name), (Rule::type_args, type_args), (Rule::LP, _),
-                    args @ ..,
-                (Rule::RP, _), (Rule::SC, _)] => {
-                    Stmt::Call(
-                        Expr::Call {
-                            ident: name.as_str().to_string(),
-                            args: args.iter().map(|(_, p)| p.clone().into_inner()
-                                .filter_map(|arg| match arg.as_rule() {
-                                    Rule::expr => Some(parse_expr(arg)),
-                                    Rule::CM => None,
-                                    _ => unreachable!("malformed call statement"),
-                                })
-                                .collect::<Vec<_>>()).flatten().collect(),
-                            type_args: parse_type_arguments(type_args.clone()),
-                        }.into_spanned(span)
-                    ).into_spanned(span)
-                }
-                _ => unreachable!("malformed call statement"),
-            }
-        }
-        Rule::if_stmt => {
-            match stmt
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // if expr { stmts } [ else { stmts }]
-                [(Rule::IF, _), (Rule::LP, _), (Rule::expr, expr), (Rule::RP, _),
-                    (Rule::block_stmt, block), else_blk @ ..
-                ] => {
-                    Stmt::If {
-                        cond: parse_expr(expr.clone()),
-                        blk: parse_block(block.clone()),
-                        els: match else_blk {
-                            [(Rule::ELSE, _), (Rule::block_stmt, blk)] => {
-                                Some(parse_block(blk.clone()))
-                            }
-                            [] => None,
-                            _ => unreachable!("malformed if statement"),
-                        },
-                    }.into_spanned(span)
-                }
-                [
-                    (Rule::IF, _), (Rule::LP, _), (Rule::expr, expr), (Rule::RP, _), (Rule::SC, sc)
-                ] => {
-                    Stmt::If {
-                        cond: parse_expr(expr.clone()),
-                        blk: Block { span: to_span(sc), stmts: vec![]},
-                        els: None,
-                    }.into_spanned(span)
-                }
-                _ => unreachable!("malformed assignment"),
-            }
-        }
-        Rule::match_stmt => {
-            match stmt
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // match expr { arms }
-                [(Rule::MATCH, _), (Rule::expr, expr), (Rule::LBR, _), arms @ .., (Rule::RBR, _),] => {
-                    Stmt::Match {
-                        expr: parse_expr(expr.clone()),
-                        arms: arms.iter().filter_map(|(_, a)| match a.clone().into_inner()
-                            .map(|p| (p.as_rule(), p))
-                            .collect::<Vec<_>>()
-                            .as_slice() {
-                                [
-                                    (Rule::expr, pat) | (Rule::arr_init, pat), (Rule::ARROW, _),
-                                    (Rule::block_stmt, blk), opt_comma @ ..
-                                ] if opt_comma.len() <= 1 => Some(MatchArm {
-                                    pat: parse_match_arm_pat(parse_expr(pat.clone()).val, to_span(pat)),
-                                    blk: parse_block(blk.clone()),
-                                    span: to_span(a),
-                                }),
-                                _ => unreachable!("malformed match arm {}", a.to_json())
-                            })
-                            .collect(),
-                    }.into_spanned(span)
-                }
-                _ => unreachable!("malformed assignment"),
-            }
-        }
-        Rule::while_stmt => {
-            match stmt
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // while (expr) { stmts }
-                [(Rule::WHILE, _), (Rule::LP, _), (Rule::expr, expr), (Rule::RP, _),
-                    (Rule::stmt, stmt),
-                ] => {
-                    Stmt::While {
-                        cond: parse_expr(expr.clone()),
-                        // This will mostly be `Stmt::Block(..)` but sometimes just
-                        // assignment i = i + 1;
-                        stmt: box parse_stmt(stmt.clone()),
-                    }.into_spanned(span)
-                }
-                _ => unreachable!("malformed assignment"),
-            }
-        }
-        Rule::io_stmt => {
-            let span = to_span(&stmt);
-            match stmt
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // read(var);
-                [(Rule::READ, _), (Rule::LP, _),
-                    (Rule::expr, expr),
-                (Rule::RP, _), (Rule::SC, _)] => {
-                    Stmt::Read(parse_expr(expr.clone()))
-                }
-                // write(expr);
-                [(Rule::WRITE, _), (Rule::LP, _),
-                    (arg_rule, arg),
-                (Rule::RP, _), (Rule::SC, _)] => {
-                    Stmt::Write {
-                        expr: match arg_rule {
-                            Rule::expr => parse_expr(arg.clone()),
-                            Rule::string => Expr::Value(
-                                Val::Str(arg.as_str().replace("\"", "")).into_spanned(to_span(arg))
-                            ).into_spanned(to_span(arg)),
-                            _ => unreachable!("malformed write statement")
-                        },
-                    }
-                }
-                _ => unreachable!("malformed IO statement"),
-            }.into_spanned(span)
-        }
-        Rule::ret_stmt => {
-            match stmt
-                .into_inner()
-                .map(|p| (p.as_rule(), p))
-                .collect::<Vec<_>>()
-                .as_slice()
-            {
-                // return expr;
-                [(Rule::RETURN, _), (Rule::expr, expr), (Rule::SC, _)] => {
-                    Stmt::Ret(parse_expr(expr.clone())).into_spanned(span)
-                }
-                _ => unreachable!("malformed return statement"),
-            }
-        }
-        // exit;
-        Rule::exit_stmt => Stmt::Exit.into_spanned(span),
-        // { stmts }
-        Rule::block_stmt => Stmt::Block(parse_block(stmt)).into_spanned(span),
-        _ => unreachable!("malformed statement"),
-    }
-}
-
-fn parse_match_arm_pat(pat: Expr, span: Range) -> Pattern {
-    match pat {
-        Expr::Value(v) => Pat::Bind(Binding::Value(v)),
-        Expr::Ident(id) => Pat::Bind(Binding::Wild(id)),
-        Expr::EnumInit { ident, variant, items } => Pat::Enum {
-            ident,
-            variant,
-            items: items
-                .into_iter()
-                .map(|e| {
-                    let inner_span = e.span;
-                    parse_match_arm_pat(e.val, inner_span).val
-                })
-                .collect(),
-        },
-        Expr::StructInit { .. } => todo!(),
-        Expr::ArrayInit { items } => Pat::Array {
-            size: items.len(),
-            items: items
-                .into_iter()
-                .map(|e| {
-                    let inner_span = e.span;
-                    parse_match_arm_pat(e.val, inner_span).val
-                })
-                .collect(),
-        },
-        Expr::Deref { .. }
-        | Expr::AddrOf(_)
-        | Expr::Array { .. }
-        | Expr::Urnary { .. }
-        | Expr::Binary { .. }
-        | Expr::Parens(_)
-        | Expr::Call { .. }
-        | Expr::TraitMeth { .. }
-        | Expr::FieldAccess { .. } => todo!(),
-    }
-    .into_spanned(span)
-}
-
-fn parse_generics(generics: Pair<Rule>) -> Vec<Type> {
-    generics
-        .into_inner()
-        .map(|g| (g.as_rule(), g))
-        .filter_map(|(r, g)| match r {
-            Rule::CM => None,
-            Rule::type_ => Some(parse_ty(g)),
-            _ => unreachable!("malformed generic type in declaration"),
-        })
-        .collect()
-}
-
-fn parse_ty(ty: Pair<Rule>) -> Type {
-    let span = to_span(&ty);
-    match ty.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        // int x,y,z;
-        [(rule, ty), (Rule::addrof, addr)] => {
-            let indirection = addr.as_str().matches('*').count();
-            let t = match rule {
-                Rule::INT => Ty::Int,
-                Rule::FLOAT => Ty::Float,
-                Rule::CHAR => Ty::Char,
-                Rule::BOOL => Ty::Bool,
-                Rule::STRING => Ty::String,
-                Rule::VOID if addr.as_str().is_empty() => Ty::Void,
-                Rule::ident => Ty::Generic { ident: ty.as_str().to_string(), bound: None },
-                Rule::bound => match ty.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-                    [(Rule::ident, gen), (Rule::ident, bound)] => Ty::Generic { ident: gen.as_str().to_string(), bound: Some(bound.as_str().to_string()) },
-                    _ => unreachable!("malformed generic parameter bound")
-                },
-                _ => unreachable!("malformed addrof type {}", ty.to_json()),
-            }
-            .into_spanned(to_span(ty));
-            build_recursive_pointer_ty(indirection, t, span).val
-        }
-        [(kw @ Rule::STRUCT | kw @ Rule::ENUM, s), (Rule::ident, ident), (Rule::generic, gen), (Rule::addrof, addr)] => {
-            let indirection = addr.as_str().matches('*').count();
-            build_recursive_pointer_ty(
-                indirection,
-                if Rule::STRUCT == *kw {
-                    Ty::Struct { ident: ident.as_str().to_string(), gen: parse_generics(gen.clone()) }
-                    .into_spanned(s.as_span().start()..addr.as_span().end())
+                let start = self.input_idx;
+                let ident = self.make_ident()?;
+                self.eat_whitespace();
+                self.eat_if(&TokenMatch::Colon);
+                self.eat_whitespace();
+                let init = self.make_expr()?;
+                let span = ast::to_rng(start..self.curr_span().end);
+                exprs.push(ast::FieldInit { ident, init, span });
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+                    continue;
                 } else {
-                    Ty::Enum { ident: ident.as_str().to_string(), gen: parse_generics(gen.clone()) }
-                    .into_spanned(s.as_span().start()..addr.as_span().end())
-                },
-                (s.as_span().start()..addr.as_span().end()).into(),
-            )
-            .val
-        }
-        _ => unreachable!("malformed type {}", ty.to_json()),
-    }
-    .into_spanned(span)
-}
-
-fn parse_block(blk: Pair<Rule>) -> Block {
-    let span = to_span(&blk);
-    match blk.into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        // { stmt* }
-        [(Rule::LBR, _), stmts @ .., (Rule::RBR, _)] => {
-            Block { stmts: stmts.iter().map(|(_, s)| parse_stmt(s.clone())).collect(), span }
-        }
-        _ => unreachable!("malformed function"),
-    }
-}
-
-fn parse_lvalue(var: Pair<Rule>, expr: Pair<'_, Rule>, span: Range) -> Statement {
-    let lval = parse_expr(var);
-    valid_lval(&lval.val).unwrap();
-    Stmt::Assign { lval, rval: parse_expr(expr) }.into_spanned(span)
-}
-
-fn valid_lval(ex: &Expr) -> Result<(), String> {
-    let mut stack = vec![ex];
-
-    // validate lValue
-    while let Some(val) = stack.pop() {
-        match val {
-            Expr::Parens(expr) | Expr::Deref { expr, .. } | Expr::AddrOf(expr) => {
-                stack.push(&expr.val)
-            }
-            Expr::FieldAccess { lhs, rhs } => {
-                stack.push(&lhs.val);
-                stack.push(&rhs.val);
-            }
-            // Valid expressions that are not recursive
-            Expr::Ident(..) | Expr::Array { .. } => {}
-            Expr::Call { .. } => {
-                return Err("call expression is not a valid lvalue".to_owned());
-            }
-            Expr::TraitMeth { .. } => {
-                return Err("call expression is not a valid lvalue".to_owned());
-            }
-            Expr::Urnary { .. } => {
-                return Err("urnary expression is not a valid lvalue".to_owned());
-            }
-            Expr::Binary { .. } => {
-                return Err("binary expression is not a valid lvalue".to_owned());
-            }
-            Expr::StructInit { .. } => {
-                return Err("struct init expression is not a valid lvalue".to_owned());
-            }
-            Expr::EnumInit { .. } => {
-                return Err("enum init expression is not a valid lvalue".to_owned());
-            }
-            Expr::ArrayInit { .. } => {
-                return Err("array init expression is not a valid lvalue".to_owned());
-            }
-            Expr::Value(_) => {
-                return Err("value is not a valid lvalue".to_owned());
-            }
-        }
-    }
-    Ok(())
-}
-
-fn build_recursive_ty<I: Iterator<Item = usize>>(mut dims: I, base_ty: Type) -> Type {
-    if let Some(size) = dims.next() {
-        let span = base_ty.span;
-        Ty::Array { size, ty: box build_recursive_ty(dims, base_ty) }.into_spanned(span)
-    } else {
-        base_ty
-    }
-}
-
-fn build_recursive_pointer_ty(indir: usize, base_ty: Type, outer_span: Range) -> Type {
-    if indir > 0 {
-        Ty::Ptr(box build_recursive_pointer_ty(indir - 1, base_ty, outer_span))
-            .into_spanned(outer_span)
-    } else {
-        base_ty
-    }
-}
-
-fn parse_var_decl(var: Pairs<Rule>) -> Vec<Var> {
-    match var.clone().into_iter().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        // int x,y,z;
-        [(Rule::type_, ty), (Rule::var_name, var_name), names @ ..] => {
-            let ty = parse_ty(ty.clone());
-            let parse_var_array = |var: &Pair<Rule>| {
-                let span = to_span(var);
-                match var
-                    .clone()
-                    .into_inner()
-                    .map(|p| (p.as_rule(), p))
-                    .collect::<Vec<_>>()
-                    .as_slice()
-                {
-                    [(Rule::addrof, addr), (Rule::ident, id), array_parts @ ..] => {
-                        let inner_span = (addr.as_span().start()..id.as_span().end()).into();
-                        let ty = {
-                            let indirection = addr.as_str().matches('*').count();
-                            build_recursive_pointer_ty(indirection, ty.clone(), inner_span)
-                        };
-                        if !array_parts.is_empty() {
-                            Var {
-                                ty: build_recursive_ty(
-                                    array_parts.iter().filter_map(|(r, p)| match r {
-                                        Rule::integer => {
-                                            Some(p.as_str().parse().expect("invalid integer"))
-                                        }
-                                        Rule::LBK | Rule::RBK => None,
-                                        _ => unreachable!("malformed array access"),
-                                    }),
-                                    ty,
-                                ),
-                                ident: id.as_str().to_string(),
-                                span,
-                            }
-                        } else {
-                            Var { ty, ident: id.as_str().to_string(), span: inner_span }
-                        }
-                    }
-                    _ => unreachable!("malformed variable"),
+                    break;
                 }
+            }
+            self.eat_if(&TokenMatch::CloseBrace);
+            self.eat_whitespace();
+            exprs
+        } else {
+            vec![]
+        })
+    }
+
+    /// parse a list of expressions.
+    fn make_expr_list(
+        &mut self,
+        open: &TokenMatch,
+        close: &TokenMatch,
+    ) -> ParseResult<Vec<ast::Expression>> {
+        Ok(if self.eat_if(open) {
+            let mut exprs = vec![];
+            loop {
+                self.eat_whitespace();
+                // We have reached the end of the list (trailing comma or empty)
+                if self.eat_if(close) {
+                    break;
+                }
+                exprs.push(self.make_expr()?);
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            self.eat_if(close);
+            self.eat_whitespace();
+            exprs
+        } else {
+            vec![]
+        })
+    }
+
+    /// This handles top-level expressions.
+    ///
+    /// - array init
+    /// - enum/struct init
+    /// - tuples (eventually)
+    /// - expression tress
+    fn make_expr(&mut self) -> ParseResult<ast::Expression> {
+        let start = self.input_idx;
+        self.eat_whitespace();
+
+        if self.curr.kind == TokenMatch::OpenBracket {
+            // array init
+            let items = self.make_expr_list(&TokenMatch::OpenBracket, &TokenMatch::CloseBracket)?;
+
+            let span = ast::to_rng(start..self.curr_span().end);
+            Ok(ast::Expr::ArrayInit { items }.into_spanned(span))
+        } else if self.curr.kind == TokenMatch::Lt {
+            // trait method calls
+            let start = self.curr_span().start;
+
+            // Outer `<` token
+            self.eat_if(&TokenMatch::Lt);
+            let type_args = if self.curr.kind == TokenMatch::Lt {
+                self.eat_if(&TokenMatch::Lt);
+                let mut gen_args = vec![];
+                loop {
+                    self.eat_whitespace();
+                    gen_args.push(self.make_ty()?);
+                    self.eat_whitespace();
+                    if self.eat_if(&TokenMatch::Comma) {
+                        self.eat_whitespace();
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                self.eat_if(&TokenMatch::Gt);
+
+                gen_args
+            } else {
+                vec![]
             };
 
-            vec![parse_var_array(var_name)]
-                .into_iter()
-                .chain(names.iter().filter_map(|(r, n)| match r {
-                    Rule::var_name => Some(parse_var_array(n)),
-                    Rule::CM | Rule::SC => None,
-                    _ => unreachable!("malformed variable declaration"),
-                }))
-                .collect()
-        }
-        _ => unreachable!("malformed function {:?}", var.map(|p| p.as_rule()).collect::<Vec<_>>()),
-    }
-}
+            let trait_ = self.make_path()?;
 
-fn parse_expr(expr: Pair<Rule>) -> Expression {
-    // println!("{}", expr.to_json());
-    let climber = PrecClimber::new(vec![
-        // +=, -=
-        Operator::new(Rule::ADDASSIGN, Assoc::Left) | Operator::new(Rule::SUBASSIGN, Assoc::Left),
-        // ||
-        Operator::new(Rule::OR, Assoc::Left),
-        // &&
-        Operator::new(Rule::AND, Assoc::Left),
-        // |
-        Operator::new(Rule::BOR, Assoc::Left),
-        // ^
-        Operator::new(Rule::BXOR, Assoc::Left),
-        // &
-        Operator::new(Rule::BAND, Assoc::Left),
-        // ==, !=
-        Operator::new(Rule::EQ, Assoc::Left) | Operator::new(Rule::NE, Assoc::Left),
-        //  >, >=, <, <=
-        Operator::new(Rule::GT, Assoc::Left)
-            | Operator::new(Rule::GE, Assoc::Left)
-            | Operator::new(Rule::LT, Assoc::Left)
-            | Operator::new(Rule::LE, Assoc::Left),
-        // <<, >>
-        Operator::new(Rule::BLSF, Assoc::Left) | Operator::new(Rule::BRSF, Assoc::Left),
-        // +, -
-        Operator::new(Rule::PLUS, Assoc::Left) | Operator::new(Rule::SUB, Assoc::Left),
-        // *, /
-        Operator::new(Rule::MUL, Assoc::Left)
-            | Operator::new(Rule::DIV, Assoc::Left)
-            | Operator::new(Rule::REM, Assoc::Left),
-        // ., ->
-        Operator::new(Rule::DOT, Assoc::Left) | Operator::new(Rule::ARROW, Assoc::Left),
-    ]);
+            self.eat_whitespace();
+            self.eat_if(&TokenMatch::Gt);
 
-    consume(expr, &climber)
-}
-
-fn consume(expr: Pair<'_, Rule>, climber: &PrecClimber<Rule>) -> Expression {
-    let primary = |p: Pair<'_, _>| consume(p, climber);
-    let infix = |lhs: Expression, op: Pair<Rule>, rhs: Expression| {
-        let span = lhs.span.start..rhs.span.end;
-        let expr = match op.as_rule() {
-            Rule::DOT => match &lhs.val {
-                Expr::Deref { indir, expr: inner } => Expr::Deref {
-                    indir: *indir,
-                    expr: box Expr::FieldAccess { lhs: inner.clone(), rhs: box rhs }
-                        .into_spanned(inner.span.start..span.end),
-                },
-                _ => Expr::FieldAccess { lhs: box lhs, rhs: box rhs },
-            },
-            Rule::ARROW => match &lhs.val {
-                Expr::Deref { indir, expr: inner } => Expr::Deref {
-                    indir: *indir,
-                    expr: box Expr::FieldAccess {
-                        lhs: box Expr::Deref { indir: 1, expr: inner.clone() }
-                            .into_spanned(span.start..rhs.span.start),
-                        rhs: box rhs,
-                    }
-                    .into_spanned(inner.span.start..span.end),
-                },
-                _ => Expr::FieldAccess {
-                    lhs: box Expr::Deref { indir: 1, expr: box lhs }
-                        .into_spanned(span.start..rhs.span.start),
-                    rhs: box rhs,
-                },
-            },
-
-            Rule::MUL => Expr::Binary { op: BinOp::Mul, lhs: box lhs, rhs: box rhs },
-            Rule::DIV => Expr::Binary { op: BinOp::Div, lhs: box lhs, rhs: box rhs },
-            Rule::REM => Expr::Binary { op: BinOp::Rem, lhs: box lhs, rhs: box rhs },
-
-            Rule::PLUS => Expr::Binary { op: BinOp::Add, lhs: box lhs, rhs: box rhs },
-            Rule::SUB => Expr::Binary { op: BinOp::Sub, lhs: box lhs, rhs: box rhs },
-
-            Rule::BLSF => Expr::Binary { op: BinOp::LeftShift, lhs: box lhs, rhs: box rhs },
-            Rule::BRSF => Expr::Binary { op: BinOp::RightShift, lhs: box lhs, rhs: box rhs },
-
-            Rule::GT => Expr::Binary { op: BinOp::Gt, lhs: box lhs, rhs: box rhs },
-            Rule::GE => Expr::Binary { op: BinOp::Ge, lhs: box lhs, rhs: box rhs },
-            Rule::LT => Expr::Binary { op: BinOp::Lt, lhs: box lhs, rhs: box rhs },
-            Rule::LE => Expr::Binary { op: BinOp::Le, lhs: box lhs, rhs: box rhs },
-
-            Rule::EQ => Expr::Binary { op: BinOp::Eq, lhs: box lhs, rhs: box rhs },
-            Rule::NE => Expr::Binary { op: BinOp::Ne, lhs: box lhs, rhs: box rhs },
-
-            Rule::BAND => Expr::Binary { op: BinOp::BitAnd, lhs: box lhs, rhs: box rhs },
-            Rule::BXOR => Expr::Binary { op: BinOp::BitXor, lhs: box lhs, rhs: box rhs },
-            Rule::BOR => Expr::Binary { op: BinOp::BitOr, lhs: box lhs, rhs: box rhs },
-
-            Rule::AND => Expr::Binary { op: BinOp::And, lhs: box lhs, rhs: box rhs },
-            Rule::OR => Expr::Binary { op: BinOp::Or, lhs: box lhs, rhs: box rhs },
-
-            Rule::ADDASSIGN => Expr::Binary { op: BinOp::AddAssign, lhs: box lhs, rhs: box rhs },
-            Rule::SUBASSIGN => Expr::Binary { op: BinOp::SubAssign, lhs: box lhs, rhs: box rhs },
-            _ => unreachable!(),
-        };
-        expr.into_spanned(span)
-    };
-
-    let span = to_span(&expr);
-    enum ExprKind {
-        Deref(usize),
-        AddrOf,
-        None,
-    }
-    let mut wrapper = ExprKind::None;
-    let ex = match expr.as_rule() {
-        Rule::expr => climber.climb(expr.into_inner(), primary, infix),
-        Rule::op => climber.climb(expr.into_inner(), primary, infix),
-        Rule::term => {
-            match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
-                // x,y[],z.z
-                [(Rule::variable, var)] => {
-                    let span = to_span(var);
-                    match var
-                        .clone()
-                        .into_inner()
-                        .map(|p| (p.as_rule(), p))
-                        .collect::<Vec<_>>()
-                        .as_slice()
-                    {
-                        [(Rule::deref, deref), (Rule::ident, ident)] => {
-                            let indir = deref.as_str();
-                            if indir == "&" {
-                                wrapper = ExprKind::AddrOf;
-                            } else {
-                                let indirection = indir.matches('*').count();
-                                if indirection > 0 {
-                                    wrapper = ExprKind::Deref(indirection);
-                                }
-                            }
-                            Expr::Ident(ident.as_str().to_string()).into_spanned(to_span(ident))
-                        }
-                        [(Rule::deref, deref), (Rule::ident, ident), (Rule::LBK, _), (Rule::expr, expr), (Rule::RBK, _), rest @ ..] =>
-                        {
-                            let indir = deref.as_str();
-
-                            let arr = Expr::Array {
-                                ident: ident.as_str().to_string(),
-                                exprs: vec![parse_expr(expr.clone())]
-                                    .into_iter()
-                                    .chain(rest.iter().filter_map(|(r, p)| match r {
-                                        Rule::LBK | Rule::RBK => None,
-                                        Rule::expr => Some(parse_expr(p.clone())),
-                                        _ => unreachable!("malformed multi-dim array"),
-                                    }))
-                                    .collect(),
-                            };
-                            if indir == "&" {
-                                wrapper = ExprKind::AddrOf;
-                            } else {
-                                let indirection = indir.matches('*').count();
-                                if indirection > 0 {
-                                    wrapper = ExprKind::Deref(indirection);
-                                }
-                            }
-
-                            arr.into_spanned(ident.as_span().start()..span.end)
-                        }
-                        _ => unreachable!("malformed variable name {}", var.to_json()),
-                    }
+            self.eat_if(&TokenMatch::OpenParen);
+            let mut args = vec![];
+            loop {
+                self.eat_whitespace();
+                // A no argument function call or trailing comma
+                if self.eat_if(&TokenMatch::CloseParen) {
+                    break;
                 }
-                // 1,true,'a', "string"
-                [(Rule::const_, konst)] => parse_const(konst.clone()).into_spanned(span),
-                // call() | call::<type>()
-                [(Rule::ident, ident), (Rule::type_args, type_args), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
-                {
-                    Expr::Call {
-                        ident: ident.as_str().to_string(),
-                        args: if let [(Rule::arg_list, args)] = arg_list {
-                            args.clone()
-                                .into_inner()
-                                .filter_map(|p| match p.as_rule() {
-                                    Rule::expr => Some(
-                                        // if there are expressions as arguments they are
-                                        // ordered on their own `1 + call(2*3)`  the 2*3
-                                        // has nothing to do with 1 + whatever
-                                        climber.climb(p.clone().into_inner(), primary, infix),
-                                    ),
-                                    Rule::arr_init => Some(parse_expr(p)),
-                                    Rule::struct_assign => Some(parse_expr(p)),
-                                    Rule::CM => None,
-                                    _ => unreachable!("malformed arguments in call {:?}", arg_list),
-                                })
-                                .collect::<Vec<_>>()
-                        } else {
-                            vec![]
-                        },
-                        type_args: parse_type_arguments(type_args.clone()),
-                    }
-                    .into_spanned(span)
+
+                args.push(self.make_expr()?);
+                self.eat_whitespace();
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+                    continue;
+                } else {
+                    break;
                 }
-                // <<T>::trait>()
-                [(Rule::generic, gen_args), (Rule::ident, trait_), (Rule::LP, _), arg_list @ .., (Rule::RP, _)] =>
-                {
-                    Expr::TraitMeth {
-                        trait_: trait_.as_str().to_string(),
-                        args: if let [(Rule::arg_list, args)] = arg_list {
-                            args.clone()
-                                .into_inner()
-                                .filter_map(|p| match p.as_rule() {
-                                    Rule::expr => Some(
-                                        // if there are expressions as arguments they are
-                                        // ordered on their own `1 + call(2*3)`  the 2*3
-                                        // has nothing to do with 1 + whatever
-                                        climber.climb(p.clone().into_inner(), primary, infix),
-                                    ),
-                                    Rule::CM => None,
-                                    _ => unreachable!("malformed arguments in call {:?}", arg_list),
-                                })
-                                .collect::<Vec<_>>()
-                        } else {
-                            vec![]
-                        },
-                        type_args: parse_generics(gen_args.clone()),
-                    }
-                    .into_spanned(span)
-                }
-                // [! | ~]expr
-                [(Rule::logic_bit, logbit), (Rule::expr, expr)] => {
-                    let inner = climber.climb(expr.clone().into_inner(), primary, infix);
-                    Expr::Urnary {
-                        op: if logbit.as_str() == "!" { UnOp::Not } else { UnOp::OnesComp },
-                        expr: box inner,
-                    }
-                    .into_spanned(span)
-                }
-                // (1 + 1)
-                [(Rule::LP, _), (Rule::expr, expr), (Rule::RP, _)] => {
-                    let inner = climber.climb(expr.clone().into_inner(), primary, infix);
-                    Expr::Parens(box inner).into_spanned(span)
-                }
-                [(Rule::enum_init, expr)] => {
-                    let span = to_span(expr);
-                    match expr
-                        .clone()
-                        .into_inner()
-                        .map(|r| (r.as_rule(), r))
-                        .collect::<Vec<_>>()
-                        .as_slice()
-                    {
-                        [(Rule::ident, enum_name), (Rule::ident, variant), items @ ..] => {
-                            Expr::EnumInit {
-                                ident: enum_name.as_str().to_string(),
-                                variant: variant.as_str().to_string(),
-                                items: items
-                                    .iter()
-                                    .filter_map(|(r, p)| match r {
-                                        Rule::expr => Some(parse_expr(p.clone())),
-                                        Rule::CM | Rule::LP | Rule::RP => None,
-                                        _ => unreachable!(
-                                            "malformed item in enum initializer {}",
-                                            p.to_json()
-                                        ),
-                                    })
-                                    .collect(),
-                            }
-                            .into_spanned(span)
-                        }
-                        _ => unreachable!("malformed enum assignment {}", expr.to_json()),
-                    }
-                }
-                _ => unreachable!("malformed expression"),
             }
-        }
-        Rule::struct_assign => {
-            let span = to_span(&expr);
-            match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
-                [(Rule::ident, name), (Rule::LBR, _), fields @ .., (Rule::RBR, _)] => {
-                    Expr::StructInit {
-                        name: name.as_str().to_string(),
-                        fields: fields
-                            .iter()
-                            .filter_map(|(r, p)| match r {
-                                Rule::field_expr => Some(parse_field_init(p.clone())),
-                                Rule::CM => None,
-                                _ => unreachable!("malformed struct initializer"),
-                            })
-                            .collect(),
-                    }
-                    .into_spanned(span)
-                }
-                _ => unreachable!("malformed struct assignment"),
-            }
-        }
-        Rule::arr_init => {
-            let span = to_span(&expr);
-            match expr.into_inner().map(|r| (r.as_rule(), r)).collect::<Vec<_>>().as_slice() {
-                [(Rule::LBR, _), fields @ .., (Rule::RBR, _)] => Expr::ArrayInit {
-                    items: fields
-                        .iter()
-                        .filter_map(|(r, p)| match r {
-                            Rule::arr_init | Rule::expr => Some(parse_expr(p.clone())),
-                            Rule::CM => None,
-                            _ => unreachable!("malformed array initializer"),
-                        })
-                        .collect(),
-                }
-                .into_spanned(span),
-                _ => unreachable!("malformed array assignment"),
-            }
-        }
-        err => unreachable!("{:?}", err),
-    };
-    match wrapper {
-        ExprKind::Deref(indir) => Expr::Deref { indir, expr: box ex }.into_spanned(span),
-        ExprKind::AddrOf => Expr::AddrOf(box ex).into_spanned(span),
-        ExprKind::None => ex,
-    }
-}
+            // This is duplicated iff we have a no arg call
+            self.eat_whitespace();
+            self.eat_if(&TokenMatch::CloseParen);
 
-fn parse_const(konst: Pair<'_, Rule>) -> Expr {
-    let inner_span = to_span(&konst);
-    match konst.clone().into_inner().next().unwrap().as_rule() {
-        Rule::integer => {
-            Expr::Value(Val::Int(konst.as_str().parse().unwrap()).into_spanned(inner_span))
-        }
-        Rule::decimal => {
-            Expr::Value(Val::Float(konst.as_str().parse().unwrap()).into_spanned(inner_span))
-        }
-        Rule::charstr => {
-            let ch = konst.as_str().replace('\'', "").chars().collect::<Vec<_>>();
-            if let [c] = ch.as_slice() {
-                Expr::Value(Val::Char(*c).into_spanned(inner_span))
+            let span = ast::to_rng(start..self.curr_span().end);
+            Ok(ast::Expr::TraitMeth { trait_, type_args, args }.into_spanned(span))
+        } else if self.curr.kind == TokenMatch::OpenParen {
+            self.eat_if(&TokenMatch::OpenParen);
+
+            let ex = self.make_expr()?;
+
+            self.eat_if(&TokenMatch::OpenParen);
+
+            // tuple
+            // TODO: check there are only commas maybe??
+            Ok(ex)
+        } else if matches!(
+            self.curr.kind,
+            TokenKind::Ident
+                | TokenKind::Literal { .. }
+                | TokenKind::Star
+                | TokenKind::And
+                | TokenKind::Bang
+                | TokenKind::Tilde
+        ) {
+            // FIXME: we don't want to have to say `let x = enum foo::bar;` just `let x = foo::bar;`
+            // TODO: don't parse for keywords if its a lit DUH
+            let x: Result<kw::Keywords, _> = self.input_curr().try_into();
+            if let Ok(key) = x {
+                match key {
+                    kw::Enum => self.make_enum_init(),
+                    kw::Struct => self.make_struct_init(),
+                    t => todo!("error {:?}", self.curr),
+                }
             } else {
-                unreachable!("multiple char char is not allowed")
+                // TODO: Refactor out
+                // Shunting Yard algo http://en.wikipedia.org/wiki/Shunting_yard_algorithm
+                let mut output: Vec<ast::Expression> = vec![];
+                let mut opstack: Vec<AssocOp> = vec![];
+                while self.curr.kind != TokenMatch::Semi {
+                    self.eat_whitespace();
+                    let (ex, op) = self.advance_to_op()?;
+                    self.eat_whitespace();
+                    if let Some(next) = op {
+                        // if the previous operator is of a higher precedence than the incoming
+                        match opstack.pop() {
+                            Some(prev)
+                                if next.precedence() < prev.precedence()
+                                    || (next.precedence() == prev.precedence()
+                                        && matches!(prev.fixity(), Fixit::Left)) =>
+                            {
+                                let lhs = output.pop().unwrap();
+
+                                let span = ast::to_rng(lhs.span.start..ex.span.end);
+                                let mut finish = ast::Expr::Binary {
+                                    op: prev.to_ast_binop().unwrap(),
+                                    lhs: box lhs,
+                                    rhs: box ex,
+                                }
+                                .into_spanned(span);
+
+                                while let Some(lfix_op) = opstack.pop() {
+                                    if matches!(lfix_op.fixity(), Fixit::Left) {
+                                        let lhs = output.pop().unwrap();
+                                        let span = ast::to_rng(lhs.span.start..finish.span.end);
+                                        finish = ast::Expr::Binary {
+                                            op: lfix_op.to_ast_binop().unwrap(),
+                                            lhs: box lhs,
+                                            rhs: box finish,
+                                        }
+                                        .into_spanned(span);
+                                    } else {
+                                        opstack.push(lfix_op);
+                                        break;
+                                    }
+                                }
+
+                                output.push(finish);
+                                opstack.push(next);
+                            }
+                            Some(prev) => {
+                                output.push(ex);
+                                opstack.push(prev);
+                                opstack.push(next);
+                            }
+                            None => {
+                                output.push(ex);
+                                opstack.push(next);
+                            }
+                        }
+                    // TODO: cleanup
+                    // There is probably a better way to do this
+                    } else {
+                        output.push(ex);
+
+                        // We have to process the stack/output and the last (expr, binop) pair
+                        loop {
+                            match (output.pop(), opstack.pop()) {
+                                (Some(rhs), Some(bin)) => {
+                                    if let Some(first) = output.pop() {
+                                        let span = ast::to_rng(first.span.start..rhs.span.end);
+                                        let finish = ast::Expr::Binary {
+                                            op: bin.to_ast_binop().unwrap(),
+                                            lhs: box first,
+                                            rhs: box rhs,
+                                        }
+                                        .into_spanned(span);
+
+                                        output.push(finish);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                (Some(expr), None) => {
+                                    return Ok(expr);
+                                }
+                                (None, Some(op)) => {
+                                    return Err(ParseError::Expected(
+                                        "a term",
+                                        format!("only the {} operand", op),
+                                    ));
+                                }
+                                (None, None) => {
+                                    unreachable!("dont think this is possible")
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                output.pop().ok_or(ParseError::Error("failed to generate expression"))
+            }
+        } else {
+            // See the above 4 todos/fixes
+            todo!("{:?}", self.curr);
+        }
+    }
+
+    /// Helper to build a "left" hand expression and an optional `AssocOp`.
+    ///
+    /// - anything with that starts with an ident
+    ///     - field access, calls, etc.
+    /// - literals
+    /// - check for negation and not
+    /// - pointers
+    /// - addrof maybe
+    fn advance_to_op(&mut self) -> ParseResult<(ast::Expression, Option<AssocOp>)> {
+        Ok(if self.curr.kind == TokenMatch::Ident {
+            let id = self.make_lh_expr()?;
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (id, op)
+        } else if self.curr.kind == TokenMatch::Literal {
+            let start = self.curr_span().start;
+            let ex = ast::Expr::Value(self.make_literal()?)
+                .into_spanned(ast::to_rng(start..self.curr_span().end));
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (ex, op)
+        } else if self.curr.kind == TokenMatch::Bang {
+            // Not `!expr`
+            let start = self.input_idx;
+
+            self.eat_if(&TokenMatch::Bang);
+            let id = self.make_lh_expr()?;
+            let expr = ast::Expr::Urnary { op: ast::UnOp::Not, expr: box id }
+                .into_spanned(ast::to_rng(start..self.curr_span().end));
+
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (expr, op)
+        } else if self.curr.kind == TokenMatch::Minus {
+            todo!("negative")
+        } else if self.curr.kind == TokenMatch::Tilde {
+            // Negation `~expr`
+            let start = self.input_idx;
+
+            self.eat_if(&TokenMatch::Tilde);
+            let id = self.make_lh_expr()?;
+            let expr = ast::Expr::Urnary { op: ast::UnOp::OnesComp, expr: box id }
+                .into_spanned(ast::to_rng(start..self.curr_span().end));
+
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (expr, op)
+        } else if self.curr.kind == TokenMatch::Star {
+            let start = self.input_idx;
+
+            let mut indir = 0;
+            loop {
+                if self.eat_if(&TokenMatch::Star) {
+                    indir += 1;
+                } else {
+                    break;
+                }
+            }
+            let id = self.make_lh_expr()?;
+            let expr = ast::Expr::Deref { indir, expr: box id }
+                .into_spanned(ast::to_rng(start..self.curr_span().end));
+
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (expr, op)
+        } else if self.curr.kind == TokenMatch::And {
+            let start = self.input_idx;
+
+            self.eat_if(&TokenMatch::And);
+            let ex = self.make_lh_expr()?;
+            let expr =
+                ast::Expr::AddrOf(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
+
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (expr, op)
+        } else if self.curr.kind == TokenMatch::OpenParen {
+            // N.B.
+            // We know we are in the middle of some kind of binop
+            self.eat_if(&TokenMatch::OpenParen);
+
+            let id = self.make_expr()?;
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (id, op)
+        } else {
+            todo!("{:?}", self.curr)
+        })
+    }
+
+    /// Builds left hand expressions.
+    ///
+    /// - idents
+    /// - field access
+    /// - array index
+    /// - fn call
+    fn make_lh_expr(&mut self) -> ParseResult<ast::Expression> {
+        Ok(if self.curr.kind == TokenMatch::Ident {
+            let start = self.curr_span().start;
+
+            if self.check_next(&TokenMatch::Dot) {
+                // We are in a field access
+                let lhs = ast::Expr::Ident(self.make_ident()?)
+                    .into_spanned(ast::to_rng(start..self.curr_span().end));
+                self.eat_if(&TokenMatch::Dot);
+
+                ast::Expr::FieldAccess { lhs: box lhs, rhs: box self.make_lh_expr()? }
+                    .into_spanned(ast::to_rng(start..self.curr_span().end))
+            } else if self.check_next(&TokenMatch::OpenBracket) {
+                // We are in an array index expr
+                let start = self.curr_span().start;
+
+                let ident = self.make_ident()?;
+
+                self.eat_if(&TokenMatch::OpenBracket);
+                self.eat_whitespace();
+
+                let mut exprs = vec![];
+                loop {
+                    exprs.push(self.make_expr()?);
+                    self.eat_whitespace();
+                    if self.eat_seq_ignore_ws(&[TokenMatch::CloseBracket, TokenMatch::OpenBracket])
+                    {
+                        self.eat_whitespace();
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                self.eat_if(&TokenMatch::CloseBracket);
+
+                ast::Expr::Array { ident, exprs }
+                    .into_spanned(ast::to_rng(start..self.curr_span().end))
+            } else {
+                let start = self.curr_span().start;
+
+                let mut path = self.make_path()?;
+                self.eat_whitespace();
+                let is_func_call =
+                    (self.curr.kind == TokenMatch::Lt || self.curr.kind == TokenMatch::OpenParen);
+
+                if path.segs.len() == 1 && !is_func_call {
+                    ast::Expr::Ident(path.segs.remove(0))
+                        .into_spanned(ast::to_rng(start..self.curr_span().end))
+                } else {
+                    // We are most likely in a function call
+                    if is_func_call {
+                        let start = self.curr_span().start;
+
+                        let type_args = if self.curr.kind == TokenMatch::Lt {
+                            self.eat_if(&TokenMatch::Lt);
+                            let mut gen_args = vec![];
+                            loop {
+                                self.eat_whitespace();
+                                gen_args.push(self.make_ty()?);
+                                self.eat_whitespace();
+                                if self.eat_if(&TokenMatch::Comma) {
+                                    self.eat_whitespace();
+                                    continue;
+                                } else {
+                                    break;
+                                }
+                            }
+                            self.eat_if(&TokenMatch::Gt);
+
+                            gen_args
+                        } else {
+                            vec![]
+                        };
+
+                        self.eat_whitespace();
+                        self.eat_if(&TokenMatch::OpenParen);
+
+                        let mut args = vec![];
+                        loop {
+                            self.eat_whitespace();
+
+                            // A no argument function call or trailing comma
+                            if self.eat_if(&TokenMatch::CloseParen) {
+                                break;
+                            }
+
+                            args.push(self.make_expr()?);
+                            self.eat_whitespace();
+                            if self.eat_if(&TokenMatch::Comma) {
+                                self.eat_whitespace();
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                        // This is duplicated iff we have a no arg call
+                        self.eat_whitespace();
+                        self.eat_if(&TokenMatch::CloseParen);
+
+                        ast::Expr::Call { path, type_args, args }
+                            .into_spanned(ast::to_rng(start..self.curr_span().end))
+                    } else {
+                        todo!("{:?}", self.curr)
+                    }
+                }
+            }
+        } else {
+            todo!()
+        })
+    }
+
+    /// Build an optional `AssocOp`.
+    fn make_op(&mut self) -> ParseResult<Option<AssocOp>> {
+        Ok(match self.curr.kind {
+            TokenKind::Eq => {
+                self.eat_if(&TokenMatch::Eq);
+                if self.eat_if(&TokenMatch::Eq) {
+                    Some(AssocOp::Equal)
+                } else {
+                    None
+                }
+            }
+            TokenKind::Bang => {
+                self.eat_if(&TokenMatch::Bang);
+                if self.eat_if(&TokenMatch::Eq) {
+                    Some(AssocOp::NotEqual)
+                } else {
+                    unreachable!("urnary expr parsed before make_op")
+                }
+            }
+            TokenKind::Lt => {
+                self.eat_if(&TokenMatch::Lt);
+                match self.curr.kind {
+                    TokenKind::Lt => {
+                        self.eat_if(&TokenMatch::Lt);
+                        Some(AssocOp::ShiftLeft)
+                    }
+                    TokenKind::Eq => {
+                        self.eat_if(&TokenMatch::Eq);
+                        Some(AssocOp::LessEqual)
+                    }
+                    // valid ends of `<` token
+                    TokenKind::Ident | TokenKind::Literal { .. } | TokenKind::Whitespace { .. } => {
+                        Some(AssocOp::Less)
+                    }
+                    _ => todo!(),
+                }
+            }
+            TokenKind::Gt => {
+                self.eat_if(&TokenMatch::Gt);
+                match self.curr.kind {
+                    TokenKind::Gt => {
+                        self.eat_if(&TokenMatch::Gt);
+                        Some(AssocOp::ShiftRight)
+                    }
+                    TokenKind::Eq => {
+                        self.eat_if(&TokenMatch::Eq);
+                        Some(AssocOp::GreaterEqual)
+                    }
+                    // valid ends of `>` token
+                    TokenKind::Ident | TokenKind::Literal { .. } | TokenKind::Whitespace { .. } => {
+                        Some(AssocOp::Greater)
+                    }
+                    _ => todo!(),
+                }
+            }
+            TokenKind::Plus => {
+                self.eat_if(&TokenMatch::Plus);
+                Some(AssocOp::Add)
+            }
+            TokenKind::Minus => {
+                self.eat_if(&TokenMatch::Minus);
+                Some(AssocOp::Subtract)
+            }
+            TokenKind::Star => {
+                self.eat_if(&TokenMatch::Star);
+                Some(AssocOp::Multiply)
+            }
+            TokenKind::Slash => {
+                self.eat_if(&TokenMatch::Slash);
+                Some(AssocOp::Divide)
+            }
+            TokenKind::Percent => {
+                self.eat_if(&TokenMatch::Percent);
+                Some(AssocOp::Modulus)
+            }
+            TokenKind::And => {
+                self.eat_if(&TokenMatch::And);
+                if self.eat_if(&TokenMatch::And) {
+                    Some(AssocOp::LAnd)
+                } else {
+                    Some(AssocOp::BitAnd)
+                }
+            }
+            TokenKind::Or => {
+                self.eat_if(&TokenMatch::Or);
+                if self.eat_if(&TokenMatch::Or) {
+                    Some(AssocOp::LOr)
+                } else {
+                    Some(AssocOp::BitOr)
+                }
+            }
+            TokenKind::Caret => {
+                self.eat_if(&TokenMatch::Caret);
+                Some(AssocOp::BitXor)
+            }
+            TokenKind::Semi => {
+                self.eat_if(&TokenMatch::Semi);
+                None
+            }
+            TokenKind::CloseParen => {
+                self.eat_if(&TokenMatch::CloseParen);
+                None
+            }
+            TokenKind::CloseBracket => {
+                self.eat_if(&TokenMatch::CloseBracket);
+                None
+            }
+            TokenKind::CloseBrace => {
+                self.eat_if(&TokenMatch::CloseBrace);
+                None
+            }
+            // The stops expressions at `match (expr)` sites
+            TokenKind::OpenBrace => {
+                self.eat_if(&TokenMatch::OpenBrace);
+                None
+            }
+            // Argument lists, array elements, any initializer stuff (structs, enums)
+            TokenKind::Comma => None,
+            t => todo!("Error found {:?} {:?}", t, &self.items()),
+        })
+    }
+
+    fn make_enum_init(&mut self) -> ParseResult<ast::Expression> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Enum);
+        let mut path = self.make_path()?;
+        let variant = path.segs.pop().unwrap();
+        let items = self.make_expr_list(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
+
+        let span = ast::to_rng(start..self.curr_span().end);
+        Ok(ast::Expr::EnumInit { path, variant, items }.into_spanned(span))
+    }
+
+    fn make_struct_init(&mut self) -> ParseResult<ast::Expression> {
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Struct);
+        let path = self.make_path()?;
+
+        let fields = self.make_field_list()?;
+
+        let span = ast::to_rng(start..self.curr_span().end);
+        Ok(ast::Expr::StructInit { path, fields }.into_spanned(span))
+    }
+
+    fn make_block(&mut self) -> ParseResult<ast::Block> {
+        let start = self.input_idx;
+        let mut stmts = vec![];
+        // println!("{:?}", self.curr);
+        // println!("{:?}", self.tokens);
+        if self.cmp_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]) {
+            self.eat_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]);
+            let span = ast::to_rng(start..self.curr_span().end);
+            return Ok(ast::Block { stmts: vec![ast::Stmt::Exit.into_spanned(span)], span });
+        }
+
+        self.eat_whitespace();
+        if self.eat_if(&TokenMatch::OpenBrace) {
+            loop {
+                self.eat_whitespace();
+                stmts.push(self.make_stmt()?);
+                self.eat_whitespace();
+
+                if self.eat_if(&TokenMatch::CloseBrace) {
+                    break;
+                }
             }
         }
-        Rule::string => Expr::Value(Val::Str(konst.as_str().to_string()).into_spanned(inner_span)),
-        Rule::TRUE => Expr::Value(Val::Bool(true).into_spanned(inner_span)),
-        Rule::FALSE => Expr::Value(Val::Bool(false).into_spanned(inner_span)),
-        r => unreachable!("malformed const expression {:?}", r),
+        let span = ast::to_rng(start..self.curr_span().end);
+        Ok(ast::Block { stmts, span })
+    }
+
+    fn make_stmt(&mut self) -> ParseResult<ast::Statement> {
+        let start = self.input_idx;
+        let stmt = if self.eat_if_kw(kw::Let) {
+            self.make_assignment()?
+        } else if self.eat_if_kw(kw::If) {
+            self.make_if_stmt()?
+        } else if self.eat_if_kw(kw::While) {
+            self.make_while_stmt()?
+        } else if self.eat_if_kw(kw::Match) {
+            self.make_match_stmt()?
+        } else if self.eat_if_kw(kw::Return) {
+            self.make_return_stmt()?
+        } else if self.eat_if_kw(kw::Exit) {
+            self.eat_whitespace();
+            ast::Stmt::Exit
+        } else {
+            self.make_expr_stmt()?
+        };
+
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Semi);
+        let span = ast::to_rng(start..self.curr_span().end);
+        Ok(stmt.into_spanned(span))
+    }
+
+    fn make_assignment(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat_whitespace();
+
+        let lval = self.make_lh_expr()?;
+        self.eat_whitespace();
+
+        self.eat_if(&TokenMatch::Eq);
+        self.eat_whitespace();
+
+        let rval = self.make_expr()?;
+
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Semi);
+        Ok(ast::Stmt::Assign { lval, rval })
+    }
+
+    fn make_if_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat_whitespace();
+
+        let cond = self.make_expr()?;
+        self.eat_whitespace();
+
+        let blk = self.make_block()?;
+        self.eat_whitespace();
+
+        let els = if self.eat_if_kw(kw::Else) {
+            self.eat_whitespace();
+            Some(self.make_block()?)
+        } else {
+            None
+        };
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Semi);
+        Ok(ast::Stmt::If { cond, blk, els })
+    }
+
+    fn make_while_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat_whitespace();
+
+        let cond = self.make_expr()?;
+        self.eat_whitespace();
+
+        let stmts = self.make_block()?;
+        self.eat_whitespace();
+
+        self.eat_if(&TokenMatch::Semi);
+        Ok(ast::Stmt::While { cond, stmts })
+    }
+
+    fn make_match_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat_whitespace();
+
+        let expr = self.make_expr()?;
+        self.eat_whitespace();
+
+        self.eat_if(&TokenMatch::OpenBrace);
+        let arms = self.make_arms()?;
+
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_whitespace();
+
+        self.eat_if(&TokenMatch::Semi);
+        Ok(ast::Stmt::Match { expr, arms })
+    }
+
+    fn make_return_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.eat_whitespace();
+
+        if self.curr.kind == TokenMatch::Semi {
+            return Ok(ast::Stmt::Exit);
+        }
+        let expr = self.make_expr()?;
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Semi);
+
+        Ok(ast::Stmt::Ret(expr))
+    }
+
+    fn make_expr_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        // @copypaste We are sort of taking this from `advance_to_op` but limiting the choices to
+        // just calls and trait method calls
+        Ok(if self.curr.kind == TokenMatch::Ident {
+            let expr = self.make_lh_expr()?;
+            self.eat_whitespace();
+
+            match expr.val {
+                ast::Expr::Ident(_) => {
+                    // +=
+                    if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        println!("{}", &self.input[self.input_idx..]);
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+                    // -=
+                    } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+                    } else if self.curr.kind == TokenMatch::Eq {
+                        self.eat_if(&TokenMatch::Eq);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::Assign { lval: expr, rval }
+                    } else {
+                        todo!("{}", &self.input[self.input_idx..])
+                    }
+                }
+                ast::Expr::Deref { indir, expr } => todo!(),
+                ast::Expr::AddrOf(_) => todo!(),
+                ast::Expr::Array { ident, exprs } => todo!(),
+                ast::Expr::Urnary { op, expr } => todo!(),
+                ast::Expr::Binary { op, lhs, rhs } => todo!(),
+                ast::Expr::Parens(_) => todo!(),
+                ast::Expr::Call { .. } => ast::Stmt::Call(expr),
+                ast::Expr::TraitMeth { trait_, args, type_args } => todo!(),
+                ast::Expr::FieldAccess { lhs, rhs } => todo!(),
+                ast::Expr::StructInit { path, fields } => todo!(),
+                ast::Expr::EnumInit { path, variant, items } => todo!(),
+                ast::Expr::ArrayInit { items } => todo!(),
+                ast::Expr::Value(_) => todo!(),
+            }
+        } else if self.curr.kind == TokenMatch::Lt {
+            todo!("Trait method calls")
+        } else {
+            // TODO: handle blocks `{}` as stmt and expr
+            todo!("{:?}", self.curr)
+        })
+    }
+
+    fn make_arms(&mut self) -> ParseResult<Vec<ast::MatchArm>> {
+        self.eat_whitespace();
+        let mut arms = vec![];
+        loop {
+            let start = self.input_idx;
+
+            self.eat_whitespace();
+            if self.curr.kind == TokenMatch::CloseBrace {
+                // The calling method cleans up the close brace of the `match {}` <--
+                break;
+            }
+            let pat = self.make_pat()?;
+
+            self.eat_whitespace();
+            self.eat_if(&TokenMatch::Minus);
+            self.eat_if(&TokenMatch::Gt);
+            self.eat_whitespace();
+
+            let blk = self.make_block()?;
+            self.eat_if(&TokenMatch::Comma);
+
+            let span = ast::to_rng(start..self.curr_span().end);
+            arms.push(ast::MatchArm { pat, blk, span })
+        }
+        Ok(arms)
+    }
+
+    fn make_pat(&mut self) -> ParseResult<ast::Pattern> {
+        let start = self.input_idx;
+
+        // TODO: make this more robust
+        // could be `::mod::Name::Variant`
+        Ok(if self.curr.kind == TokenKind::Ident {
+            let mut path = self.make_path()?;
+            // TODO: make this more robust
+            // eventually calling an enum by variant needs to work which is the same as an ident
+            if path.segs.len() > 1 {
+                let variant = path
+                    .segs
+                    .pop()
+                    .ok_or_else(|| ParseError::Expected("pattern", "nothing".to_string()))?;
+
+                // @PARSE_ENUMS
+                let items = if self.eat_if(&TokenMatch::OpenParen) {
+                    self.eat_whitespace();
+                    let mut pats = vec![];
+                    loop {
+                        // We have reached the end of the patterns (this allows trailing commas)
+                        if self.curr.kind == TokenMatch::CloseParen {
+                            break;
+                        }
+                        pats.push(self.make_pat()?);
+                        if self.eat_if(&TokenMatch::Comma) {
+                            self.eat_whitespace();
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    self.eat_whitespace();
+                    self.eat_if(&TokenMatch::CloseParen);
+
+                    pats
+                } else {
+                    vec![]
+                };
+
+                let span = ast::to_rng(start..self.curr_span().end);
+                ast::Pat::Enum { path, variant, items }.into_spanned(span)
+            } else {
+                // TODO: binding needs span
+                let span = ast::to_rng(start..self.curr_span().end);
+                ast::Pat::Bind(ast::Binding::Wild(path.segs.remove(0))).into_spanned(span)
+            }
+        } else if self.eat_if(&TokenMatch::OpenBracket) {
+            self.eat_whitespace();
+            let mut pats = vec![];
+            loop {
+                // We have reached the end of the patterns (this allows trailing commas)
+                if self.curr.kind == TokenMatch::CloseBracket {
+                    break;
+                }
+
+                pats.push(self.make_pat()?);
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            self.eat_whitespace();
+            self.eat_if(&TokenMatch::CloseBracket);
+
+            let span = ast::to_rng(start..self.curr_span().end);
+            ast::Pat::Array { size: pats.len(), items: pats }.into_spanned(span)
+        } else if self.curr.kind == TokenMatch::Literal {
+            // Literal
+            let span = ast::to_rng(start..self.curr_span().end);
+            ast::Pat::Bind(ast::Binding::Value(self.make_literal()?)).into_spanned(span)
+        } else {
+            todo!("{:?}", self.curr)
+        })
+    }
+
+    /// Parse `ident[ws]:[ws]type[ws],[ws]ident: type[ws]` everything inside the parens is optional.
+    fn make_params(&mut self) -> ParseResult<Vec<ast::Param>> {
+        let mut params = vec![];
+        loop {
+            let start = self.input_idx;
+            let ident = self.make_ident()?;
+
+            self.eat_if(&TokenMatch::Colon);
+            self.eat_whitespace();
+
+            let ty = self.make_ty()?;
+
+            let span = ast::to_rng(start..self.curr_span().end);
+            params.push(ast::Param { ident, ty, span });
+
+            self.eat_whitespace();
+            if self.eat_if(&TokenMatch::Comma) {
+                self.eat_whitespace();
+                continue;
+            } else {
+                break;
+            }
+        }
+
+        self.eat_whitespace();
+        Ok(params)
+    }
+
+    /// Parse `<ident: ident, ident: ident>[ws]` all optional.
+    fn make_generics(&mut self) -> ParseResult<Vec<ast::Generic>> {
+        let mut gens = vec![];
+        if self.eat_if(&TokenMatch::Lt) {
+            loop {
+                let start = self.input_idx;
+                let ident = self.make_ident()?;
+                let bound = if self.eat_if(&TokenMatch::Colon) {
+                    self.eat_whitespace();
+                    Some(self.make_path()?)
+                } else {
+                    None
+                };
+                let span = ast::to_rng(start..self.curr_span().end);
+                gens.push(ast::Generic { ident, bound, span });
+
+                self.eat_whitespace();
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            self.eat_if(&TokenMatch::Gt);
+            self.eat_whitespace();
+        }
+
+        self.eat_whitespace();
+        Ok(gens)
+    }
+
+    /// Parse a literal.
+    fn make_literal(&mut self) -> ParseResult<ast::Value> {
+        // @copypaste
+        Ok(match self.curr.kind {
+            TokenKind::Ident => {
+                let keyword: kw::Keywords = self.input_curr().try_into()?;
+                match keyword {
+                    kw::True => {
+                        let expr = Val::Bool(true).into_spanned(self.curr_span());
+                        self.eat_if_kw(kw::True);
+                        expr
+                    }
+                    kw::False => {
+                        let expr = Val::Bool(false).into_spanned(self.curr_span());
+                        self.eat_if_kw(kw::False);
+                        expr
+                    }
+                    _ => todo!(),
+                }
+            }
+            TokenKind::Literal { kind, suffix_start } => {
+                let span = self.curr_span();
+                let text = self.input_curr();
+
+                let val = match kind {
+                    LiteralKind::Int { base, empty_int } => Val::Int(text.parse()?),
+                    LiteralKind::Float { base, empty_exponent } => Val::Float(text.parse()?),
+                    LiteralKind::Char { terminated } => {
+                        if text.len() == 1 {
+                            Val::Char(self.input_curr().chars().next().unwrap())
+                        } else {
+                            return Err(ParseError::Error("multi character `char`"));
+                        }
+                    }
+                    LiteralKind::Str { terminated } => {
+                        Val::Str(Ident::new(self.curr_span(), &self.input_curr().replace("\"", "")))
+                    }
+                    LiteralKind::ByteStr { .. }
+                    | LiteralKind::RawStr { .. }
+                    | LiteralKind::RawByteStr { .. }
+                    | LiteralKind::Byte { .. } => todo!(),
+                };
+                self.eat_if(&TokenMatch::Literal);
+                val.into_spanned(span)
+            }
+            tkn => {
+                todo!("{:?}", tkn)
+                // return Err(ParseError::IncorrectToken);
+            }
+        })
+    }
+
+    /// parse a list of types .
+    fn make_types(&mut self, open: &TokenMatch, close: &TokenMatch) -> ParseResult<Vec<ast::Type>> {
+        Ok(if self.eat_if(open) {
+            let mut tys = vec![];
+            loop {
+                self.eat_whitespace();
+                // We have reached the end of the list (trailing comma or empty)
+                if self.eat_if(close) {
+                    break;
+                }
+                tys.push(self.make_ty()?);
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            self.eat_if(close);
+            self.eat_whitespace();
+            tys
+        } else {
+            vec![]
+        })
+    }
+
+    /// Parse `type[ws]`.
+    ///
+    /// This also handles `*type, [lit_int, type]` and user defined items.
+    fn make_ty(&mut self) -> ParseResult<ast::Type> {
+        let start = self.input_idx;
+        Ok(match self.curr.kind {
+            TokenKind::Ident => {
+                let key: Result<kw::Keywords, _> = self.input_curr().try_into();
+                if let Ok(key) = key {
+                    match key {
+                        _ => todo!(),
+                    }
+                } else {
+                    let segs = self.make_seg()?;
+                    let span = ast::to_rng(start..self.curr_span().end);
+                    self.eat_whitespace();
+                    ast::Ty::Path(Path { segs, span }).into_spanned(span)
+                }
+            }
+            TokenKind::OpenParen => {
+                todo!()
+            }
+            TokenKind::OpenBracket => {
+                let start = self.curr_span().start;
+                self.eat_if(&TokenMatch::OpenBracket);
+                self.eat_whitespace();
+                self.make_array_type(start)?
+            }
+            TokenKind::Star => {
+                // Eat `*`
+                self.eat_tkn();
+                ast::Ty::Ptr(box self.make_ty()?).into_spanned(self.curr_span())
+            }
+            // TokenKind::Lt => {}
+            // TokenKind::Gt => {}
+            tkn => todo!("Unknown token {:?} {}", tkn, &self.input[self.input_idx..]),
+        })
+    }
+
+    /// Any type that follows `lit_int; type][ws]`.
+    fn make_array_type(&mut self, start: usize) -> ParseResult<ast::Type> {
+        let size = if let TokenKind::Literal {
+            kind: LiteralKind::Int { base: Base::Decimal, .. },
+            ..
+        } = self.curr.kind
+        {
+            self.input_curr().parse()?
+        } else {
+            return Err(ParseError::Expected("lit", self.input_curr().to_string()));
+        };
+        // [ -->lit; -->type]
+        self.eat_if(&TokenMatch::Literal);
+        self.eat_whitespace();
+        self.eat_if(&TokenMatch::Semi);
+        self.eat_whitespace();
+
+        let ty = self.make_ty()?;
+        let x = Ok(ast::Ty::Array { size, ty: box ty }.into_spanned(start..self.curr_span().end));
+        self.eat_if(&TokenMatch::CloseBracket);
+        x
+    }
+
+    /// Parse `::ident[w]::ident[ws]...`.
+    fn make_path(&mut self) -> ParseResult<Path> {
+        let start = self.input_idx;
+        let segs = self.make_seg()?;
+        Ok(Path { segs, span: ast::to_rng(start..self.curr_span().end) })
+    }
+
+    /// Parse `ident[ws]::ident[ws]...`.
+    fn make_seg(&mut self) -> ParseResult<Vec<Ident>> {
+        let mut ids = vec![];
+        loop {
+            self.eat_seq(&[TokenMatch::Colon, TokenMatch::Colon]);
+            ids.push(self.make_ident()?);
+            if self.cmp_seq(&[TokenMatch::Colon, TokenMatch::Colon])
+                || self.cmp_seq(&[TokenMatch::Ident])
+            {
+                self.eat_whitespace();
+                continue;
+            } else {
+                break;
+            }
+        }
+        self.eat_whitespace();
+
+        Ok(ids)
+    }
+
+    /// Parse `ident[ws]`
+    fn make_ident(&mut self) -> ParseResult<Ident> {
+        let span = self.curr_span();
+        let id = Ident::new(span, &self.input[span.start..span.end]);
+        self.eat_if(&TokenMatch::Ident);
+        self.eat_whitespace();
+        Ok(id)
+    }
+
+    fn eat_whitespace(&mut self) {
+        while self.eat_if(&TokenMatch::Whitespace)
+            || self.eat_if(&TokenMatch::LineComment)
+            || self.eat_if(&TokenMatch::BlockComment)
+        {}
+    }
+
+    fn check_next(&self, tkn: &TokenMatch) -> bool {
+        self.tokens.first().map_or(false, |t| t.kind == *tkn)
+    }
+
+    /// FIXME: for now we ignore attributes.
+    fn eat_attr(&mut self) {
+        if matches!(self.peek().unwrap_or(&TokenKind::Unknown), TokenKind::OpenBracket) {
+            self.eat_until(&TokenMatch::CloseBracket);
+            // eat the `]`
+            self.eat_tkn();
+        }
+    }
+
+    /// Eat the key word iff it matches `kw`.
+    fn eat_keyword(&mut self, kw: kw::Keywords) {
+        if self.input_curr() == kw.text() {
+            self.eat_tkn();
+        }
+    }
+
+    /// Eat the key word iff it matches `kw` and return true if eaten.
+    fn eat_if_kw(&mut self, kw: kw::Keywords) -> bool {
+        if kw.text() == self.input_curr() {
+            self.eat_tkn();
+            return true;
+        }
+        false
+    }
+
+    /// Check if a sequence matches `iter`, non destructively.
+    fn cmp_seq<'i>(&self, mut iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
+        let mut iter = iter.into_iter();
+        let first = iter.next().unwrap_or(&TokenMatch::Unknown);
+        if first != &self.curr.kind {
+            return false;
+        }
+
+        let tkns = self.tokens.iter();
+        tkns.zip(iter).all(|(ours, cmp)| cmp == &ours.kind)
+    }
+
+    /// Throw away a sequence of tokens.
+    ///
+    /// Returns true if all the given tokens were matched.
+    fn eat_seq<'i>(&mut self, iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
+        for kind in iter {
+            if kind == &self.curr.kind {
+                self.eat_tkn();
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Check if a sequence matches `iter` ignoring whitespace, non destructively.
+    fn cmp_seq_ignore_ws<'i>(&self, mut iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
+        let mut iter = iter.into_iter();
+        let first = iter.next().unwrap_or(&TokenMatch::Unknown);
+        if first != &self.curr.kind && self.curr.kind != TokenMatch::Whitespace {
+            return false;
+        }
+
+        let tkns = self.tokens.iter().filter(|t| t.kind != TokenMatch::Whitespace);
+        tkns.zip(iter).all(|(ours, cmp)| cmp == &ours.kind)
+    }
+
+    /// Throw away a sequence of tokens.
+    ///
+    /// Returns true if all the given tokens were matched.
+    fn eat_seq_ignore_ws<'i>(&mut self, iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
+        for kind in iter {
+            if kind == &self.curr.kind || self.curr.kind == TokenMatch::Whitespace {
+                self.eat_tkn();
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Eat tokens until `pat` matches current.
+    fn eat_until(&mut self, pat: &TokenMatch) {
+        while pat != &self.curr.kind {
+            self.eat_tkn();
+        }
+    }
+
+    /// Eat tokens until `pat` matches current.
+    fn eat_while(&mut self, pat: &TokenMatch) {
+        while pat == &self.curr.kind {
+            self.eat_tkn();
+        }
+    }
+
+    /// Bump the current token if it matches `pat`.
+    fn eat_if(&mut self, pat: &TokenMatch) -> bool {
+        if pat == &self.curr.kind {
+            self.eat_tkn();
+            return true;
+        }
+        false
+    }
+
+    /// Bump the next token into the current spot.
+    fn eat_tkn(&mut self) {
+        self.input_idx += self.curr.len;
+        self.curr = self.tokens.remove(0);
+    }
+
+    /// Peek the next token.
+    fn peek(&self) -> Option<&TokenKind> {
+        self.tokens.first().map(|t| &t.kind)
+    }
+
+    /// Peek the next `n` tokens.
+    fn peek_n(&self, n: usize) -> impl Iterator<Item = &TokenKind> {
+        self.tokens.iter().take(n).map(|t| &t.kind)
+    }
+
+    /// Peek until the closure returns `false`.
+    fn peek_until<P: FnMut(&&lex::Token) -> bool>(
+        &self,
+        p: P,
+    ) -> impl Iterator<Item = &lex::Token> {
+        self.tokens.iter().take_while(p)
+    }
+
+    /// The input `str` from current index to `stop`.
+    fn input_to(&self, stop: usize) -> &str {
+        &self.input[self.input_idx..stop]
+    }
+
+    /// The input `str` from current index to `Token` length.
+    fn input_curr(&self) -> &str {
+        let stop = self.input_idx + self.curr.len;
+        &self.input[self.input_idx..stop]
+    }
+
+    /// The input `str` from current index to `stop`.
+    fn curr_span(&self) -> ast::Range {
+        let stop = self.input_idx + self.curr.len;
+        (self.input_idx..stop).into()
     }
 }
 
-fn parse_field_init(field: Pair<Rule>) -> FieldInit {
-    match field.clone().into_inner().map(|p| (p.as_rule(), p)).collect::<Vec<_>>().as_slice() {
-        [(Rule::ident, ident), (Rule::COLON, _), (Rule::expr, expr)] => FieldInit {
-            ident: ident.as_str().to_string(),
-            init: parse_expr(expr.clone()),
-            span: (ident.as_span().start()..expr.as_span().end()).into(),
-        },
-        [(Rule::ident, ident), (Rule::COLON, _), (Rule::arr_init, expr)] => FieldInit {
-            ident: ident.as_str().to_string(),
-            init: parse_expr(expr.clone()),
-            span: (ident.as_span().start()..expr.as_span().end()).into(),
-        },
-        [(Rule::ident, ident), (Rule::COLON, _), (Rule::struct_assign, expr)] => FieldInit {
-            ident: ident.as_str().to_string(),
-            init: parse_expr(expr.clone()),
-            span: (ident.as_span().start()..expr.as_span().end()).into(),
-        },
-        _ => unreachable!("malformed struct fields {}", field.to_json()),
+#[test]
+fn parse_lit_const() {
+    let input = r#"
+const foo: [3; int] = 1;
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_func_header() {
+    let input = r#"
+fn add(x: int, y: int) -> int {  }
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn struct_decl() {
+    let input = r#"
+struct foo {
+    x: int,
+    y: string,
+    z: [3; char],
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn struct_decl_generics() {
+    let input = r#"
+struct foo<T, U> {
+    x: T,
+    y: U,
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn enum_decl() {
+    let input = r#"
+enum foo {
+    a, b, c
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn enum_decl_generics() {
+    let input = r#"
+enum foo<T, X, U> {
+    a(X, string), b, c(T, U), d([2; int])
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn impl_decl() {
+    let input = r#"
+impl add<string> {
+    fn add(a: string, b: string) -> string {
+        return concat(a, b);
     }
 }
-
-fn parse_type_arguments(args: Pair<Rule>) -> Vec<Type> {
-    parse_generics(args)
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
 }
 
-fn to_span(p: &Pair<Rule>) -> Range {
-    let sp = p.as_span();
-    (sp.start()..sp.end()).into()
+#[test]
+fn import_decl() {
+    let input = r#"
+import foo::bar::baz;
+import ::bar::baz;
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_multi_binop_ident() {
+    let input = r#"
+fn add(x: int, y: int) -> int {
+    let z = a + b * (c + d);
+    return z;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_multi_binop_lit() {
+    let input = r#"
+fn add(x: int, y: int) -> int {
+    let z = 1 + 2 * 5 + 6;
+    return z;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_func_call_no_args() {
+    let input = r#"
+fn add() {
+    let x = foo();
+    foo();
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_func_call_args_generics() {
+    let input = r#"
+fn add() {
+    let x = foo<T, U>(a, 1 + 2);
+    foo<T>(a);
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_assign_op() {
+    let input = r#"
+fn add() {
+    let x = 10;
+    x += 3+5;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_assign_array() {
+    let input = r#"
+fn add() {
+    let x = [10, call(), 1+1+2];
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_assign_struct() {
+    let input = r#"
+fn add() {
+    let x = struct foo { x: 1, y: "string" };
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_assign_enum() {
+    let input = r#"
+fn add() {
+    let x = enum foo::bar(a, 1+0, 1.6);
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_if_stmt() {
+    let input = r#"
+fn add() {
+    if (x > 10) {
+        call(1, 2, 3);
+    } else {
+        exit;
+    }
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_match_stmt() {
+    let input = r#"
+fn add() {
+    match x {
+        bar::foo(a, b) -> {},
+        bar::foo(a, b) -> {},
+        bar::bar -> {
+            call();
+            let x = y + 5 * z;
+        }
+    }
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_while_stmt() {
+    let input = r#"
+fn add() {
+    while (x > 10) {
+        call(1, 2, 3);
+        x += 1;
+    }
+    return;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_trait_method() {
+    let input = r#"
+fn add() {
+    let x = <<T>::add>(1, 2);
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_exprs() {
+    let input = r#"
+fn add() {
+    let x = **x;
+    let y = &call();
+    let z = !x && false || !y;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_exprs_fail() {
+    let input = r#"
+fn add() {
+    let z = 4 >> 2 & 0 << 3;
+    let x = 4 + 2 & 0 + 3;
+    z += 1;
+    let y = z | (1 & ~5);
+    z = y + add(1, 1);
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
 }
