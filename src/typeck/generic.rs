@@ -147,7 +147,7 @@ impl<'ast> GenericResolver<'ast> {
         match ty {
             Ty::Generic { ident, bound } => {
                 self.item_generics
-                    .entry(node.clone())
+                    .entry(*node)
                     .or_default()
                     .insert_generic(*ident, bound.clone());
             }
@@ -191,7 +191,7 @@ impl<'ast> GenericResolver<'ast> {
         generics.insert(id.to_owned(), bound);
 
         gp.children
-            .insert(iter.next()?.clone(), GenericParam { generics, children: HashMap::default() })
+            .insert(*iter.next()?, GenericParam { generics, children: HashMap::default() })
     }
 
     crate fn push_resolved_child(
@@ -206,7 +206,7 @@ impl<'ast> GenericResolver<'ast> {
             let _set = self
                 .node_resolved
                 // The map of function name -> indexed generic arguments
-                .entry(node.clone())
+                .entry(*node)
                 .or_default()
                 // The map of indexed generic args -> each generic mono substitution
                 .entry(gen_idx)
@@ -243,7 +243,7 @@ impl<'ast> GenericResolver<'ast> {
                 if gen.iter().any(|t| t.val.has_generics()) {
                     for t in gen.iter() {
                         if let Ty::Generic { ident, bound } = &t.val {
-                            stack.push(Node::Struct(struct_name.clone()));
+                            stack.push(Node::Struct(*struct_name));
                             self.push_generic_child(stack, exprs, *ident, bound.clone());
                         } else {
                             self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
@@ -258,7 +258,7 @@ impl<'ast> GenericResolver<'ast> {
                 if gen.iter().any(|t| t.val.has_generics()) {
                     for t in gen.iter() {
                         if let Ty::Generic { ident, bound } = &t.val {
-                            stack.push(Node::Enum(enum_name.clone()));
+                            stack.push(Node::Enum(*enum_name));
                             self.push_generic_child(stack, exprs, *ident, bound.clone());
                         } else {
                             self.collect_generic_usage(&t.val, instance_id, gen_idx, exprs, stack);
