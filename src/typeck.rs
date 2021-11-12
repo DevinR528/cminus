@@ -7,11 +7,11 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
     ast::{
-        parse::Ident,
+        parse::symbol::Ident,
         types::{
-            Adt, BinOp, Binding, Block, Decl, Enum, Expr, Expression, Field, FieldInit, Func,
-            Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany, Statement, Stmt, Struct,
-            Trait, Ty, Type, TypeEquality, UnOp, Val, Var, Variant, DUMMY,
+            Adt, BinOp, Binding, Block, Const, Decl, Enum, Expr, Expression, Field, FieldInit,
+            Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany, Statement, Stmt, Struct,
+            Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
         },
     },
     error::Error,
@@ -166,7 +166,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.visit_func(func);
                     funcs.push(func);
                 }
-                Decl::Var(var) => {
+                Decl::Const(var) => {
                     self.visit_var(var);
                 }
                 Decl::Trait(trait_) => self.visit_trait(trait_),
@@ -389,7 +389,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         }
     }
 
-    fn visit_var(&mut self, var: &'ast Var) {
+    fn visit_var(&mut self, var: &'ast Const) {
         #[allow(clippy::if-then-panic)]
         if let Some(fn_id) = self.curr_fn {
             let node = Node::Func(fn_id);
@@ -399,7 +399,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 &var.ty.val,
                 self.unique_id(),
                 0,
-                &[TyRegion::VarDecl(var)],
+                &[TyRegion::Const(var)],
                 &mut stack,
             );
 
@@ -1239,7 +1239,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
-            Stmt::VarDecl(_) => {}
+            Stmt::Const(_) => {}
             Stmt::Assign { lval, rval } => {
                 let orig_lty = lvalue_type(self.tcxt, lval, stmt.span);
                 let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());

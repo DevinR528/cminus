@@ -1,6 +1,6 @@
 use std::{fmt, hash, ops};
 
-use crate::{ast::parse::Ident, error::Error, typeck::TyCheckRes};
+use crate::{ast::parse::symbol::Ident, error::Error, typeck::TyCheckRes};
 
 crate trait TypeEquality<T = Self> {
     /// If the two types are considered equal.
@@ -308,7 +308,7 @@ impl Ty {
             Ty::Func { ret, params, .. } => {
                 ret.has_generics() | params.iter().any(|t| t.has_generics())
             }
-            Ty::Path(_) => todo!(),
+            Ty::Path(_) => todo!("{:?}", self),
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
         }
     }
@@ -616,7 +616,7 @@ impl fmt::Display for MatchArm {
 #[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
-    VarDecl(Vec<Var>),
+    Const(Const),
     /// Assignment `lval = rval;`
     Assign { lval: Expression, rval: Expression },
     /// Assignment operations `lval += rval;`
@@ -775,23 +775,12 @@ pub struct Const {
     pub span: Range,
 }
 
-/// A variable declaration.
-///
-/// `struct foo x;` or `int x[]`
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Var {
-    pub ty: Type,
-    pub ident: String,
-    pub span: Range,
-}
-
 #[derive(Clone, Debug)]
 pub enum Decl {
     Adt(Adt),
     Func(Func),
     Trait(Trait),
     Impl(Impl),
-    Var(Var),
     Const(Const),
     Import(Path),
 }
