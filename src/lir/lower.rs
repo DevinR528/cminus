@@ -341,7 +341,7 @@ impl Expr {
                 let ident = path.segs.last().unwrap();
                 if type_args.iter().any(|arg| !arg.val.has_generics()) {}
 
-                let func = tyctx.var_func.name_func.get(&ident).expect("function is defined");
+                let func = tyctx.var_func.name_func.get(ident).expect("function is defined");
                 Expr::Call {
                     path,
                     args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
@@ -390,7 +390,7 @@ impl Expr {
             }
             ty::Expr::EnumInit { path, variant, items } => {
                 let ident = path.segs.last().unwrap();
-                let enu = tyctx.name_enum.get(&ident).expect("struct is defined");
+                let enu = tyctx.name_enum.get(ident).expect("struct is defined");
                 Expr::EnumInit {
                     path,
                     variant,
@@ -430,7 +430,7 @@ impl Expr {
                 def: def.clone(),
             },
             Expr::EnumInit { def, .. } => Ty::Enum {
-                ident: def.ident.clone(),
+                ident: def.ident,
                 gen: def.generics.iter().map(|g| g.to_type()).collect(),
                 def: def.clone(),
             },
@@ -749,7 +749,7 @@ impl Pat {
                 let ident = path.segs.last().unwrap();
                 let idx = tyctx
                     .name_enum
-                    .get(&ident)
+                    .get(ident)
                     .and_then(|e| e.variants.iter().position(|v| variant == v.ident))
                     .unwrap();
                 Pat::Enum {
@@ -845,7 +845,7 @@ impl Stmt {
                 var.iter()
                     .map(|var| Var {
                         ty: Ty::lower(tyctx, &var.ty.val),
-                        ident: var.ident.clone(),
+                        ident: var.ident,
                         is_global: false,
                     })
                     .collect(),
@@ -1128,7 +1128,7 @@ impl Ty {
                 Ty::Array { ty: box Ty::lower(tyctx, &t.val), size: *size }
             }
             ty::Ty::Struct { ident, gen } => Ty::Struct {
-                ident: ident.clone(),
+                ident: *ident,
                 gen: gen.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
                 def: tyctx
                     .name_struct
@@ -1137,7 +1137,7 @@ impl Ty {
                     .unwrap(),
             },
             ty::Ty::Enum { ident, gen } => Ty::Enum {
-                ident: ident.clone(),
+                ident: *ident,
                 gen: gen.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
                 def: tyctx.name_enum.get(ident).map(|e| Enum::lower(tyctx, (*e).clone())).unwrap(),
             },
@@ -1150,7 +1150,7 @@ impl Ty {
             ty::Ty::Bool => Ty::Bool,
             ty::Ty::Void => Ty::Void,
             ty::Ty::Generic { ident, bound } => {
-                Ty::Generic { ident: ident.clone(), bound: bound.clone() }
+                Ty::Generic { ident: *ident, bound: bound.clone() }
             }
             ty::Ty::Path(_) => todo!(),
             ty::Ty::Func { .. } => {

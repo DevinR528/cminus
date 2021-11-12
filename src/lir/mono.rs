@@ -22,7 +22,7 @@ struct GenSubstitution<'a> {
 impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
     fn visit_func(&mut self, func: &'ast mut ty::Func) {
         func.ident =
-            Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty.to_string()));
+            Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty));
         crate::visit::walk_mut_func(self, func);
     }
 
@@ -112,7 +112,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
         {
             let ident = trait_.segs.last().unwrap();
             if let Some(i) =
-                self.tcxt.trait_solve.impls.get(&trait_).and_then(|imp| imp.get(&self.type_args))
+                self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
             {
                 let mut args = args.clone();
                 for arg in &mut args {
@@ -160,7 +160,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
 
 impl TyCheckRes<'_, '_> {
     crate fn mono_func(&self, func: &ty::Func) -> Vec<ty::Func> {
-        let node = Node::Func(func.ident.clone());
+        let node = Node::Func(func.ident);
         let mut mono_items = vec![];
         // Resolved type mono's so `T` -> `int` for function `foo`
         if let Some(res_list) = self.generic_res.resolved(&node) {

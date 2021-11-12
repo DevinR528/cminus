@@ -1453,9 +1453,7 @@ impl<'a> AstBuilder<'a> {
             TokenKind::Ident => {
                 let key: Result<kw::Keywords, _> = self.input_curr().try_into();
                 if let Ok(key) = key {
-                    match key {
-                        _ => todo!(),
-                    }
+                    todo!()
                 } else {
                     let segs = self.make_seg()?;
                     let span = ast::to_rng(start..self.curr_span().end);

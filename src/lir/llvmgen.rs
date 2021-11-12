@@ -339,7 +339,7 @@ impl<'ctx> LLVMGen<'ctx> {
 
                 let field = self
                     .builder
-                    .build_struct_gep(struct_ptr, *field_idx, &def.ident.name())
+                    .build_struct_gep(struct_ptr, *field_idx, def.ident.name())
                     .unwrap();
                 match &**rhs {
                     Expr::Ident { ident, .. } => {
@@ -429,7 +429,7 @@ impl<'ctx> LLVMGen<'ctx> {
         match stmt {
             Stmt::VarDecl(vars) => {
                 for var in vars {
-                    let alloca = self.create_entry_block_alloca(&var.ident.name(), &var.ty, fnval);
+                    let alloca = self.create_entry_block_alloca(var.ident.name(), &var.ty, fnval);
                     self.builder.build_store(alloca, var.ty.as_llvm_null_value(self.context));
                     self.vars.insert(var.ident, alloca.as_basic_value_enum());
                 }
@@ -584,7 +584,7 @@ impl<'ast> Visit<'ast> for LLVMGen<'ast> {
 
         for (i, arg) in function.get_param_iter().enumerate() {
             let alloca = self.create_entry_block_alloca(
-                &func.params[i].ident.name(),
+                func.params[i].ident.name(),
                 &func.params[i].ty,
                 function,
             );
