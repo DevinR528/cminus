@@ -157,6 +157,8 @@ impl<'input> TyCheckRes<'_, 'input> {
 }
 
 impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
+    /// We first walk declarations and save function headers then once all the declarations have
+    /// been collected we start type checking expressions.
     fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
         let mut funcs = vec![];
         let mut impls = vec![];
@@ -223,6 +225,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .map(|(id, (sp, _))| (id, *sp))
             .collect::<Vec<_>>();
         unused.sort_by(|a, b| a.1.cmp(&b.1));
+
+        // TODO: see about unused declarations
         // After all checking then we can check for unused vars
         for (unused, span) in unused {
             self.errors.push(Error::error_with_span(
@@ -394,7 +398,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         if let Some(fn_id) = self.curr_fn {
             let node = Node::Func(fn_id);
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
-
             self.generic_res.collect_generic_usage(
                 &var.ty.val,
                 self.unique_id(),
@@ -494,6 +497,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_match_arm(&mut self, _arms: &'ast [MatchArm]) {}
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
+        let mut infer = TypeInfer { tcxt: self };
+        infer.visit_stmt(stmt);
+
         crate::visit::walk_stmt(self, stmt);
 
         // check the statement after walking incase there were var declarations
@@ -848,13 +854,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.expr_ty.insert(expr, ret_ty);
             }
             Expr::Value(val) => {
-                if self.expr_ty.insert(expr, lit_to_type(&val.val)).is_some() {
-                    self.errors.push(Error::error_with_span(
-                        self,
-                        expr.span,
-                        &format!("duplicate value expr {:?}\n{:?}", self.expr_ty, expr),
-                    ));
-                }
+                // if self.expr_ty.insert(expr, lit_to_type(&val.val)).is_some() {
+                //     self.errors.push(Error::error_with_span(
+                //         self,
+                //         expr.span,
+                //         &format!("duplicate value expr {:?}\n{:?}", self.expr_ty, expr),
+                //     ));
+                // }
             }
             Expr::StructInit { path, fields } => {
                 let name = *path.segs.last().unwrap();
@@ -1225,6 +1231,264 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
 //
 //
 //
+// This handles type inference for us.
+#[derive(Debug)]
+crate struct TypeInfer<'v, 'ast, 'input> {
+    tcxt: &'v mut TyCheckRes<'ast, 'input>,
+}
+
+impl<'ast> TypeInfer<'_, 'ast, '_> {
+    fn unify(&self, ty: Option<&Ty>, with: Option<&Ty>) -> Option<Ty> {
+        match (ty, with) {
+            (Some(t1), Some(t2)) => match (t1, t2) {
+                (Ty::Generic { ident: i1, bound: b1 }, Ty::Generic { ident: i2, bound: b2 }) => {
+                    todo!()
+                }
+                (Ty::Array { size: s1, ty: ty1 }, Ty::Array { size: s2, ty: ty2 }) => {
+                    if s1 == s2 {
+                        Some(Ty::Array {
+                            size: *s1,
+                            ty: box self.unify(Some(t1), Some(t2))?.into_spanned(DUMMY),
+                        })
+                    } else {
+                        None
+                    }
+                }
+                (Ty::Struct { ident: i1, gen: g1 }, Ty::Struct { ident: i2, gen: g2 }) => {
+                    if i1 == i2 {
+                        Some(Ty::Struct {
+                            ident: *i1,
+                            gen: g1
+                                .iter()
+                                .zip(g2)
+                                .map(|(t1, t2)| {
+                                    self.unify(Some(&t1.val), Some(&t2.val))
+                                        .map(|t| t.into_spanned(DUMMY))
+                                })
+                                .collect::<Option<Vec<_>>>()?,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                (Ty::Enum { ident: i1, gen: g1 }, Ty::Enum { ident: i2, gen: g2 }) => {
+                    if i1 == i2 {
+                        Some(Ty::Struct {
+                            ident: *i1,
+                            gen: g1
+                                .iter()
+                                .zip(g2)
+                                .map(|(t1, t2)| {
+                                    self.unify(Some(&t1.val), Some(&t2.val))
+                                        .map(|t| t.into_spanned(DUMMY))
+                                })
+                                .collect::<Option<Vec<_>>>()?,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                (Ty::Path(p1), Ty::Path(p2)) => {
+                    if p1 == p2 {
+                        Some(Ty::Path(p1.clone()))
+                    } else {
+                        None
+                    }
+                }
+                (Ty::Ptr(t1), Ty::Ptr(t2)) => {
+                    Some(Ty::Ptr(box self.unify(Some(&t1.val), Some(&t2.val))?.into_spanned(DUMMY)))
+                }
+                (Ty::Ref(t1), Ty::Ref(t2)) => {
+                    Some(Ty::Ref(box self.unify(Some(&t1.val), Some(&t2.val))?.into_spanned(DUMMY)))
+                }
+                (Ty::String, Ty::String) => Some(Ty::String),
+                (Ty::Int, Ty::Int) => Some(Ty::Int),
+                (Ty::Char, Ty::Char) => Some(Ty::Char),
+                (Ty::Float, Ty::Float) => Some(Ty::Float),
+                (Ty::Bool, Ty::Bool) => Some(Ty::Bool),
+                (Ty::Void, Ty::Void) => Some(Ty::Void),
+                (
+                    Ty::Func { ident: i1, ret: r1, params: p1 },
+                    Ty::Func { ident: i2, ret: r2, params: p2 },
+                ) => todo!(),
+                _ => {
+                    println!("mismatched inference types");
+                    None
+                }
+            },
+            (Some(t), None) => {
+                println!("THIS SHOULD NOT HAPPEN");
+                Some(t.clone())
+            }
+            (None, Some(t)) => Some(t.clone()),
+            (None, None) => {
+                return None;
+            }
+        }
+    }
+
+    fn unify_op(&self, ty: Option<&Ty>, with: Option<&Ty>, op: &BinOp) -> Option<Ty> {
+        match (ty, with) {
+            (Some(t1), Some(t2)) => match (t1, t2) {
+                (Ty::Generic { ident: i1, bound: b1 }, Ty::Generic { ident: i2, bound: b2 }) => {
+                    todo!()
+                }
+                (Ty::Array { size: s1, ty: ty1 }, Ty::Array { size: s2, ty: ty2 }) => todo!(),
+                (Ty::Struct { ident: i1, gen: g1 }, Ty::Struct { ident: i2, gen: g2 }) => todo!(),
+                (Ty::Enum { ident: i1, gen: g1 }, Ty::Enum { ident: i2, gen: g2 }) => todo!(),
+                (Ty::Path(p1), Ty::Path(p2)) => todo!(),
+                (Ty::Ptr(ty1), Ty::Ptr(ty2)) => todo!(),
+                (Ty::Ref(ty1), Ty::Ref(ty2)) => todo!(),
+                (Ty::String, Ty::String) => todo!(),
+                (Ty::Int, Ty::Int) => todo!(),
+                (Ty::Char, Ty::Char) => todo!(),
+                (Ty::Float, Ty::Float) => todo!(),
+                (Ty::Bool, Ty::Bool) => todo!(),
+                (Ty::Void, Ty::Void) => todo!(),
+                (
+                    Ty::Func { ident: i1, ret: r1, params: p1 },
+                    Ty::Func { ident: i2, ret: r2, params: p2 },
+                ) => todo!(),
+                (ta, tb) => {
+                    println!("mismatched inference types {:?} != {:?}", ta, tb);
+                    None
+                }
+            },
+            (Some(_), None) => todo!("not sure this should happen"),
+            (None, Some(_)) => {
+                todo!()
+            }
+            (None, None) => {
+                todo!()
+            }
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
+    fn visit_stmt(&mut self, stmt: &'ast Statement) {
+        match &stmt.val {
+            Stmt::Const(_) => todo!(),
+            Stmt::Assign { lval, rval, is_let } => {
+                self.visit_expr(rval);
+                let ty = self.tcxt.expr_ty.get(rval).unwrap().clone();
+
+                // @cleanup: this is duplicated in `TypeCheck::visit_var`
+                if let Some(fn_id) = self.tcxt.curr_fn.clone() {
+                    if *is_let {
+                        let node = Node::Func(fn_id);
+                        let mut stack = if self.tcxt.generic_res.has_generics(&node) {
+                            vec![node]
+                        } else {
+                            vec![]
+                        };
+                        self.tcxt.generic_res.collect_generic_usage(
+                            &ty,
+                            self.tcxt.unique_id(),
+                            0,
+                            &[TyRegion::Expr(&lval.val)],
+                            &mut stack,
+                        );
+
+                        // TODO: match this out so we know its an lval or just wait for later
+                        // when that's checked by `StmtCheck`
+                        let ident = lval.val.as_ident();
+                        if self
+                            .tcxt
+                            .var_func
+                            .func_refs
+                            .entry(fn_id)
+                            .or_default()
+                            .insert(ident, ty)
+                            .is_some()
+                        {
+                            panic!(
+                                "{}",
+                                Error::error_with_span(
+                                    self.tcxt,
+                                    lval.span,
+                                    &format!("duplicate variable name `{}`", ident),
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+            Stmt::AssignOp { lval, rval, op } => todo!(),
+            Stmt::Call(_) => todo!(),
+            Stmt::TraitMeth(_) => todo!(),
+            Stmt::If { cond, blk, els } => todo!(),
+            Stmt::While { cond, stmts } => todo!(),
+            Stmt::Match { expr, arms } => todo!(),
+            Stmt::Read(_) => todo!(),
+            Stmt::Write { expr } => todo!(),
+            Stmt::Ret(_) => todo!(),
+            Stmt::Exit => todo!(),
+            Stmt::Block(_) => todo!(),
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &'ast Expression) {
+        match &expr.val {
+            Expr::Ident(ident) => {
+                if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
+                    self.tcxt.expr_ty.insert(expr, ty.clone());
+                } else {
+                    panic!(
+                        "{}",
+                        Error::error_with_span(
+                            self.tcxt,
+                            expr.span,
+                            &format!("no type infered for `{}`", ident),
+                        )
+                    );
+                }
+            }
+            Expr::Deref { indir, expr } => todo!(),
+            Expr::AddrOf(_) => todo!(),
+            Expr::Array { ident, exprs } => todo!(),
+            Expr::Urnary { op, expr } => todo!(),
+            Expr::Binary { op, lhs, rhs } => {
+                self.visit_expr(lhs);
+                self.visit_expr(rhs);
+
+                let rhsty = self.tcxt.expr_ty.get(&**rhs);
+                let lhsty = self.tcxt.expr_ty.get(&**lhs);
+
+                // println!("FOLD {:?} == {:?}", lhsty, rhsty);
+
+                if let Some(unified) = fold_ty(self.tcxt, lhsty, rhsty, op, expr.span) {
+                    self.tcxt.expr_ty.insert(expr, unified);
+                }
+            }
+            Expr::Parens(_) => todo!(),
+            Expr::Call { path, args, type_args } => todo!(),
+            Expr::TraitMeth { trait_, args, type_args } => todo!(),
+            Expr::FieldAccess { lhs, rhs } => todo!(),
+            Expr::StructInit { path, fields } => todo!(),
+            Expr::EnumInit { path, variant, items } => todo!(),
+            Expr::ArrayInit { items } => {
+                let size = items.len();
+                let mut ty = None;
+                for ex in items {
+                    self.visit_expr(ex);
+                    ty = self.unify(None, self.tcxt.expr_ty.get(ex));
+                }
+                self.tcxt.expr_ty.insert(
+                    expr,
+                    Ty::Array { size, ty: box ty.unwrap_or(Ty::Void).into_spanned(DUMMY) },
+                );
+            }
+            Expr::Value(val) => {
+                self.tcxt.expr_ty.insert(expr, val.val.to_type());
+            }
+        }
+    }
+}
+
+//
+//
+//
 // All the following is used for actual type checking after the collection phase.
 
 #[derive(Debug)]
@@ -1240,7 +1504,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
             Stmt::Const(_) => {}
-            Stmt::Assign { lval, rval } => {
+            Stmt::Assign { lval, rval, is_let } => {
                 let orig_lty = lvalue_type(self.tcxt, lval, stmt.span);
                 let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
 
@@ -2095,6 +2359,7 @@ fn fold_ty(
         (Ty::Func { .. }, _) => unreachable!("Func should never be folded"),
         _ => None,
     };
+    // println!("in fold {:?} {:?} == {:?}", lhs, rhs, res);
     res
 }
 

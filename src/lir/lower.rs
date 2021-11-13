@@ -805,7 +805,7 @@ pub enum Stmt {
     /// Variable declaration `int x;`
     Const(Const),
     /// Assignment `lval = rval;`
-    Assign { lval: LValue, rval: Expr },
+    Assign { lval: LValue, rval: Expr, is_let: bool },
     /// A call statement `call(arg1, arg2)`
     Call {
         expr: CallExpr,
@@ -847,9 +847,10 @@ impl Stmt {
                 init: Expr::lower(tyctx, fold, var.init),
                 is_global: false,
             }),
-            ty::Stmt::Assign { lval, rval } => Stmt::Assign {
+            ty::Stmt::Assign { lval, rval, is_let } => Stmt::Assign {
                 lval: LValue::lower(tyctx, fold, lval),
                 rval: Expr::lower(tyctx, fold, rval),
+                is_let,
             },
             ty::Stmt::Call(ty::Spanned {
                 val: ty::Expr::Call { path, args, type_args }, ..
