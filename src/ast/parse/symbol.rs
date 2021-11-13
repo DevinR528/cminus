@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, hash::Hash};
 
 use crate::ast::types::Range;
 
@@ -6,10 +6,16 @@ use self::intern::with_intern;
 
 use super::ast::DUMMY;
 
-#[derive(Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq)]
 pub struct Ident {
     span: Range,
     tkn: u32,
+}
+
+impl Hash for Ident {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.tkn.hash(state);
+    }
 }
 
 impl fmt::Debug for Ident {
@@ -18,6 +24,11 @@ impl fmt::Debug for Ident {
     }
 }
 
+impl PartialEq for Ident {
+    fn eq(&self, other: &Self) -> bool {
+        self.tkn.eq(&other.tkn)
+    }
+}
 impl PartialEq<str> for Ident {
     fn eq(&self, other: &str) -> bool {
         with_intern(|intern| Some(self.tkn) == intern.lookup_tkn(other))
@@ -52,6 +63,30 @@ impl Ident {
     pub fn name(&self) -> &str {
         intern::with_intern(|intern| intern.lookup_str(self.tkn))
     }
+}
+
+#[test]
+fn ident_hash_eq() {
+    use crate::ast::types::to_rng;
+
+    let x = Ident::new(DUMMY, "hello");
+    let y = Ident::new(DUMMY, "world");
+    let z = Ident::new(DUMMY, "planet");
+    let a = Ident::new(DUMMY, "caravan");
+
+    // Eq ignores span
+    assert_eq!(x, Ident::new(to_rng(1..2), "hello"));
+
+    let mut map = rustc_hash::FxHashMap::default();
+    map.insert(x, 1);
+    map.insert(y, 2);
+    map.insert(z, 3);
+    map.insert(a, 4);
+
+    assert!(map.contains_key(&Ident::new(to_rng(4..8), "planet")));
+    assert!(map.contains_key(&Ident::new(to_rng(4..8), "caravan")));
+
+    assert_ne!(x, Ident::new(to_rng(1..2), "world"));
 }
 
 pub mod intern {

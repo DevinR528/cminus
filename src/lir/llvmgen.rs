@@ -435,7 +435,7 @@ impl<'ctx> LLVMGen<'ctx> {
                     .build_store(alloca, self.build_value(&var.init, Some(var.ident)).unwrap());
                 self.vars.insert(var.ident, alloca.as_basic_value_enum());
             }
-            Stmt::Assign { lval, rval } => {
+            Stmt::Assign { lval, rval, .. } => {
                 let lptr = self.get_pointer(lval).unwrap();
                 let rvalue = self.build_value(rval, lval.as_ident()).unwrap();
                 self.coerce_store_ptr_val(lptr, rvalue);

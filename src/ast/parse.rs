@@ -839,7 +839,7 @@ impl<'a> AstBuilder<'a> {
 
                 if path.segs.len() == 1 && !is_func_call {
                     ast::Expr::Ident(path.segs.remove(0))
-                        .into_spanned(ast::to_rng(start..self.curr_span().end))
+                        .into_spanned(ast::to_rng(start..self.curr_span().start))
                 } else {
                     // We are most likely in a function call
                     if is_func_call {
@@ -1120,7 +1120,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
-        Ok(ast::Stmt::Assign { lval, rval })
+        Ok(ast::Stmt::Assign { lval, rval, is_let: true })
     }
 
     fn make_if_stmt(&mut self) -> ParseResult<ast::Stmt> {
@@ -1219,7 +1219,7 @@ impl<'a> AstBuilder<'a> {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval }
+                        ast::Stmt::Assign { lval: expr, rval, is_let: false }
                     } else {
                         todo!("{}", &self.input[self.input_idx..])
                     }
@@ -1245,7 +1245,7 @@ impl<'a> AstBuilder<'a> {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval }
+                        ast::Stmt::Assign { lval: expr, rval, is_let: false }
                     } else {
                         todo!("{}", &self.input[self.input_idx..])
                     }
