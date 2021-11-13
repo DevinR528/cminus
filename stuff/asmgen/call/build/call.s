@@ -16,31 +16,30 @@
 .type add,@function
 
 add:
-    pushq %rbp
-    mov %rsp, %rbp
-    pushq %rdi
-    pushq %rsi
-    mov -16(%rbp), %rbx
-    add -8(%rbp), %rbx
-    mov %rbx, %rax
-    mov %rax, %rax
+    pushq                    %rbp                             # 
+    mov                      %rsp,                %rbp        # 
+    pushq                    %rdi                             # 
+    pushq                    %rsi                             # 
+    mov                 -16(%rbp),                %rax        # 
+    add                 -8(%rbp),                %rax
+    mov                      %rax,                %rax        # 
     leave
     ret
 .global main
 .type main,@function
 
 main:
-    pushq %rbp
-    mov %rsp, %rbp
-    pushq $1
-    movq $1, %rdi
-    movq $1, %rsi
-    call add
-    movq %rax, -8(%rbp)
-    mov -8(%rbp), %rsi
-    mov $0, %rax
-    leaq .int_wformat(%rip), %rdi
-    call printf
-    movq $0, %rax
+    pushq                    %rbp                             # 
+    mov                      %rsp,                %rbp        # 
+    pushq                      $0                             # 
+    movq                       $1,                %rdi
+    movq                       $1,                %rsi
+    call                     add
+    movq                     %rax,            -8(%rbp)
+    mov                  -8(%rbp),                %rsi        # 
+    mov                        $0,                %rax        # 
+    leaq       .int_wformat(%rip),                %rdi
+    call                  printf
+    movq                       $0,                %rax
     leave
     ret
