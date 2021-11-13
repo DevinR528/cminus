@@ -153,10 +153,6 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
             visit.visit_expr(expr);
             visit.visit_match_arm(arms);
         }
-        Stmt::Read(expr) => {
-            visit.visit_expr(expr);
-        }
-        Stmt::Write { expr } => visit.visit_expr(expr),
         Stmt::Ret(expr, _ty) => visit.visit_expr(expr),
         Stmt::Exit => {}
         Stmt::Block(Block { stmts, .. }) => {

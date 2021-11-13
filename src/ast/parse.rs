@@ -178,7 +178,7 @@ impl<'a> AstBuilder<'a> {
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
 
-        let ret = if self.eat_seq(&[TokenMatch::Minus, TokenMatch::Gt]) {
+        let ret = if self.eat_if(&TokenMatch::Colon) {
             self.eat_whitespace();
             self.make_ty()?
         } else {
@@ -1053,14 +1053,14 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_block(&mut self) -> ParseResult<ast::Block> {
-        self.push_call_stack("(&");
+        self.push_call_stack("make_block");
         let start = self.input_idx;
         let mut stmts = vec![];
         // println!("{:?}", self.curr);
         // println!("{:?}", self.tokens);
         if self.cmp_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]) {
             self.eat_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]);
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.curr_span().start);
             return Ok(ast::Block { stmts: vec![ast::Stmt::Exit.into_spanned(span)], span });
         }
 
@@ -1537,14 +1537,45 @@ impl<'a> AstBuilder<'a> {
         let start = self.input_idx;
         Ok(match self.curr.kind {
             TokenKind::Ident => {
-                let key: Result<kw::Keywords, _> = self.input_curr().try_into();
+                let text = self.input_curr();
+
+                let key: Result<kw::Keywords, _> = text.try_into();
                 if let Ok(key) = key {
                     todo!()
                 } else {
-                    let segs = self.make_seg()?;
-                    let span = ast::to_rng(start..self.curr_span().end);
-                    self.eat_whitespace();
-                    ast::Ty::Path(Path { segs, span }).into_spanned(span)
+                    let ty = match text {
+                        "void" => {
+                            let span = self.curr_span();
+                            ast::Ty::Void.into_spanned(span)
+                        }
+                        "bool" => {
+                            let span = self.curr_span();
+                            ast::Ty::Bool.into_spanned(span)
+                        }
+                        "char" => {
+                            let span = self.curr_span();
+                            ast::Ty::Char.into_spanned(span)
+                        }
+                        "int" => {
+                            let span = self.curr_span();
+                            ast::Ty::Int.into_spanned(span)
+                        }
+                        "float" => {
+                            let span = self.curr_span();
+                            ast::Ty::Float.into_spanned(span)
+                        }
+                        "string" => {
+                            let span = self.curr_span();
+                            ast::Ty::String.into_spanned(span)
+                        }
+                        _ => {
+                            let path = self.make_path()?;
+                            let span = ast::to_rng(start..self.curr_span().end);
+                            ast::Ty::Path(path).into_spanned(span)
+                        }
+                    };
+                    self.eat_if(&TokenMatch::Ident);
+                    ty
                 }
             }
             TokenKind::OpenParen => {

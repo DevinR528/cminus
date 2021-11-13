@@ -39,6 +39,16 @@ impl PartialEq<Ident> for str {
         with_intern(|intern| Some(other.tkn) == intern.lookup_tkn(self))
     }
 }
+impl PartialEq<&str> for Ident {
+    fn eq(&self, other: &&str) -> bool {
+        with_intern(|intern| Some(self.tkn) == intern.lookup_tkn(other))
+    }
+}
+impl PartialEq<Ident> for &str {
+    fn eq(&self, other: &Ident) -> bool {
+        with_intern(|intern| Some(other.tkn) == intern.lookup_tkn(self))
+    }
+}
 
 impl fmt::Display for Ident {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -16,23 +16,25 @@
 .type main,@function
 
 main:
-    pushq %rbp
-    mov %rsp, %rbp
-    pushq $1
-    pushq $1
-    pushq $1092721050
-    movsd (%rsp), %xmm3
-    movsd %xmm3, -8(%rbp)
-    pushq $1065353216
-    movsd (%rsp), %xmm3
-    movsd %xmm3, (%rsp)
-    movsd -8(%rbp), %xmm3
-    addss (%rsp), %xmm3
-    movsd %xmm3, -16(%rbp)
-    cvtss2sd -16(%rbp), %xmm0
-    mov $1, %rax
-    leaq .float_wformat(%rip), %rdi
-    call printf
+    pushq                    %rbp                             # 
+    mov                      %rsp,                %rbp        # 
+    pushq                      $0                             # 
+    pushq             $1092721050                             # 
+    movsd                  (%rsp),               %xmm0
+    movsd                   %xmm0,            -8(%rbp)
+    sub                       $8,                %rsp
+    pushq                      $0                             # 
+    pushq             $1065353216                             # 
+    movsd                  (%rsp),               %xmm0
+    movsd                   %xmm0,              (%rsp)
+    movsd                -8(%rbp),               %xmm0
+    addss                  (%rsp),               %xmm0
+    movsd                   %xmm0,           -16(%rbp)
+    pushq                      $0                             # 
+    cvtss2sd            -16(%rbp),               %xmm0
+    mov                        $1,                %rax        # 
+    leaq     .float_wformat(%rip),                %rdi
+    call                  printf
+    movq                       $0,                %rax
     leave
-    movq $0, %rax
     ret

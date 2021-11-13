@@ -156,6 +156,11 @@ impl<'input> TyCheckRes<'_, 'input> {
     }
 }
 
+// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
+// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
+// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
+// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
+// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
 impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     /// We first walk declarations and save function headers then once all the declarations have
     /// been collected we start type checking expressions.
@@ -512,7 +517,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         match &expr.val {
             Expr::Ident(var_name) => {
                 if let Some(ty) = self.type_of_ident(*var_name, expr.span) {
-                    self.expr_ty.insert(expr, ty);
+                    // self.expr_ty.insert(expr, ty);
                     // Ok because of `x += 1;` turns into `x = x + 1;`
                 } else {
                     panic!(
@@ -543,9 +548,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
                 }
                 if let Some(ty) = self.type_of_ident(*ident, expr.span) {
-                    if self.expr_ty.insert(expr, ty).is_some() {
-                        // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
-                    }
+                    // if self.expr_ty.insert(expr, ty).is_some() {
+                    // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
+                    // }
                 } else {
                     self.errors.push(Error::error_with_span(
                         self,
@@ -1326,43 +1331,6 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
             }
         }
     }
-
-    fn unify_op(&self, ty: Option<&Ty>, with: Option<&Ty>, op: &BinOp) -> Option<Ty> {
-        match (ty, with) {
-            (Some(t1), Some(t2)) => match (t1, t2) {
-                (Ty::Generic { ident: i1, bound: b1 }, Ty::Generic { ident: i2, bound: b2 }) => {
-                    todo!()
-                }
-                (Ty::Array { size: s1, ty: ty1 }, Ty::Array { size: s2, ty: ty2 }) => todo!(),
-                (Ty::Struct { ident: i1, gen: g1 }, Ty::Struct { ident: i2, gen: g2 }) => todo!(),
-                (Ty::Enum { ident: i1, gen: g1 }, Ty::Enum { ident: i2, gen: g2 }) => todo!(),
-                (Ty::Path(p1), Ty::Path(p2)) => todo!(),
-                (Ty::Ptr(ty1), Ty::Ptr(ty2)) => todo!(),
-                (Ty::Ref(ty1), Ty::Ref(ty2)) => todo!(),
-                (Ty::String, Ty::String) => todo!(),
-                (Ty::Int, Ty::Int) => todo!(),
-                (Ty::Char, Ty::Char) => todo!(),
-                (Ty::Float, Ty::Float) => todo!(),
-                (Ty::Bool, Ty::Bool) => todo!(),
-                (Ty::Void, Ty::Void) => todo!(),
-                (
-                    Ty::Func { ident: i1, ret: r1, params: p1 },
-                    Ty::Func { ident: i2, ret: r2, params: p2 },
-                ) => todo!(),
-                (ta, tb) => {
-                    println!("mismatched inference types {:?} != {:?}", ta, tb);
-                    None
-                }
-            },
-            (Some(_), None) => todo!("not sure this should happen"),
-            (None, Some(_)) => {
-                todo!()
-            }
-            (None, None) => {
-                todo!()
-            }
-        }
-    }
 }
 
 impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
@@ -1412,18 +1380,22 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             );
                         }
                     }
+                    self.visit_expr(lval);
                 }
             }
             Stmt::AssignOp { lval, rval, op } => todo!(),
-            Stmt::Call(_) => todo!(),
+            Stmt::Call(expr) => self.visit_expr(expr),
             Stmt::TraitMeth(_) => todo!(),
             Stmt::If { cond, blk, els } => todo!(),
             Stmt::While { cond, stmts } => todo!(),
             Stmt::Match { expr, arms } => todo!(),
-            Stmt::Read(_) => todo!(),
-            Stmt::Write { expr } => todo!(),
-            Stmt::Ret(_) => todo!(),
-            Stmt::Exit => todo!(),
+            Stmt::Ret(expr) => {
+                self.visit_expr(expr);
+                // let expr_ty = self.tcxt.expr_ty.get(expr);
+                // let func_ret = self.tcxt.curr_fn.and_then(|name|
+                // self.tcxt.var_func.name_func.get(&name).map(|f| &f.ret.val));
+            }
+            Stmt::Exit => {}
             Stmt::Block(_) => todo!(),
         }
     }
@@ -1446,7 +1418,26 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Expr::Deref { indir, expr } => todo!(),
             Expr::AddrOf(_) => todo!(),
-            Expr::Array { ident, exprs } => todo!(),
+            Expr::Array { ident, exprs } => {
+                if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
+                    for ex in exprs {
+                        self.visit_expr(ex);
+                    }
+                    if let Some(t) = ty.index_dim(self.tcxt, exprs, expr.span) {
+                        println!("{:?}", t);
+                        self.tcxt.expr_ty.insert(expr, t);
+                    }
+                } else {
+                    panic!(
+                        "{}",
+                        Error::error_with_span(
+                            self.tcxt,
+                            expr.span,
+                            &format!("no type infered for `{}`", ident),
+                        )
+                    );
+                }
+            }
             Expr::Urnary { op, expr } => todo!(),
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
@@ -1462,7 +1453,17 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Parens(_) => todo!(),
-            Expr::Call { path, args, type_args } => todo!(),
+            Expr::Call { path, args, type_args } => {
+                // Do we need to pass type_args to something
+                for (idx, arg) in args.iter().enumerate() {
+                    self.visit_expr(arg);
+                }
+
+                let func = self.tcxt.var_func.name_func.get(&path.segs[0]);
+                if let Some(func) = func {
+                    self.tcxt.expr_ty.insert(expr, func.ret.val.clone());
+                }
+            }
             Expr::TraitMeth { trait_, args, type_args } => todo!(),
             Expr::FieldAccess { lhs, rhs } => todo!(),
             Expr::StructInit { path, fields } => todo!(),
@@ -1472,7 +1473,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 let mut ty = None;
                 for ex in items {
                     self.visit_expr(ex);
-                    ty = self.unify(None, self.tcxt.expr_ty.get(ex));
+                    ty = self.unify(ty.as_ref(), self.tcxt.expr_ty.get(ex));
                 }
                 self.tcxt.expr_ty.insert(
                     expr,
@@ -1717,22 +1718,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     ),
                 }
             }
-            Stmt::Read(expr) => {
-                if let Some(_read_ty) = self.tcxt.expr_ty.get(expr) {
-                    // TODO: check for readable type
-                } else {
-                    self.tcxt.errors.push(Error::error_with_span(
-                        self.tcxt,
-                        stmt.span,
-                        &format!("variable `{}` not found", expr.val.as_ident()),
-                    ));
-                }
-                // TODO: writable trait
-                // id must be something that can be from_string or something
-            }
-            Stmt::Write { expr: _ } => {
-                // TODO: display trait?
-            }
             Stmt::Ret(expr) => {
                 let mut ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
                 let mut name = None;
@@ -1790,7 +1775,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
-                        "return type must be void",
+                        &format!(
+                            "return type must be void `{}`",
+                            func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                        ),
                     ));
                 }
             }

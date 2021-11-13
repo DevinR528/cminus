@@ -1,18 +1,18 @@
-fn set_idx(idx: int,  y: [3; int]) -> int {
+fn set_idx(idx: int,  y: [3; int]): int {
     return y[idx];
 }
 
 trait add<T> {
-    fn add(a: T, b: T) -> T;
+    fn add(a: T, b: T): T;
 }
 
 impl add<int> {
-    fn add(a: int, b: int) -> int {
+    fn add(a: int, b: int): int {
         return a + b;
     }
 }
 
-fn add4(x: int,  y: int) -> int {
+fn add4(x: int,  y: int): int {
     return x + y;
 }
 

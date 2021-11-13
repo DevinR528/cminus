@@ -1,6 +1,7 @@
-void main() {
-    float x, y;
-    x = 10.1;
-    y = x + 1.0;
+fn write(x: int) {}
+
+fn main() {
+    let x = 10.1;
+    let y = x + 1.0;
     write(y);
 }
