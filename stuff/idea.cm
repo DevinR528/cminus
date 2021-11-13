@@ -6,7 +6,7 @@
 //
 //    - Jai's build scripts being built into the `main` file is nice
 //    - Macros/some way of compile time meta programing
-//    - First class compile time types like Zig
+//    - First class compile time types like Zig/Jai kinda has this too
 
 
 enum Shape {
@@ -17,7 +17,7 @@ enum Shape {
 }
 
 // So here is inheritance
-fn area(x: Shape) -> int {
+fn area(x: Shape): int {
     match x {
         Shape::Circle { rad } -> {
             return (rad * rad) * 3.141;
@@ -29,7 +29,7 @@ fn area(x: Shape) -> int {
 }
 
 // This would be made really nice with variants as types
-fn circumference(x: Shape::Circle) -> int {
+fn circumference(x: Shape::Circle): int {
     return x.rad * 2 * 3.141;
 }
 
@@ -37,7 +37,7 @@ enum Result<T, E> {
     Ok(E), Err(E)
 }
 
-fn maybe_call_circumference(Shape x) -> Result<int, NotInstanceError?> {
+fn maybe_call_circumference(Shape x): Result<int, NotInstanceError?> {
     match x {
         circle @ Shape::Circle { .. } -> {
             // The type of circle is `Shape::Circle`
@@ -60,7 +60,7 @@ struct Foo {
 }
 
 // I really like the idea of "compile time" first class types
-fn passed_in_type<T: ptr_fam>(it: Type) -> T {
+fn passed_in_type<T: ptr_fam>(it: Type): T {
     printf("%s", it.name); // use just as any other type
 
     if (it.is_sized()) {

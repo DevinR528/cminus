@@ -1,9 +1,10 @@
-int add(int x, int y) {
+fn write(x: int) { }
+
+fn add(x: int, y: int): int {
     return x + y;
 }
 
-void main() {
-    int a;
-    a = add(1, 1);
+fn main() {
+    let a = add(1, 1);
     write(a);
 }

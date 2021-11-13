@@ -440,15 +440,29 @@ impl<'ctx> LLVMGen<'ctx> {
                 let rvalue = self.build_value(rval, lval.as_ident()).unwrap();
                 self.coerce_store_ptr_val(lptr, rvalue);
             }
-            Stmt::Call { expr: CallExpr { path, args, .. }, .. } => {
-                let ident = path.segs.last().unwrap();
-                let func = self.module.get_function(ident.name()).unwrap();
-                let args =
-                    args.iter().map(|e| self.build_value(e, None).unwrap()).collect::<Vec<_>>();
-                match self.builder.build_call(func, &args, "calltmp").try_as_basic_value() {
-                    Either::Left(_val) => {}
-                    Either::Right(_inst) => {
-                        // eprintln!("{:?}", inst);
+            Stmt::Call { expr: CallExpr { path, args, .. }, def } => {
+                if "write" == &path.segs[0] {
+                    let function = self.module.get_function("printf").unwrap();
+                    let val =
+                        self.deref_to_value(self.build_value(&args[0], None).unwrap(), &def.ret);
+
+                    let fmtstr = self
+                        .builder
+                        .build_global_string_ptr("%d\n", "fmtstr")
+                        .as_basic_value_enum();
+
+                    let args = vec![fmtstr, val];
+                    self.builder.build_call(function, &args, "printret");
+                } else {
+                    let ident = path.segs.last().unwrap();
+                    let func = self.module.get_function(ident.name()).unwrap();
+                    let args =
+                        args.iter().map(|e| self.build_value(e, None).unwrap()).collect::<Vec<_>>();
+                    match self.builder.build_call(func, &args, "calltmp").try_as_basic_value() {
+                        Either::Left(_val) => {}
+                        Either::Right(_inst) => {
+                            // eprintln!("{:?}", inst);
+                        }
                     }
                 }
             }
@@ -494,18 +508,6 @@ impl<'ctx> LLVMGen<'ctx> {
             }
             Stmt::While { .. } => todo!(),
             Stmt::Match { .. } => todo!(),
-            Stmt::Read(_) => todo!(),
-            Stmt::Write { expr } => {
-                let function = self.module.get_function("printf").unwrap();
-                let val =
-                    self.deref_to_value(self.build_value(expr, None).unwrap(), &expr.type_of());
-
-                let fmtstr =
-                    self.builder.build_global_string_ptr("%d\n", "fmtstr").as_basic_value_enum();
-
-                let args = vec![fmtstr, val];
-                self.builder.build_call(function, &args, "printret");
-            }
             Stmt::Ret(expr, ty) => {
                 let value = self.deref_to_value(self.build_value(expr, None).unwrap(), ty);
                 self.builder.build_return(Some(&value));

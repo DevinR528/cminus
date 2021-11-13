@@ -1,5 +1,7 @@
-void main() {
-    int a[5];
+fn write(x: int) { x=0; }
+
+fn main() {
+    let a = [0,0,0,0,0];
     a[1] = 0;
     a[2] = 9;
     a[3] = 11;
@@ -8,4 +10,11 @@ void main() {
     write(a[2]);
     write(a[3]);
     write(a[4]);
+
+    let b = [0,16,12,10,8];
+
+    write(b[1]);
+    write(b[2]);
+    write(b[3]);
+    write(b[4]);
 }
