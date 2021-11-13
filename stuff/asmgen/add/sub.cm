@@ -1,11 +1,13 @@
+fn write(x: int) {}
+
 fn main() {
     let a = 3;
     let x = 10;
     let z = 5;
     let y = x * z - 3;
-    // write(y);           // 47
-    // write(x * z - y);   // 3
-    // write(3 - z);       // -2
-    // b = z + 4;
-    // write(b);       // 9
+    write(y);           // 47
+    write(x * z - y);   // 3
+    write(3 - z);       // -2
+    let b = z + 4;
+    write(b);       // 9
 }

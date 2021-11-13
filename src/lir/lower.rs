@@ -641,8 +641,8 @@ impl Ty {
 
     crate fn null_val(&self) -> Val {
         match self {
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Float => Val::Int(1),
-            Ty::Char | Ty::Bool => Val::Int(1),
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Float => Val::Int(0),
+            Ty::Char | Ty::Bool => Val::Int(0),
             _ => unreachable!("generic type should be monomorphized cannot create null value"),
         }
     }
@@ -824,10 +824,6 @@ pub enum Stmt {
     While { cond: Expr, stmts: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expr, arms: Vec<MatchArm>, ty: Ty },
-    /// Read statment `read(ident)`
-    Read(Expr),
-    /// Write statement `write(expr)`
-    Write { expr: Expr },
     /// Return statement `return expr`
     Ret(Expr, Ty),
     /// Exit statement `exit`.
@@ -929,8 +925,6 @@ impl Stmt {
                     ty,
                 }
             }
-            ty::Stmt::Read(expr) => Stmt::Read(Expr::lower(tyctx, fold, expr)),
-            ty::Stmt::Write { expr } => Stmt::Write { expr: Expr::lower(tyctx, fold, expr) },
             ty::Stmt::Ret(expr) => {
                 let expr = Expr::lower(tyctx, fold, expr);
                 let ty = expr.type_of();
@@ -1164,6 +1158,10 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
         match &item.val {
             ty::Decl::Adt(_adt) => {}
             ty::Decl::Func(func) => {
+                // TODO: implement these in the lang
+                if func.ident == "write" || func.ident == "read" {
+                    continue;
+                }
                 if func.generics.is_empty() {
                     lowered.push(Item::Func(Func::lower(&tyctx, &fold, func)));
                 } else {

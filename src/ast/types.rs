@@ -643,10 +643,6 @@ pub enum Stmt {
     While { cond: Expression, stmt: Box<Statement> },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expression, arms: Vec<MatchArm> },
-    /// Read statment `read(ident)`
-    Read(Expression),
-    /// Write statement `write(expr)`
-    Write { expr: Expression },
     /// Return statement `return expr`
     Ret(Expression),
     /// Exit statement `exit`.
