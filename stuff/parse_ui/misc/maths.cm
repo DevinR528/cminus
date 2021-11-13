@@ -1,4 +1,4 @@
-fn add(int x, int y) -> int { return x + y; }
+fn add(int x, int y): int { return x + y; }
 
 fn main() {
     let z = 4 >> 2 & 0 << 3;

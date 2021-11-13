@@ -23,6 +23,18 @@ pub enum Val {
     Str(Ident),
 }
 
+impl Val {
+    crate fn to_type(&self) -> Ty {
+        match self {
+            Val::Float(_) => Ty::Float,
+            Val::Int(_) => Ty::Int,
+            Val::Char(_) => Ty::Char,
+            Val::Bool(_) => Ty::Bool,
+            Val::Str(_) => Ty::String,
+        }
+    }
+}
+
 impl hash::Hash for Val {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         match self {
@@ -618,7 +630,7 @@ pub enum Stmt {
     /// Variable declaration `int x;`
     Const(Const),
     /// Assignment `lval = rval;`
-    Assign { lval: Expression, rval: Expression },
+    Assign { lval: Expression, rval: Expression, is_let: bool },
     /// Assignment operations `lval += rval;`
     AssignOp { lval: Expression, rval: Expression, op: BinOp },
     /// A call statement `call(arg1, arg2)`
