@@ -932,10 +932,16 @@ impl<'ctx> CodeGen<'ctx> {
     fn gen_statement(&mut self, stmt: &'ctx Stmt) {
         match stmt {
             Stmt::Const(var) => {
+                panic!("{:?}", var);
                 // TODO: deal with initializer
                 self.alloc_stack(var.ident, &var.ty);
             }
-            Stmt::Assign { lval, rval } => {
+            Stmt::Assign { lval, rval, is_let } => {
+                if *is_let {
+                    let ident = lval.as_ident().unwrap();
+                    self.alloc_stack(ident, lval.type_of());
+                }
+
                 if let Some(global) = self.globals.get_mut(&lval.as_ident().unwrap()) {
                     match rval {
                         Expr::Ident { ident: _, ty: _ } => todo!(),
