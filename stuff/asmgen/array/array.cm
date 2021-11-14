@@ -1,4 +1,4 @@
-fn write(x: int) { x=0; }
+fn write(_: int) {  }
 
 fn main() {
     let a = [0,0,0,0,0];

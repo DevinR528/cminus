@@ -1,11 +1,18 @@
-fn add(int x, int y): int { return x + y; }
+fn write(_: int) {  }
+
+fn add(x: int, y: int): int { return x + y; }
 
 fn main() {
     let z = 4 >> 2 & 0 << 3;
     let x = 4 + 2 & 0 + 3;
+    write(z);
+    write(x);
     z += 1;
-    // let y = z | (1 & ~5);
+    write(z);
+    let y = z | (1 & ~5);
+    write(y);
     z = y + add(1, 1);
+    write(z);
     let a = 5;
     a += 5;
     let b = a + 1;
