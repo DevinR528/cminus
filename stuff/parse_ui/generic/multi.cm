@@ -1,14 +1,11 @@
 
-T foo<T, U, W>(U x, W y) {
-    U* a;
-    a = &x;
-    W* b;
-    b = &y;
-    T nul;
-    return nul;
+fn foo<T, U, W>(x: U, y: W, it: T): T {
+    let a = &x;
+    let b = &y;
+    return it;
 }
 
-void main() {
+fn main() {
     int x;
     x = foo::<int, char, int>('c', 19);
     char y;

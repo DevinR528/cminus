@@ -1,20 +1,17 @@
+fn write(_: int) {}
+
 trait add<T> {
-    T add(T a, T b);
+    fn add(a: T, b: T): T;
 }
 
 impl add<int> {
-    int add(int a, int b) {
+    fn add(a: int, b: int): int {
         return a + b;
     }
 }
 
-// T foo<T: add>(T a, T b,) {
-//     return <<T>::add>(a, b);
-// }
-
-void main() {
-    int x, y, a;
-    x = 10; y = 1;
-    a = <<int>::add>(x, y);
+fn main() {
+    let x = 10; let y = 1;
+    let a = <<int>::add>(x, y);
     write(a);
 }
