@@ -359,6 +359,7 @@ impl<'a> AstBuilder<'a> {
             let span = ast::to_rng(start..self.curr_span().end);
             variants.push(ast::Variant { ident, types, span });
 
+            // TODO: report errors when missing commas if possible
             self.eat_whitespace();
             if self.eat_if(&TokenMatch::Comma) {
                 self.eat_whitespace();
@@ -495,26 +496,7 @@ impl<'a> AstBuilder<'a> {
 
             // Outer `<` token
             self.eat_if(&TokenMatch::Lt);
-            let type_args = if self.curr.kind == TokenMatch::Lt {
-                self.eat_if(&TokenMatch::Lt);
-                let mut gen_args = vec![];
-                loop {
-                    self.eat_whitespace();
-                    gen_args.push(self.make_ty()?);
-                    self.eat_whitespace();
-                    if self.eat_if(&TokenMatch::Comma) {
-                        self.eat_whitespace();
-                        continue;
-                    } else {
-                        break;
-                    }
-                }
-                self.eat_if(&TokenMatch::Gt);
-
-                gen_args
-            } else {
-                vec![]
-            };
+            let type_args = self.make_type_args()?;
 
             let trait_ = self.make_path()?;
 
@@ -522,39 +504,24 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Gt);
 
             self.eat_if(&TokenMatch::OpenParen);
-            let mut args = vec![];
-            loop {
-                self.eat_whitespace();
-                // A no argument function call or trailing comma
-                if self.eat_if(&TokenMatch::CloseParen) {
-                    break;
-                }
-
-                args.push(self.make_expr()?);
-                self.eat_whitespace();
-                if self.eat_if(&TokenMatch::Comma) {
-                    self.eat_whitespace();
-                    continue;
-                } else {
-                    break;
-                }
-            }
+            let mut args = self.make_arg_list()?;
             // This is duplicated iff we have a no arg call
             self.eat_whitespace();
             self.eat_if(&TokenMatch::CloseParen);
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.curr_span().start);
             Ok(ast::Expr::TraitMeth { trait_, type_args, args }.into_spanned(span))
         } else if self.curr.kind == TokenMatch::OpenParen {
             self.eat_if(&TokenMatch::OpenParen);
 
-            let ex = self.make_expr()?;
+            let expr = self.make_expr()?;
 
             self.eat_if(&TokenMatch::OpenParen);
 
             // tuple
             // TODO: check there are only commas maybe??
-            Ok(ex)
+            let span = ast::to_rng(start..self.curr_span().end);
+            Ok(ast::Expr::Parens(box expr).into_spanned(span))
         } else if matches!(
             self.curr.kind,
             TokenKind::Ident
@@ -716,8 +683,8 @@ impl<'a> AstBuilder<'a> {
             let start = self.input_idx;
 
             self.eat_if(&TokenMatch::Bang);
-            let id = self.make_lh_expr()?;
-            let expr = ast::Expr::Urnary { op: ast::UnOp::Not, expr: box id }
+            let ex = self.make_expr()?;
+            let expr = ast::Expr::Urnary { op: ast::UnOp::Not, expr: box ex }
                 .into_spanned(ast::to_rng(start..self.curr_span().end));
 
             self.eat_whitespace();
@@ -725,14 +692,14 @@ impl<'a> AstBuilder<'a> {
             let op = self.make_op()?;
             (expr, op)
         } else if self.curr.kind == TokenMatch::Minus {
-            todo!("negative")
+            todo!("this is a negative number")
         } else if self.curr.kind == TokenMatch::Tilde {
-            // Negation `~expr`
+            // Ones comp `~expr`
             let start = self.input_idx;
 
             self.eat_if(&TokenMatch::Tilde);
-            let id = self.make_lh_expr()?;
-            let expr = ast::Expr::Urnary { op: ast::UnOp::OnesComp, expr: box id }
+            let ex = self.make_expr()?;
+            let expr = ast::Expr::Urnary { op: ast::UnOp::OnesComp, expr: box ex }
                 .into_spanned(ast::to_rng(start..self.curr_span().end));
 
             self.eat_whitespace();
@@ -762,7 +729,7 @@ impl<'a> AstBuilder<'a> {
             let start = self.input_idx;
 
             self.eat_if(&TokenMatch::And);
-            let ex = self.make_lh_expr()?;
+            let ex = self.make_expr()?;
             let expr =
                 ast::Expr::AddrOf(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
 
@@ -773,7 +740,7 @@ impl<'a> AstBuilder<'a> {
         } else if self.curr.kind == TokenMatch::OpenParen {
             // N.B.
             // We know we are in the middle of some kind of binop
-            self.eat_if(&TokenMatch::OpenParen);
+            // self.eat_if(&TokenMatch::OpenParen);
 
             let id = self.make_expr()?;
             self.eat_whitespace();
@@ -831,11 +798,14 @@ impl<'a> AstBuilder<'a> {
                     .into_spanned(ast::to_rng(start..self.curr_span().end))
             } else {
                 let start = self.curr_span().start;
+                self.eat_whitespace();
 
                 let mut path = self.make_path()?;
-                self.eat_whitespace();
-                let is_func_call =
-                    (self.curr.kind == TokenMatch::Lt || self.curr.kind == TokenMatch::OpenParen);
+                let is_func_call = (self.cmp_seq_ignore_ws(&[
+                    TokenMatch::Colon,
+                    TokenMatch::Colon,
+                    TokenMatch::Lt,
+                ]) || self.curr.kind == TokenMatch::OpenParen);
 
                 if path.segs.len() == 1 && !is_func_call {
                     ast::Expr::Ident(path.segs.remove(0))
@@ -843,50 +813,12 @@ impl<'a> AstBuilder<'a> {
                 } else {
                     // We are most likely in a function call
                     if is_func_call {
-                        let start = self.curr_span().start;
-
-                        let type_args = if self.curr.kind == TokenMatch::Lt {
-                            self.eat_if(&TokenMatch::Lt);
-                            let mut gen_args = vec![];
-                            loop {
-                                self.eat_whitespace();
-                                gen_args.push(self.make_ty()?);
-                                self.eat_whitespace();
-                                if self.eat_if(&TokenMatch::Comma) {
-                                    self.eat_whitespace();
-                                    continue;
-                                } else {
-                                    break;
-                                }
-                            }
-                            self.eat_if(&TokenMatch::Gt);
-
-                            gen_args
-                        } else {
-                            vec![]
-                        };
+                        let type_args = self.make_type_args()?;
 
                         self.eat_whitespace();
                         self.eat_if(&TokenMatch::OpenParen);
 
-                        let mut args = vec![];
-                        loop {
-                            self.eat_whitespace();
-
-                            // A no argument function call or trailing comma
-                            if self.eat_if(&TokenMatch::CloseParen) {
-                                break;
-                            }
-
-                            args.push(self.make_expr()?);
-                            self.eat_whitespace();
-                            if self.eat_if(&TokenMatch::Comma) {
-                                self.eat_whitespace();
-                                continue;
-                            } else {
-                                break;
-                            }
-                        }
+                        let mut args = self.make_arg_list()?;
                         // This is duplicated iff we have a no arg call
                         self.eat_whitespace();
                         self.eat_if(&TokenMatch::CloseParen);
@@ -894,7 +826,14 @@ impl<'a> AstBuilder<'a> {
                         ast::Expr::Call { path, type_args, args }
                             .into_spanned(ast::to_rng(start..self.curr_span().end))
                     } else {
-                        todo!("{:?}", self.curr)
+                        // TODO: better errors here (this is common bottom out)
+                        // TODO: enums will end up here, well they could also be functions ewww hmmm
+                        // TODO: enums will end up here, well they could also be functions ewww hmmm
+                        // TODO: enums will end up here, well they could also be functions ewww hmmm
+                        return Err(ParseError::Error(
+                            "ident, field access, array index or fn call",
+                            self.curr_span(),
+                        ));
                     }
                 }
             }
@@ -925,6 +864,7 @@ impl<'a> AstBuilder<'a> {
             }
             TokenKind::Lt => {
                 self.eat_if(&TokenMatch::Lt);
+                // @copypast match bellow
                 match self.curr.kind {
                     TokenKind::Lt => {
                         self.eat_if(&TokenMatch::Lt);
@@ -999,10 +939,6 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::Caret);
                 Some(AssocOp::BitXor)
             }
-            TokenKind::Semi => {
-                self.eat_if(&TokenMatch::Semi);
-                None
-            }
             TokenKind::CloseParen => {
                 self.eat_if(&TokenMatch::CloseParen);
                 None
@@ -1020,9 +956,10 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::OpenBrace);
                 None
             }
-            // Argument lists, array elements, any initializer stuff (structs, enums)
-            TokenKind::Comma => None,
-            t => todo!("Error found {:?} {:?}", t, &self.items()),
+            // comma: argument lists, array elements, any initializer stuff (structs, enums)
+            // semi: we need to recurse out of our expression tree before we eat this token
+            TokenKind::Comma | TokenKind::Semi => None,
+            t => todo!("Error found {:?} {}", self.input_curr(), &self.call_stack.join("\n")),
         })
     }
 
@@ -1102,7 +1039,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
-        let span = ast::to_rng(start..self.curr_span().end);
+        let span = ast::to_rng(start..self.curr_span().start);
         Ok(stmt.into_spanned(span))
     }
 
@@ -1118,13 +1055,11 @@ impl<'a> AstBuilder<'a> {
 
         let rval = self.make_expr()?;
 
-        self.eat_whitespace();
-        self.eat_if(&TokenMatch::Semi);
         Ok(ast::Stmt::Assign { lval, rval, is_let: true })
     }
 
     fn make_if_stmt(&mut self) -> ParseResult<ast::Stmt> {
-        self.push_call_stack("(&");
+        self.push_call_stack("make_if_stmt");
         self.eat_whitespace();
 
         let cond = self.make_expr()?;
@@ -1139,8 +1074,6 @@ impl<'a> AstBuilder<'a> {
         } else {
             None
         };
-        self.eat_whitespace();
-        self.eat_if(&TokenMatch::Semi);
         Ok(ast::Stmt::If { cond, blk, els })
     }
 
@@ -1154,7 +1087,6 @@ impl<'a> AstBuilder<'a> {
         let stmts = self.make_block()?;
         self.eat_whitespace();
 
-        self.eat_if(&TokenMatch::Semi);
         Ok(ast::Stmt::While { cond, stmts })
     }
 
@@ -1172,7 +1104,6 @@ impl<'a> AstBuilder<'a> {
         self.eat_if(&TokenMatch::OpenBrace);
         self.eat_whitespace();
 
-        self.eat_if(&TokenMatch::Semi);
         Ok(ast::Stmt::Match { expr, arms })
     }
 
@@ -1184,8 +1115,6 @@ impl<'a> AstBuilder<'a> {
             return Ok(ast::Stmt::Exit);
         }
         let expr = self.make_expr()?;
-        self.eat_whitespace();
-        self.eat_if(&TokenMatch::Semi);
 
         Ok(ast::Stmt::Ret(expr))
     }
@@ -1203,6 +1132,7 @@ impl<'a> AstBuilder<'a> {
                 //
                 // `x[0] = 6; x = call; v.v.f = yo;
                 ast::Expr::Ident(_) => {
+                    // @copypaste
                     // +=
                     if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
                         self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
@@ -1315,20 +1245,7 @@ impl<'a> AstBuilder<'a> {
                 // @PARSE_ENUMS
                 let items = if self.eat_if(&TokenMatch::OpenParen) {
                     self.eat_whitespace();
-                    let mut pats = vec![];
-                    loop {
-                        // We have reached the end of the patterns (this allows trailing commas)
-                        if self.curr.kind == TokenMatch::CloseParen {
-                            break;
-                        }
-                        pats.push(self.make_pat()?);
-                        if self.eat_if(&TokenMatch::Comma) {
-                            self.eat_whitespace();
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
+                    let mut pats = self.make_pat_list()?;
 
                     self.eat_whitespace();
                     self.eat_if(&TokenMatch::CloseParen);
@@ -1347,21 +1264,7 @@ impl<'a> AstBuilder<'a> {
             }
         } else if self.eat_if(&TokenMatch::OpenBracket) {
             self.eat_whitespace();
-            let mut pats = vec![];
-            loop {
-                // We have reached the end of the patterns (this allows trailing commas)
-                if self.curr.kind == TokenMatch::CloseBracket {
-                    break;
-                }
-
-                pats.push(self.make_pat()?);
-                if self.eat_if(&TokenMatch::Comma) {
-                    self.eat_whitespace();
-                    continue;
-                } else {
-                    break;
-                }
-            }
+            let mut pats = self.make_pat_list()?;
             self.eat_whitespace();
             self.eat_if(&TokenMatch::CloseBracket);
 
@@ -1374,6 +1277,25 @@ impl<'a> AstBuilder<'a> {
         } else {
             todo!("{:?}", self.curr)
         })
+    }
+
+    fn make_pat_list(&mut self) -> ParseResult<Vec<ast::Pattern>> {
+        let mut pats = vec![];
+        loop {
+            // We have reached the end of the patterns (this allows trailing commas)
+            if self.curr.kind == TokenMatch::CloseBracket {
+                break;
+            }
+
+            pats.push(self.make_pat()?);
+            if self.eat_if(&TokenMatch::Comma) {
+                self.eat_whitespace();
+                continue;
+            } else {
+                break;
+            }
+        }
+        Ok(pats)
     }
 
     /// Parse `ident[ws]:[ws]type[ws],[ws]ident: type[ws]` everything inside the parens is optional.
@@ -1498,6 +1420,51 @@ impl<'a> AstBuilder<'a> {
                 todo!("{:?}", tkn)
                 // return Err(Error::IncorrectToken);
             }
+        })
+    }
+
+    fn make_arg_list(&mut self) -> ParseResult<Vec<ast::Expression>> {
+        let mut args = vec![];
+        loop {
+            self.eat_whitespace();
+            // A no argument function call or trailing comma
+            if self.eat_if(&TokenMatch::CloseParen) {
+                break;
+            }
+
+            args.push(self.make_expr()?);
+            self.eat_whitespace();
+            if self.eat_if(&TokenMatch::Comma) {
+                self.eat_whitespace();
+                continue;
+            } else {
+                break;
+            }
+        }
+        Ok(args)
+    }
+
+    fn make_type_args(&mut self) -> ParseResult<Vec<Type>> {
+        self.eat_seq_ignore_ws(&[TokenMatch::Colon, TokenMatch::Colon]);
+        Ok(if self.curr.kind == TokenMatch::Lt {
+            self.eat_if(&TokenMatch::Lt);
+            let mut gen_args = vec![];
+            loop {
+                self.eat_whitespace();
+                gen_args.push(self.make_ty()?);
+                self.eat_whitespace();
+                if self.eat_if(&TokenMatch::Comma) {
+                    self.eat_whitespace();
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            self.eat_if(&TokenMatch::Gt);
+
+            gen_args
+        } else {
+            vec![]
         })
     }
 
@@ -1638,7 +1605,21 @@ impl<'a> AstBuilder<'a> {
     fn make_seg(&mut self) -> ParseResult<Vec<Ident>> {
         let mut ids = vec![];
         loop {
-            self.eat_seq(&[TokenMatch::Colon, TokenMatch::Colon]);
+            let full_type_args = self.cmp_seq_ignore_ws(&[
+                TokenMatch::Ident,
+                TokenMatch::Colon,
+                TokenMatch::Colon,
+                TokenMatch::Lt,
+            ]);
+            let just_type_args =
+                self.cmp_seq_ignore_ws(&[TokenMatch::Colon, TokenMatch::Colon, TokenMatch::Lt]);
+            // Stops eating `call::<T, U>();` colons
+            if !full_type_args && (!full_type_args && !just_type_args) {
+                self.eat_seq(&[TokenMatch::Colon, TokenMatch::Colon]);
+            } else if just_type_args {
+                break;
+            }
+
             ids.push(self.make_ident()?);
             if self.cmp_seq(&[TokenMatch::Colon, TokenMatch::Colon])
                 || self.cmp_seq(&[TokenMatch::Ident])
@@ -1650,6 +1631,10 @@ impl<'a> AstBuilder<'a> {
             }
         }
         self.eat_whitespace();
+        ids.retain(|id| {
+            let text = id.name();
+            !(text.is_empty() || text.chars().all(lex::is_whitespace))
+        });
 
         Ok(ids)
     }
