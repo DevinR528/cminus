@@ -2,11 +2,11 @@
 // This was called `trait into` but stupid ll(k) parsers think into and int are the same
 
 trait conv<T, U> {
-    U conv(T in);
+    fn conv(in: T): U;
 }
 
 impl conv<bool, int> {
-    int conv(bool in) {
+    fn conv(in: bool): int {
         if (in) {
             return 1;
         }
@@ -14,11 +14,11 @@ impl conv<bool, int> {
     }
 }
 
-U transform<T, U>(T in) {
+fn transform<T, U>(in: T): U {
     return <<T, U>::conv>(in);
 }
 
-void main() {
+fn main() {
     int x;
     x = <<bool, int>::conv>(false);
     x = transform::<bool, int>(true);

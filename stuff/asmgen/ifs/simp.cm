@@ -1,8 +1,15 @@
-void main() {
-    int x, y;
-    x = 10;
-    y = 5;
+fn write(_: string) {}
+
+fn main() {
+    let x = 10;
+    let y = 5;
     if (x > y) {
+        write("bigger");
+    } else {
+        write("smaller");
+    }
+
+    if (x < y) {
         write("bigger");
     } else {
         write("smaller");

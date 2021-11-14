@@ -1,8 +1,8 @@
-void main() {
-    int x;
-    x = 5;
-    int a[5];
-    a = {1, 0, 9, 11, 15};
+fn write(_: int) {}
+
+fn main() {
+    let x = 5;
+    let a = [1, 0, 9, 11, 15];
 
     write(a[1]);
     write(a[2]);
@@ -11,8 +11,7 @@ void main() {
 
     write(x);
 
-    int y;
-    y = 10;
+    let y = 10;
     a[0] = y;
     write(a[0]);
 }
