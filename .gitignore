@@ -3,4 +3,4 @@ Cargo.lock
 /input
 .vscode
 .idea
-*/build
+**/build/
