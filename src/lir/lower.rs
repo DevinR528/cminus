@@ -934,7 +934,19 @@ impl Stmt {
             ty::Stmt::Block(ty::Block { stmts, .. }) => Stmt::Block(Block {
                 stmts: stmts.into_iter().map(|s| Stmt::lower(tyctx, fold, s)).collect(),
             }),
-            ty::Stmt::AssignOp { lval, rval, op } => todo!(),
+            ty::Stmt::AssignOp { lval, rval, op } => {
+                let ty = tyctx.expr_ty.get(&lval).unwrap();
+                Stmt::Assign {
+                    lval: LValue::lower(tyctx, fold, lval.clone()),
+                    rval: Expr::Binary {
+                        lhs: box Expr::lower(tyctx, fold, lval),
+                        rhs: box Expr::lower(tyctx, fold, rval),
+                        op: BinOp::lower(op),
+                        ty: Ty::lower(tyctx, ty),
+                    },
+                    is_let: false,
+                }
+            }
         }
     }
 }
