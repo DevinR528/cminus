@@ -9,9 +9,9 @@ use crate::{
     ast::{
         parse::symbol::Ident,
         types::{
-            Adt, BinOp, Binding, Block, Const, Decl, Enum, Expr, Expression, Field, FieldInit,
-            Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany, Statement, Stmt, Struct,
-            Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
+            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Enum, Expr, Expression, Field,
+            FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany, Statement,
+            Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
         },
     },
     error::Error,
@@ -226,7 +226,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .var_func
             .unsed_vars
             .iter()
-            .filter(|(_id, (_, used))| !used.get())
+            .filter(|(id, (_, used))| !used.get() && !id.name().starts_with('_'))
             .map(|(id, (sp, _))| (id, *sp))
             .collect::<Vec<_>>();
         unused.sort_by(|a, b| a.1.cmp(&b.1));
@@ -244,28 +244,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_trait(&mut self, t: &'ast Trait) {
         if self.trait_solve.add_trait(t).is_some() {
-            panic!(
-                "{}",
-                Error::error_with_span(
-                    self,
-                    t.span,
-                    &format!("duplicate trait `{}` found", t.path)
-                )
-            )
+            self.errors.push(Error::error_with_span(
+                self,
+                t.span,
+                &format!("duplicate trait `{}` found", t.path),
+            ));
         }
     }
 
     fn visit_impl(&mut self, imp: &'ast Impl) {
         if let Err(e) = self.trait_solve.add_impl(imp) {
-            panic!(
-                "{}\n{}",
-                e,
-                Error::error_with_span(
-                    self,
-                    imp.span,
-                    &format!("no trait `{}` found for this implementation", imp.path)
-                )
-            )
+            self.errors.push(Error::error_with_span(
+                self,
+                imp.span,
+                &format!("no trait `{}` found for this implementation", imp.path),
+            ));
         }
     }
 
@@ -317,26 +310,22 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 );
 
                 let matching_gen = func.generics.iter().any(|g| g.ident == *ty.val.generics()[0]);
-                assert!(
-                    matching_gen,
-                    "{}",
-                    Error::error_with_span(
+                if matching_gen {
+                    self.errors.push(Error::error_with_span(
                         self,
                         func.span,
                         &format!("found `{}` which is not a declared generic type", func.ret.val),
-                    ),
-                );
+                    ));
+                }
             };
 
-            assert!(
-                self.var_func.name_func.insert(func.ident.to_owned(), func).is_none(),
-                "{}",
-                Error::error_with_span(
+            if self.var_func.name_func.insert(func.ident.to_owned(), func).is_some() {
+                self.errors.push(Error::error_with_span(
                     self,
                     func.span,
                     &format!("multiple function declaration `{}`", func.ident),
-                )
-            );
+                ));
+            }
         } else {
             panic!(
                 "{}",
@@ -419,24 +408,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 .insert(var.ident, var.ty.val.clone())
                 .is_some()
             {
-                panic!(
-                    "{}",
-                    Error::error_with_span(
-                        self,
-                        var.span,
-                        &format!("duplicate variable name `{}`", var.ident),
-                    )
-                );
-            }
-        } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
-            panic!(
-                "{}",
-                Error::error_with_span(
+                self.errors.push(Error::error_with_span(
                     self,
                     var.span,
-                    &format!("global variable `{}` is already declared", var.ident)
-                )
-            );
+                    &format!("duplicate variable name `{}`", var.ident),
+                ));
+            }
+        } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
+            self.errors.push(Error::error_with_span(
+                self,
+                var.span,
+                &format!("global variable `{}` is already declared", var.ident),
+            ));
         }
         self.var_func.unsed_vars.insert(var.ident, (var.span, Cell::new(false)));
     }
@@ -464,15 +447,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             f.generics.iter().find(|g| g.ident == *ty.val.generics()[0])
                         })
                         .is_some();
-                    assert!(
-                        matching_gen,
-                        "{}",
-                        Error::error_with_span(
+
+                    if matching_gen {
+                        self.errors.push(Error::error_with_span(
                             self,
                             *span,
-                            &format!("found {} which is not a declared generic type", ty.val),
-                        ),
-                    );
+                            &format!("found `{}` which is not a declared generic type", ty.val),
+                        ));
+                    }
                 };
                 if self
                     .var_func
@@ -512,7 +494,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         check.visit_stmt(stmt);
     }
 
-    // #[allow(clippy::if_then_panic)]
     fn visit_expr(&mut self, expr: &'ast Expression) {
         match &expr.val {
             Expr::Ident(var_name) => {
@@ -522,7 +503,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 } else {
                     panic!(
                         "{}",
-                        Error::error_with_span(self, expr.span, "no type found for ident expr",)
+                        Error::error_with_span(self, expr.span, "no type found for ident expr")
                     );
                 }
             }
@@ -1029,7 +1010,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     )
                     .is_some()
                 {
-                    unimplemented!("No duplicates")
+                    // TODO: investigate
+                    // The enum value from inference is overwritten here so this happens
                 }
             }
             Expr::ArrayInit { items } => {
@@ -1339,7 +1321,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             Stmt::Const(_) => todo!(),
             Stmt::Assign { lval, rval, is_let } => {
                 self.visit_expr(rval);
-                let ty = self.tcxt.expr_ty.get(rval).unwrap().clone();
+                let ty = self.tcxt.expr_ty.get(rval).expect(&format!("{:?}", rval)).clone();
 
                 // @cleanup: this is duplicated in `TypeCheck::visit_var`
                 if let Some(fn_id) = self.tcxt.curr_fn.clone() {
@@ -1380,23 +1362,74 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             );
                         }
                     }
+                    // For any assignment we need to know the type of the lvalue, this is because
+                    // each node is unique in the expr -> type map
                     self.visit_expr(lval);
                 }
             }
-            Stmt::AssignOp { lval, rval, op } => todo!(),
+            Stmt::AssignOp { lval, rval, op } => {
+                self.visit_expr(rval);
+                let rty = self.tcxt.expr_ty.get(rval);
+
+                // We must know the type of `lvar` now
+                let lty = self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
+                if lty.is_none() {
+                    panic!(
+                        "{}",
+                        Error::error_with_span(
+                            self.tcxt,
+                            lval.span,
+                            &format!("undeclared variable name `{}`", lval.val.as_ident()),
+                        )
+                    );
+                }
+
+                if let Some(unified) = fold_ty(
+                    self.tcxt,
+                    lty.as_ref(),
+                    rty,
+                    op,
+                    to_rng(lval.span.start..rval.span.end),
+                ) {
+                    self.tcxt.expr_ty.insert(rval, unified);
+                }
+                // For any assignment we need to know the type of the lvalue, this is because each
+                // node is unique in the expr -> type map
+                self.visit_expr(lval);
+            }
             Stmt::Call(expr) => self.visit_expr(expr),
-            Stmt::TraitMeth(_) => todo!(),
-            Stmt::If { cond, blk, els } => todo!(),
+            Stmt::TraitMeth(expr) => self.visit_expr(expr),
+            Stmt::If { cond, blk, els } => {
+                self.visit_expr(cond);
+
+                for stmt in &blk.stmts {
+                    self.visit_stmt(stmt);
+                }
+
+                if let Some(els) = els {
+                    for stmt in &els.stmts {
+                        self.visit_stmt(stmt);
+                    }
+                }
+            }
             Stmt::While { cond, stmts } => todo!(),
-            Stmt::Match { expr, arms } => todo!(),
+            Stmt::Match { expr: ex, arms } => {
+                self.visit_expr(ex);
+                for arm in arms {
+                    for stmt in &arm.blk.stmts {
+                        self.visit_stmt(stmt);
+                    }
+                }
+            }
             Stmt::Ret(expr) => {
                 self.visit_expr(expr);
-                // let expr_ty = self.tcxt.expr_ty.get(expr);
-                // let func_ret = self.tcxt.curr_fn.and_then(|name|
-                // self.tcxt.var_func.name_func.get(&name).map(|f| &f.ret.val));
             }
             Stmt::Exit => {}
-            Stmt::Block(_) => todo!(),
+            Stmt::Block(blk) => {
+                for stmt in &blk.stmts {
+                    self.visit_stmt(stmt);
+                }
+            }
         }
     }
 
@@ -1438,7 +1471,14 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     );
                 }
             }
-            Expr::Urnary { op, expr } => todo!(),
+            Expr::Urnary { op, expr: ex } => {
+                self.visit_expr(ex);
+                let exprty = self.tcxt.expr_ty.get(&**ex);
+
+                if let Some(ty) = exprty.cloned() {
+                    self.tcxt.expr_ty.insert(expr, ty);
+                }
+            }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
                 self.visit_expr(rhs);
@@ -1452,9 +1492,17 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.expr_ty.insert(expr, unified);
                 }
             }
-            Expr::Parens(_) => todo!(),
+            Expr::Parens(ex) => {
+                self.visit_expr(ex);
+                let exprty = self.tcxt.expr_ty.get(&**ex);
+
+                if let Some(ty) = exprty.cloned() {
+                    self.tcxt.expr_ty.insert(expr, ty);
+                }
+            }
             Expr::Call { path, args, type_args } => {
-                // Do we need to pass type_args to something
+                // Do we need to pass type_args to something gathered from the items for
+                // generic inference
                 for (idx, arg) in args.iter().enumerate() {
                     self.visit_expr(arg);
                 }
@@ -1464,10 +1512,31 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.expr_ty.insert(expr, func.ret.val.clone());
                 }
             }
-            Expr::TraitMeth { trait_, args, type_args } => todo!(),
+            Expr::TraitMeth { trait_, args, type_args } => {
+                for (idx, arg) in args.iter().enumerate() {
+                    self.visit_expr(arg);
+                }
+
+                let trait_ = self.tcxt.trait_solve.traits.get(trait_);
+                if let Some(tr) = trait_ {
+                    self.tcxt.expr_ty.insert(expr, tr.method.function().ret.val.clone());
+                }
+            }
             Expr::FieldAccess { lhs, rhs } => todo!(),
             Expr::StructInit { path, fields } => todo!(),
-            Expr::EnumInit { path, variant, items } => todo!(),
+            Expr::EnumInit { path, variant, items } => {
+                let enm = self.tcxt.name_enum.get(&path.segs[0]);
+
+                if let Some(enm) = enm {
+                    let gen =
+                        enm.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
+                    let ident = enm.ident;
+                    for arg in items.iter() {
+                        self.visit_expr(arg);
+                    }
+                    self.tcxt.expr_ty.insert(expr, Ty::Enum { ident, gen });
+                }
+            }
             Expr::ArrayInit { items } => {
                 let size = items.len();
                 let mut ty = None;
@@ -1498,14 +1567,10 @@ crate struct StmtCheck<'v, 'ast, 'input> {
 }
 
 impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
-    fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
-        crate::visit::walk_items(self, items);
-    }
-
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
             Stmt::Const(_) => {}
-            Stmt::Assign { lval, rval, is_let } => {
+            Stmt::Assign { lval, rval, .. } | Stmt::AssignOp { lval, rval, .. } => {
                 let orig_lty = lvalue_type(self.tcxt, lval, stmt.span);
                 let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
 

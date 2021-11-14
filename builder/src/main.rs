@@ -14,17 +14,26 @@ fn main() {
         }
         ["run" | "r", more @ ..] => {
             cmd!("cargo b").run().unwrap();
-            build_files(more);
+            if let Err(e) = build_files(more) {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         ["asm" | "a", more @ ..] => {
-            build_files(more);
+            if let Err(e) = build_files(more) {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
         ["fuzz" | "f", more @ ..] => {
             let count = more.iter().find_map(|n| n.parse::<usize>().ok()).unwrap();
             let more: Vec<_> =
                 more.iter().filter(|n| n.parse::<usize>().is_err()).copied().collect();
             for _ in 0..count {
-                build_files(&more)
+                if let Err(e) = build_files(&more) {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
             }
         }
         ["build" | "b", _more @ ..] => {
@@ -34,16 +43,19 @@ fn main() {
     }
 }
 
-fn build_files(files: &[&str]) {
+fn build_files(files: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     for p in files {
         let path = PathBuf::from(p);
         if path.is_dir() {
             continue;
         }
-        cmd!("{ENUMC_DEBUG} {path}").run().unwrap();
+        cmd!("{ENUMC_DEBUG} {path}").run()?;
 
         let mut build_dir = path.clone();
-        let file = build_dir.file_name().unwrap().to_os_string();
+        let file = build_dir
+            .file_name()
+            .ok_or_else::<Box<dyn std::error::Error>, _>(|| "file not found".into())?
+            .to_os_string();
         build_dir.pop();
         build_dir.push("build");
         build_dir.push(file);
@@ -54,9 +66,10 @@ fn build_files(files: &[&str]) {
         let mut out = build_dir.clone();
         out.set_extension("");
 
-        cmd!("gcc -no-pie {asm} -o {out}").run().expect("cmd failed");
-        if cmd!("{out}").read_stderr().expect("cmd failed").contains("SIG") {
-            panic!("seg fault")
+        cmd!("gcc -no-pie {asm} -o {out}").run()?;
+        if cmd!("{out}").read_stderr()?.contains("SEG") {
+            return Err("SIGSEGV assembly crashed with segmentation fault".into());
         };
     }
+    Ok(())
 }
