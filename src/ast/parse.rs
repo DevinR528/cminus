@@ -3,8 +3,7 @@ use std::convert::TryInto;
 use crate::ast::{
     lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
     parse::symbol::Ident,
-    types as ast,
-    types::{Path, Spany, Val},
+    types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
 };
 
 crate mod error;
@@ -29,7 +28,7 @@ pub struct AstBuilder<'a> {
     input: &'a str,
     input_idx: usize,
     items: Vec<ast::Declaration>,
-    call_stack: [&'static str; 10],
+    call_stack: Vec<&'static str>,
     stack_idx: usize,
 }
 
@@ -52,11 +51,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn push_call_stack(&mut self, s: &'static str) {
-        if self.stack_idx >= 10 {
-            self.stack_idx = 0;
-        }
-        self.call_stack[self.stack_idx] = s;
-        self.stack_idx += 1;
+        self.call_stack.push(s)
     }
 
     pub fn parse(&mut self) -> ParseResult<()> {
@@ -265,16 +260,18 @@ impl<'a> AstBuilder<'a> {
         self.push_call_stack("parse_trait");
         let start = self.input_idx;
 
-        self.eat_if_kw(kw::Impl);
+        self.eat_if_kw(kw::Trait);
         self.eat_whitespace();
 
+        // This will never be a path since this is always a local decl but
+        // we need this to be a path when we trait solve and for impls
         let path = self.make_path()?;
         let generics = self.make_generics()?;
 
         self.eat_if(&TokenMatch::OpenBrace);
         self.eat_whitespace();
 
-        let method = self.make_trait_fn()?;
+        let method = self.make_trait_fn(&generics)?;
 
         self.eat_if(&TokenMatch::CloseBrace);
         let span = ast::to_rng(start..self.input_idx);
@@ -296,8 +293,10 @@ impl<'a> AstBuilder<'a> {
         Ok(ast::Decl::Import(path).into_spanned(span))
     }
 
-    // Parse `fn name<T>(it: T) -> int;` with or without generics.
-    fn make_trait_fn(&mut self) -> ParseResult<ast::TraitMethod> {
+    /// Parse `fn name(it: T) -> int;` with or without generics.
+    ///
+    /// The `gen` list allows the function to use the generics declared at the trait scope.
+    fn make_trait_fn(&mut self, gen: &[ast::Generic]) -> ParseResult<ast::TraitMethod> {
         self.push_call_stack("make_trait_fn");
         let start = self.input_idx;
 
@@ -306,20 +305,28 @@ impl<'a> AstBuilder<'a> {
 
         let ident = self.make_ident()?;
 
-        let generics = self.make_generics()?;
-
         self.eat_if(&TokenMatch::OpenParen);
         self.eat_whitespace();
 
-        let params =
+        let mut params =
             if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
+
+        for param in &mut params {}
 
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
 
-        let ret = if self.eat_seq(&[TokenMatch::Minus, TokenMatch::Gt]) {
+        let ret = if self.eat_if(&TokenMatch::Colon) {
             self.eat_whitespace();
-            self.make_ty()?
+            let mut ty = self.make_ty()?;
+            if let ast::Ty::Path(p) = &mut ty.val {
+                if p.segs.len() == 1
+                    && gen.iter().any(|g| g.bound.is_none() && g.ident == p.segs[0])
+                {
+                    ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
+                }
+            }
+            ty
         } else {
             self.eat_whitespace();
             ast::Ty::Void.into_spanned(self.curr_span())
@@ -327,16 +334,28 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
 
         let default = self.eat_if(&TokenMatch::Semi);
-
         Ok(if default {
             let stmts = self.make_block()?;
-
             let span = ast::to_rng(start..self.input_idx);
-            ast::TraitMethod::Default(ast::Func { ident, ret, generics, params, stmts, span })
+            ast::TraitMethod::Default(ast::Func {
+                ident,
+                ret,
+                generics: gen.to_vec(),
+                params,
+                stmts,
+                span,
+            })
         } else {
             let stmts = ast::Block { stmts: vec![], span: self.curr_span() };
             let span = ast::to_rng(start..self.input_idx);
-            ast::TraitMethod::NoBody(ast::Func { ident, ret, generics, params, stmts, span })
+            ast::TraitMethod::NoBody(ast::Func {
+                ident,
+                ret,
+                generics: gen.to_vec(),
+                params,
+                stmts,
+                span,
+            })
         })
     }
 
@@ -1356,7 +1375,6 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Gt);
             self.eat_whitespace();
         }
-
         self.eat_whitespace();
         Ok(gens)
     }
@@ -1396,6 +1414,11 @@ impl<'a> AstBuilder<'a> {
                             .map_err(|_| ParseError::InvalidFloatLiteral(self.curr_span()))?,
                     ),
                     LiteralKind::Char { terminated } => {
+                        let mut text = text.to_string();
+                        // Remove the first ' and pop the last '
+                        text.remove(0);
+                        text.pop();
+
                         if text.len() == 1 {
                             Val::Char(self.input_curr().chars().next().unwrap())
                         } else {
@@ -1406,7 +1429,12 @@ impl<'a> AstBuilder<'a> {
                         }
                     }
                     LiteralKind::Str { terminated } => {
-                        Val::Str(Ident::new(self.curr_span(), &self.input_curr().replace("\"", "")))
+                        let mut text = text.to_string();
+                        // Remove the first " and pop the last "
+                        text.remove(0);
+                        text.pop();
+
+                        Val::Str(Ident::new(self.curr_span(), &text))
                     }
                     LiteralKind::ByteStr { .. }
                     | LiteralKind::RawStr { .. }
@@ -1546,7 +1574,7 @@ impl<'a> AstBuilder<'a> {
                 }
             }
             TokenKind::OpenParen => {
-                todo!()
+                panic!("{}", self.call_stack.join("\n"))
             }
             TokenKind::OpenBracket => {
                 let start = self.curr_span().start;
@@ -1713,9 +1741,11 @@ impl<'a> AstBuilder<'a> {
     /// Check if a sequence matches `iter` ignoring whitespace, non destructively.
     fn cmp_seq_ignore_ws<'i>(&self, mut iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
         let mut iter = iter.into_iter();
-        let first = iter.next().unwrap_or(&TokenMatch::Unknown);
-        if first != &self.curr.kind && self.curr.kind != TokenMatch::Whitespace {
-            return false;
+        if self.curr.kind != TokenMatch::Whitespace {
+            let first = iter.next().unwrap_or(&TokenMatch::Unknown);
+            if first != &self.curr.kind {
+                return false;
+            }
         }
 
         let tkns = self.tokens.iter().filter(|t| t.kind != TokenMatch::Whitespace);
@@ -1796,6 +1826,14 @@ impl<'a> AstBuilder<'a> {
 
     /// The input `str` from current index to `stop`.
     fn curr_span(&self) -> ast::Range {
+        let current_len = if matches!(
+            self.curr.kind,
+            TokenKind::Whitespace | TokenKind::BlockComment { .. } | TokenKind::LineComment { .. }
+        ) {
+            0
+        } else {
+            self.curr.len
+        };
         let stop = self.input_idx + self.curr.len;
         (self.input_idx..stop).into()
     }
@@ -1940,8 +1978,8 @@ fn add() {
 fn parse_func_call_args_generics() {
     let input = r#"
 fn add() {
-    let x = foo<T, U>(a, 1 + 2);
-    foo<T>(a);
+    let x = foo::<T, U>(a, 1 + 2);
+    foo::<T>(a);
 }
 "#;
     let mut parser = AstBuilder::new(input);
@@ -2089,4 +2127,84 @@ fn add() {
     let mut parser = AstBuilder::new(input);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_exprs_fail2() {
+    let input = r#"
+fn add() {
+    let y = z | (1 & ~5);
+    z += 1;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_ambig_1() {
+    let input = r#"
+fn add() {
+    let x = y < x;
+    let y = call::<T>();
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser
+        .parse()
+        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
+        .unwrap_or_else(|e| panic!("{}", e));
+    println!("{:#?}", parser.items());
+}
+
+#[test]
+fn parse_import_ambig_func() {
+    let input = r#"
+fn add() {
+    let y = foo::bar::call::<T>();
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser
+        .parse()
+        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
+        .unwrap_or_else(|e| panic!("{}", e));
+    if let Decl::Func(func) = &parser.items()[0].val {
+        if let Stmt::Assign { rval, .. } = &func.stmts.stmts[0].val {
+            if let Expr::Call { path, .. } = &rval.val {
+                assert_eq!(path.segs[0], "foo");
+                assert_eq!(path.segs[1], "bar");
+                assert_eq!(path.segs[2], "call");
+            } else {
+                panic!("assert failed for function call with import path")
+            }
+        } else {
+            panic!("assert failed for function call with import path")
+        }
+    } else {
+        panic!("assert failed for function call with import path")
+    }
+}
+
+#[test]
+fn parse_trait_span() {
+    let input = r#"
+fn add() {
+    let y = <<int>::add>(a, b);
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser
+        .parse()
+        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
+        .unwrap_or_else(|e| panic!("{}", e));
+    if let Decl::Func(func) = &parser.items()[0].val {
+        let mut x = input.split("let");
+        let start = x.next().unwrap().chars().count();
+        let end = x.next().unwrap().chars().count() + start;
+        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end))
+    } else {
+        panic!("assert failed for function call with import path")
+    }
 }
