@@ -1,4 +1,7 @@
-use std::{fmt, hash::Hash};
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use crate::ast::types::Range;
 
@@ -13,7 +16,7 @@ pub struct Ident {
 }
 
 impl Hash for Ident {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.tkn.hash(state);
     }
 }

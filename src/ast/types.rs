@@ -1,4 +1,8 @@
-use std::{fmt, hash, ops};
+use std::{
+    fmt,
+    hash::{self, Hash, Hasher},
+    ops,
+};
 
 use crate::{ast::parse::symbol::Ident, error::Error, typeck::TyCheckRes};
 
@@ -210,7 +214,7 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Eq)]
 pub struct Path {
     pub segs: Vec<Ident>,
     pub span: Range,
@@ -223,6 +227,16 @@ impl Path {
     }
 }
 
+impl Hash for Path {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.segs.hash(state);
+    }
+}
+impl PartialEq for Path {
+    fn eq(&self, other: &Self) -> bool {
+        self.segs.eq(&other.segs)
+    }
+}
 impl fmt::Display for Path {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.segs.iter().map(|id| id.name()).collect::<Vec<_>>().join("::").fmt(f)
