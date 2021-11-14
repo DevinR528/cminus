@@ -106,9 +106,9 @@ impl<'ctx> CodeGen<'ctx> {
                 )
             }
             Instruction::Call(call) => format!("    call{:>a$}", call, a = FIRST),
-            Instruction::Jmp(_) => todo!(),
+            Instruction::Jmp(label) => format!("    jmp{:>a$}", label, a = FIRST),
             Instruction::CondJmp { loc, cond } => {
-                format!("    j{}{:a$}", cond.to_string(), loc, a = FIRST)
+                format!("    j{}{:>a$}", cond.to_string(), loc, a = FIRST)
             }
             Instruction::Leave => "    leave".to_owned(),
             Instruction::Ret => "    ret".to_owned(),
@@ -1369,12 +1369,19 @@ impl<'ctx> CodeGen<'ctx> {
                     self.gen_statement(stmt);
                 }
 
+                // Fall through or "merge" point
+                let merge_label = format!(".mergeif{}", self.asm_buf.len());
+                let merge_loc = Location::Label(merge_label.clone());
+                self.asm_buf.push(Instruction::Jmp(merge_loc));
+
                 self.asm_buf.push(Instruction::Label(name));
                 if let Some(els) = els {
                     for stmt in &els.stmts {
                         self.gen_statement(stmt);
                     }
                 }
+
+                self.asm_buf.push(Instruction::Label(merge_label));
             }
             Stmt::While { .. } => todo!(),
             Stmt::Match { expr, arms, ty: _ } => {
