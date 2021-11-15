@@ -843,7 +843,7 @@ impl Stmt {
                 init: Expr::lower(tyctx, fold, var.init),
                 is_global: false,
             }),
-            ty::Stmt::Assign { lval, rval, is_let } => Stmt::Assign {
+            ty::Stmt::Assign { lval, rval, ty, is_let } => Stmt::Assign {
                 lval: LValue::lower(tyctx, fold, lval),
                 rval: Expr::lower(tyctx, fold, rval),
                 is_let,
@@ -1184,7 +1184,16 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
                 }
             }
             ty::Decl::Impl(i) => {
-                lowered.push(Item::Func(Func::lower(&tyctx, &fold, &i.method)));
+                let mut specialized = i.method.clone();
+                specialized.ident = Ident::new(
+                    i.method.ident.span(),
+                    &format!(
+                        "{}{}",
+                        i.method.ident,
+                        i.type_arguments.iter().map(|t| t.val.to_string()).collect::<String>()
+                    ),
+                );
+                lowered.push(Item::Func(Func::lower(&tyctx, &fold, &specialized)));
             }
             ty::Decl::Const(var) => lowered.push(Item::Const(Const {
                 ty: Ty::lower(&tyctx, &var.ty.val),

@@ -1,7 +1,8 @@
-void main() {
-    int x, y, z;
-    x = 1 + 1;
-    y = x * 2;
-    z = x + y;
+linked fn write(_: int);
+
+fn main() {
+    let x = 1 + 1;
+    let y = x * 2;
+    let z = x + y;
     write(z);
 }
