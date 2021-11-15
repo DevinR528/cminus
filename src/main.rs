@@ -60,7 +60,8 @@ fn process_file<'a>(
     let mut parse_mem = Region::new(GLOBAL);
     let parse_time = Instant::now();
 
-    let mut parser = AstBuilder::new(&input);
+    let (snd, rcv) = std::sync::mpsc::channel();
+    let mut parser = AstBuilder::new(&input, path, snd);
     parser.parse().map_err(|e| PrettyError::from_parse(path, &input, e))?;
     let mut items = parser.into_items();
 
@@ -125,6 +126,7 @@ fn process_file<'a>(
 }
 
 /// Run it!
+#[tokio::main]
 fn main() {
     // std::panic::set_hook(Box::new(|panic_info| {
     //     let _: Option<()> = try {
