@@ -1,0 +1,5 @@
+import ::lib::print_fmt;
+
+fn main() {
+    print_fmt("hello", 10);
+}
