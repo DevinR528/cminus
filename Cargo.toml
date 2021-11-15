@@ -9,8 +9,7 @@ default = ["llvm"]
 llvm = [ "inkwell", "either"]
 
 [dependencies]
-pest = { version = "2.1", features = [ "pretty-print" ] }
-pest_derive = "2.1"
+clap = "2.33.3"
 inkwell = { version = "0.1.0-beta.3", features = ["llvm10-0"], optional = true }
 either = { version = "1.6", optional = true }
 lazy_static = "1.4"
