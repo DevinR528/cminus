@@ -58,7 +58,7 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error + '_>> {
     println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
     println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
 
-    // println!("{:?}", items);
+    println!("{:?}", items);
 
     let tyck_time = Instant::now();
     let mut tyck = typeck::TyCheckRes::new(&input, path);
@@ -67,13 +67,13 @@ fn process_file(path: &str) -> Result<(), Box<dyn std::error::Error + '_>> {
     println!("    type checking:     {}s", tyck_time.elapsed().as_secs_f64());
     // res.unwrap();
 
-    // println!("{:#?}", tyck);
+    println!("{:#?}", tyck);
 
     let lower_time = Instant::now();
     let lowered = lir::lower::lower_items(&items, tyck);
     println!("    lowering:          {}s", lower_time.elapsed().as_secs_f64());
 
-    // println!("{:?}", lowered);
+    println!("{:?}", lowered);
 
     // let ctxt = inkwell::context::Context::create();
     // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
