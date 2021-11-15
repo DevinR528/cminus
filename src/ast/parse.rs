@@ -1,4 +1,9 @@
-use std::convert::TryInto;
+use std::{
+    convert::TryInto,
+    future::Future,
+    pin::Pin,
+    sync::mpsc::{channel, Receiver, Sender},
+};
 
 use crate::ast::{
     lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
@@ -18,6 +23,8 @@ use self::lex::Base;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
+pub type AstSender = Sender<ParseResult<(usize, &'static ast::Declaration)>>;
+
 // TODO: this is basically one file = one mod/crate/program unit add mod linking or
 // whatever.
 /// Create an AST from input `str`.
@@ -26,20 +33,23 @@ pub struct AstBuilder<'a> {
     tokens: Vec<lex::Token>,
     curr: lex::Token,
     input: &'a str,
+    file: &'a str,
     input_idx: usize,
     items: Vec<ast::Declaration>,
     call_stack: Vec<&'static str>,
     stack_idx: usize,
+
+    snd: Option<AstSender>,
 }
 
 // FIXME: audit the whitespace eating, pretty sure I call it unnecessarily
 impl<'a> AstBuilder<'a> {
-    pub fn new(input: &'a str) -> Self {
+    pub fn new(input: &'a str, file: &'a str, snd: AstSender) -> Self {
         let mut tokens =
             lex::tokenize(input).chain(Some(Token::new(TokenKind::Eof, 0))).collect::<Vec<_>>();
         // println!("{:#?}", tokens);
         let curr = tokens.remove(0);
-        Self { tokens, curr, input, ..Default::default() }
+        Self { tokens, curr, input, file, snd: Some(snd), ..Default::default() }
     }
 
     pub fn items(&self) -> &[ast::Declaration] {
@@ -101,7 +111,45 @@ impl<'a> AstBuilder<'a> {
                             self.items.push(item);
                         }
                         kw::Import => {
+                            let start = self.curr_span();
                             let item = self.parse_import()?;
+
+                            if let ast::Decl::Import(path) = &item.val {
+                                let item_imported = path.segs[1].clone();
+                                let path = path.segs[0].clone();
+
+                                let mut p = std::path::PathBuf::from(self.file);
+                                p.pop();
+                                p.push(path.name());
+                                p.set_extension("cm");
+
+                                println!("{}", p.display());
+
+                                let s = p.to_string_lossy().to_string();
+                                // This is always valid it's just so AstBuilder can impl Default
+                                let snd = self.snd.as_ref().unwrap().clone();
+                                std::thread::spawn(move || {
+                                    let input = std::fs::read_to_string(&s).map_err(|e| {
+                                        ParseError::Error("invalid file name", start)
+                                    })?;
+
+                                    let mut parser = AstBuilder::new(&input, &s, snd.clone());
+                                    if let Err(err) = parser.parse() {
+                                        snd.send(Err(err));
+                                        return Ok::<_, ParseError>(());
+                                    }
+
+                                    let mut cnt = parser.items().len();
+                                    for item in parser.into_items() {
+                                        cnt -= 1;
+                                        snd.send(Ok((cnt, Box::leak(box item))));
+                                    }
+                                    Ok(())
+                                });
+                            } else {
+                                return Err(ParseError::Error("malformed import", start));
+                            }
+
                             self.items.push(item);
                         }
                         tkn => unreachable!("Token is unaccounted for `{}`", tkn.text()),
@@ -1947,7 +1995,7 @@ fn parse_lit_const() {
     let input = r#"
 const foo: [3; int] = 1;
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -1957,7 +2005,7 @@ fn parse_func_header() {
     let input = r#"
 fn add(x: int, y: int): int {  }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -1971,7 +2019,7 @@ struct foo {
     z: [3; char],
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -1984,7 +2032,7 @@ struct foo<T, U> {
     y: U,
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -1996,7 +2044,7 @@ enum foo {
     a, b, c
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2008,7 +2056,7 @@ enum foo<T, X, U> {
     a(X, string), b, c(T, U), d([2; int])
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2022,7 +2070,7 @@ impl add<string> {
     }
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2033,7 +2081,7 @@ fn import_decl() {
 import foo::bar::baz;
 import ::bar::baz;
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2046,7 +2094,7 @@ fn add(x: int, y: int): int {
     return z;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2059,7 +2107,7 @@ fn add(x: int, y: int): int {
     return z;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2072,7 +2120,7 @@ fn add() {
     foo();
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2085,7 +2133,7 @@ fn add() {
     foo::<T>(a);
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2098,7 +2146,7 @@ fn add() {
     x += 3+5;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2110,7 +2158,7 @@ fn add() {
     let x = [10, call(), 1+1+2];
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2122,7 +2170,7 @@ fn add() {
     let x = struct foo { x: 1, y: "string" };
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2134,7 +2182,7 @@ fn add() {
     let x = enum foo::bar(a, 1+0, 1.6);
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2150,7 +2198,7 @@ fn add() {
     }
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2169,7 +2217,7 @@ fn add() {
     }
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2185,7 +2233,7 @@ fn add() {
     return;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2197,7 +2245,7 @@ fn add() {
     let x = <<T>::add>(1, 2);
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2211,7 +2259,7 @@ fn add() {
     let z = !x && false || !y;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2227,7 +2275,7 @@ fn add() {
     z = y + add(1, 1);
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2240,7 +2288,7 @@ fn add() {
     z += 1;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }
@@ -2253,7 +2301,7 @@ fn add() {
     let y = call::<T>();
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser
         .parse()
         .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
@@ -2268,7 +2316,7 @@ fn add() {
     let y = foo::bar::call::<T>();
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser
         .parse()
         .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
@@ -2297,7 +2345,7 @@ fn add() {
     let y = <<int>::add>(a, b);
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser
         .parse()
         .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
@@ -2320,7 +2368,7 @@ fn add() {
     let z: bool = !x && false || !y;
 }
 "#;
-    let mut parser = AstBuilder::new(input);
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
     println!("{:#?}", parser.items());
 }

@@ -269,7 +269,7 @@ impl Expr {
             // HACK: pass the return value to lower via `type_args` see `TraitRes::visit_expr`
             ty::Expr::Call { path: _, args: _, type_args } => type_args.remove(0).val,
             ty::Expr::TraitMeth { trait_: _, args: _, type_args } => type_args.remove(0).val,
-            _ => unreachable!("only trait impl calls and function calls are replaced"),
+            ex => unreachable!("only trait impl calls and function calls are replaced {:?}", ex),
         });
 
         if typ.has_generics() {
