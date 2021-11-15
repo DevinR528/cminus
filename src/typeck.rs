@@ -56,7 +56,7 @@ impl VarInFunction<'_> {
     }
 }
 
-pub type AstReceiver = Receiver<ParseResult<(usize, &'static Declaration)>>;
+pub type AstReceiver = Receiver<ParseResult<(usize, Declaration)>>;
 
 #[derive(Default)]
 crate struct TyCheckRes<'ast, 'input> {
@@ -109,7 +109,7 @@ crate struct TyCheckRes<'ast, 'input> {
     error_in_current_expr_tree: bool,
 
     rcv: Option<AstReceiver>,
-    imported_items: Vec<Declaration>,
+    crate imported_items: Vec<&'static Declaration>,
 }
 
 impl fmt::Debug for TyCheckRes<'_, '_> {
@@ -193,11 +193,20 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Adt(adt) => self.visit_adt(adt),
                 Decl::Const(co) => {}
                 Decl::Import(_) => {
+                    let mut items = vec![];
                     while let Ok(Ok((count, item))) = self.rcv.as_ref().unwrap().recv() {
-                        self.visit_decl(item);
+                        println!("{:?}\n", item);
+                        println!("{}", count);
+
+                        items.push(item);
                         if count == 0 {
                             break;
                         }
+                    }
+                    let imports: &'static [Declaration] = items.leak();
+                    self.visit_prog(imports);
+                    for import in imports {
+                        self.imported_items.push(import);
                     }
                 }
             }
