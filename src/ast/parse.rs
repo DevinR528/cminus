@@ -23,7 +23,7 @@ use self::lex::Base;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub type AstSender = Sender<ParseResult<(usize, &'static ast::Declaration)>>;
+pub type AstSender = Sender<ParseResult<(usize, ast::Declaration)>>;
 
 // TODO: this is basically one file = one mod/crate/program unit add mod linking or
 // whatever.
@@ -115,20 +115,18 @@ impl<'a> AstBuilder<'a> {
                             let item = self.parse_import()?;
 
                             if let ast::Decl::Import(path) = &item.val {
-                                let item_imported = path.segs[1].clone();
+                                // TODO: handle ::foo::bar::item; not just ::foo::item;
                                 let path = path.segs[0].clone();
-
                                 let mut p = std::path::PathBuf::from(self.file);
-                                p.pop();
-                                p.push(path.name());
-                                p.set_extension("cm");
 
-                                println!("{}", p.display());
-
-                                let s = p.to_string_lossy().to_string();
                                 // This is always valid it's just so AstBuilder can impl Default
                                 let snd = self.snd.as_ref().unwrap().clone();
                                 std::thread::spawn(move || {
+                                    p.pop();
+                                    p.push(path.name());
+                                    p.set_extension("cm");
+
+                                    let s = p.to_string_lossy().to_string();
                                     let input = std::fs::read_to_string(&s).map_err(|e| {
                                         ParseError::Error("invalid file name", start)
                                     })?;
@@ -140,9 +138,11 @@ impl<'a> AstBuilder<'a> {
                                     }
 
                                     let mut cnt = parser.items().len();
+                                    // TODO: the receiver has to wait on all items so we really
+                                    // don't get much benefit from threading now
                                     for item in parser.into_items() {
                                         cnt -= 1;
-                                        snd.send(Ok((cnt, Box::leak(box item))));
+                                        snd.send(Ok((cnt, item)));
                                     }
                                     Ok(())
                                 });
