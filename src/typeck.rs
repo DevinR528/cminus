@@ -1,17 +1,18 @@
 use std::{
     cell::{Cell, RefCell},
     fmt,
+    sync::mpsc::Receiver,
 };
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
     ast::{
-        parse::symbol::Ident,
+        parse::{symbol::Ident, ParseResult},
         types::{
-            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Enum, Expr, Expression, Field,
-            FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany, Statement,
-            Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
+            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
+            Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany,
+            Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
         },
     },
     error::Error,
@@ -54,6 +55,9 @@ impl VarInFunction<'_> {
         self.func_spans.insert(rng, name)
     }
 }
+
+pub type AstReceiver = Receiver<ParseResult<(usize, &'static Declaration)>>;
+
 #[derive(Default)]
 crate struct TyCheckRes<'ast, 'input> {
     /// The name of the file being checked.
@@ -103,6 +107,9 @@ crate struct TyCheckRes<'ast, 'input> {
     /// Errors collected during parsing and type checking.
     errors: Vec<Error<'input>>,
     error_in_current_expr_tree: bool,
+
+    rcv: Option<AstReceiver>,
+    imported_items: Vec<Declaration>,
 }
 
 impl fmt::Debug for TyCheckRes<'_, '_> {
@@ -122,8 +129,8 @@ impl fmt::Debug for TyCheckRes<'_, '_> {
 }
 
 impl<'input> TyCheckRes<'_, 'input> {
-    crate fn new(input: &'input str, name: &'input str) -> Self {
-        Self { name, input, ..Self::default() }
+    crate fn new(input: &'input str, name: &'input str, rcv: AstReceiver) -> Self {
+        Self { name, input, rcv: Some(rcv), ..Self::default() }
     }
 
     crate fn report_errors(&self) -> Result<(), &'static str> {
@@ -186,8 +193,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Adt(adt) => self.visit_adt(adt),
                 Decl::Const(co) => {}
                 Decl::Import(_) => {
-                    // TODO: spawn task to parse file...
-                    todo!()
+                    while let Ok(Ok((count, item))) = self.rcv.as_ref().unwrap().recv() {
+                        self.visit_decl(item);
+                        if count == 0 {
+                            break;
+                        }
+                    }
                 }
             }
         }
