@@ -126,7 +126,6 @@ fn process_file<'a>(
 }
 
 /// Run it!
-#[tokio::main]
 fn main() {
     // std::panic::set_hook(Box::new(|panic_info| {
     //     let _: Option<()> = try {
@@ -211,7 +210,7 @@ fn main() {
         //         }
         //     }
         // }
-        match process_file(f, &matches).await {
+        match process_file(f, &matches) {
             Ok(_) => {}
             Err(e) => {
                 errors += 1;

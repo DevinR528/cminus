@@ -709,6 +709,15 @@ pub enum Adt {
     Enum(Enum),
 }
 
+impl Adt {
+    fn ident(&self) -> Ident {
+        match self {
+            Adt::Struct(it) => it.ident,
+            Adt::Enum(it) => it.ident,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Generic {
     pub ident: String,
@@ -805,6 +814,19 @@ pub enum Decl {
     Impl(Impl),
     Const(Const),
     Import(Path),
+}
+
+impl Decl {
+    crate fn name(&self) -> Ident {
+        match self {
+            Decl::Adt(it) => it.ident(),
+            Decl::Func(it) => it.ident,
+            Decl::Trait(it) => it.path.segs[0],
+            Decl::Impl(it) => it.path.segs[0],
+            Decl::Const(it) => it.ident,
+            Decl::Import(it) => it.segs[0],
+        }
+    }
 }
 
 impl Spany for Decl {}
