@@ -644,7 +644,7 @@ pub enum Stmt {
     /// Variable declaration `int x;`
     Const(Const),
     /// Assignment `lval = rval;`
-    Assign { lval: Expression, rval: Expression, is_let: bool },
+    Assign { lval: Expression, rval: Expression, ty: Option<Type>, is_let: bool },
     /// Assignment operations `lval += rval;`
     AssignOp { lval: Expression, rval: Expression, op: BinOp },
     /// A call statement `call(arg1, arg2)`

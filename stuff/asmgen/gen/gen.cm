@@ -1,0 +1,15 @@
+linked fn write<T>(_: T);
+
+fn out<T>(a: T): T {
+    return a;
+}
+
+fn main() {
+    let x = 10;
+    // let a = out(x); // TODO: make this work using inference
+    let a = out::<int>(x);
+    write::<int>(a);
+
+    let b = out::<string>("stringy");
+    write::<string>(b);
+}
