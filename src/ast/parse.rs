@@ -80,6 +80,10 @@ impl<'a> AstBuilder<'a> {
                             let item = self.parse_fn()?;
                             self.items.push(item);
                         }
+                        kw::Linked => {
+                            let item = self.parse_linked_fn()?;
+                            self.items.push(item);
+                        }
                         kw::Impl => {
                             let item = self.parse_impl()?;
                             self.items.push(item);
@@ -196,6 +200,65 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
 
         let stmts = self.make_block()?;
+
+        let span = ast::to_rng(start..self.input_idx);
+
+        Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
+            .into_spanned(span))
+    }
+
+    // Parse `fn name<T>(it: T) -> int { .. }` with or without generics.
+    fn parse_linked_fn(&mut self) -> ParseResult<ast::Declaration> {
+        self.push_call_stack("parse_linked_fn");
+        let start = self.input_idx;
+
+        self.eat_if_kw(kw::Linked);
+        self.eat_whitespace();
+
+        self.eat_if_kw(kw::Fn);
+        self.eat_whitespace();
+
+        let ident = self.make_ident()?;
+
+        let generics = self.make_generics()?;
+
+        self.eat_if(&TokenMatch::OpenParen);
+        self.eat_whitespace();
+
+        let params = if !self.eat_if(&TokenMatch::CloseParen) {
+            self.make_params(&generics)?
+        } else {
+            vec![]
+        };
+
+        self.eat_if(&TokenMatch::CloseParen);
+        self.eat_whitespace();
+
+        let ret = if self.eat_if(&TokenMatch::Colon) {
+            self.eat_whitespace();
+            // @cleanup: this is kinda hacky (we do this here, traits and make_params)
+            // Not sure if this is appropriate at parse time?
+            let mut ty = self.make_ty()?;
+            if let ast::Ty::Path(p) = &mut ty.val {
+                if p.segs.len() == 1 {
+                    if let Some(generic) = generics.iter().find(|g| g.ident == p.segs[0]) {
+                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
+                    }
+                }
+            }
+            ty
+        } else {
+            self.eat_whitespace();
+            ast::Ty::Void.into_spanned(self.curr_span())
+        };
+        self.eat_whitespace();
+
+        let span = self.curr_span();
+        let stmts = if self.eat_if(&TokenMatch::Semi) {
+            ast::Block { stmts: vec![], span }
+        } else {
+            self.make_block()?
+        };
 
         let span = ast::to_rng(start..self.input_idx);
 
