@@ -167,15 +167,28 @@ impl<'a> AstBuilder<'a> {
         self.eat_if(&TokenMatch::OpenParen);
         self.eat_whitespace();
 
-        let params =
-            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
+        let params = if !self.eat_if(&TokenMatch::CloseParen) {
+            self.make_params(&generics)?
+        } else {
+            vec![]
+        };
 
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
 
         let ret = if self.eat_if(&TokenMatch::Colon) {
             self.eat_whitespace();
-            self.make_ty()?
+            // @cleanup: this is kinda hacky (we do this here, traits, impls and make_params)
+            // Not sure if this is appropriate at parse time?
+            let mut ty = self.make_ty()?;
+            if let ast::Ty::Path(p) = &mut ty.val {
+                if p.segs.len() == 1 {
+                    if let Some(generic) = generics.iter().find(|g| g.ident == p.segs[0]) {
+                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
+                    }
+                }
+            }
+            ty
         } else {
             self.eat_whitespace();
             ast::Ty::Void.into_spanned(self.curr_span())
@@ -296,7 +309,7 @@ impl<'a> AstBuilder<'a> {
     /// Parse `fn name(it: T) -> int;` with or without generics.
     ///
     /// The `gen` list allows the function to use the generics declared at the trait scope.
-    fn make_trait_fn(&mut self, gen: &[ast::Generic]) -> ParseResult<ast::TraitMethod> {
+    fn make_trait_fn(&mut self, gens: &[ast::Generic]) -> ParseResult<ast::TraitMethod> {
         self.push_call_stack("make_trait_fn");
         let start = self.input_idx;
 
@@ -309,9 +322,7 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
 
         let mut params =
-            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
-
-        for param in &mut params {}
+            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params(gens)? } else { vec![] };
 
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
@@ -320,10 +331,10 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             let mut ty = self.make_ty()?;
             if let ast::Ty::Path(p) = &mut ty.val {
-                if p.segs.len() == 1
-                    && gen.iter().any(|g| g.bound.is_none() && g.ident == p.segs[0])
-                {
-                    ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
+                if p.segs.len() == 1 {
+                    if let Some(generic) = gens.iter().find(|g| g.ident == p.segs[0]) {
+                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
+                    }
                 }
             }
             ty
@@ -340,7 +351,7 @@ impl<'a> AstBuilder<'a> {
             ast::TraitMethod::Default(ast::Func {
                 ident,
                 ret,
-                generics: gen.to_vec(),
+                generics: gens.to_vec(),
                 params,
                 stmts,
                 span,
@@ -351,7 +362,7 @@ impl<'a> AstBuilder<'a> {
             ast::TraitMethod::NoBody(ast::Func {
                 ident,
                 ret,
-                generics: gen.to_vec(),
+                generics: gens.to_vec(),
                 params,
                 stmts,
                 span,
@@ -1012,8 +1023,8 @@ impl<'a> AstBuilder<'a> {
         self.push_call_stack("make_block");
         let start = self.input_idx;
         let mut stmts = vec![];
-        // println!("{:?}", self.curr);
-        // println!("{:?}", self.tokens);
+
+        // If the function body is empty
         if self.cmp_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]) {
             self.eat_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]);
             let span = ast::to_rng(start..self.curr_span().start);
@@ -1069,12 +1080,21 @@ impl<'a> AstBuilder<'a> {
         let lval = self.make_lh_expr()?;
         self.eat_whitespace();
 
+        let ty = if self.eat_if(&TokenMatch::Colon) {
+            self.eat_whitespace();
+            let ty = Some(self.make_ty()?);
+            self.eat_whitespace();
+            ty
+        } else {
+            None
+        };
+
         self.eat_if(&TokenMatch::Eq);
         self.eat_whitespace();
 
         let rval = self.make_expr()?;
 
-        Ok(ast::Stmt::Assign { lval, rval, is_let: true })
+        Ok(ast::Stmt::Assign { lval, rval, ty, is_let: true })
     }
 
     fn make_if_stmt(&mut self) -> ParseResult<ast::Stmt> {
@@ -1168,7 +1188,7 @@ impl<'a> AstBuilder<'a> {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval, is_let: false }
+                        ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
                     } else {
                         todo!("{}", &self.input[self.input_idx..])
                     }
@@ -1194,7 +1214,7 @@ impl<'a> AstBuilder<'a> {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval, is_let: false }
+                        ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
                     } else {
                         todo!("{}", &self.input[self.input_idx..])
                     }
@@ -1318,19 +1338,34 @@ impl<'a> AstBuilder<'a> {
     }
 
     /// Parse `ident[ws]:[ws]type[ws],[ws]ident: type[ws]` everything inside the parens is optional.
-    fn make_params(&mut self) -> ParseResult<Vec<ast::Param>> {
+    fn make_params(&mut self, gens: &[ast::Generic]) -> ParseResult<Vec<ast::Param>> {
         self.push_call_stack("make_params");
         let mut params = vec![];
         loop {
             let start = self.input_idx;
+
+            // TODO: if tuples or fn pointer are types this will break
+            // If we have a trailing comma this will prevent us from looping and extra time
+            if self.eat_if(&TokenMatch::CloseParen) {
+                break;
+            }
+
             let ident = self.make_ident()?;
 
             self.eat_if(&TokenMatch::Colon);
             self.eat_whitespace();
 
-            let ty = self.make_ty()?;
+            let mut ty = self.make_ty()?;
+            if let ast::Ty::Path(p) = &mut ty.val {
+                if p.segs.len() == 1 {
+                    if let Some(generic) = gens.iter().find(|g| g.ident == p.segs[0]) {
+                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
+                    }
+                }
+            }
 
             let span = ast::to_rng(start..self.curr_span().end);
+
             params.push(ast::Param { ident, ty, span });
 
             self.eat_whitespace();
@@ -1589,7 +1624,7 @@ impl<'a> AstBuilder<'a> {
             }
             // TokenKind::Lt => {}
             // TokenKind::Gt => {}
-            tkn => todo!("Unknown token {:?} {}", tkn, &self.input[self.input_idx..]),
+            tkn => todo!("Unknown token {:?} {}", tkn, &self.call_stack.join("\n")),
         })
     }
 
@@ -1641,8 +1676,13 @@ impl<'a> AstBuilder<'a> {
             ]);
             let just_type_args =
                 self.cmp_seq_ignore_ws(&[TokenMatch::Colon, TokenMatch::Colon, TokenMatch::Lt]);
-            // Stops eating `call::<T, U>();` colons
-            if !full_type_args && (!full_type_args && !just_type_args) {
+
+            let is_explicit_type =
+                self.cmp_seq_ignore_ws(&[TokenMatch::Ident, TokenMatch::Colon, TokenMatch::Ident]);
+
+            // Stops eating `call::<T, U>();` colons and stops eating int explicit types
+            // `let x: type = ...`
+            if !(full_type_args || just_type_args || is_explicit_type) {
                 self.eat_seq(&[TokenMatch::Colon, TokenMatch::Colon]);
             } else if just_type_args {
                 break;
@@ -1852,7 +1892,7 @@ const foo: [3; int] = 1;
 #[test]
 fn parse_func_header() {
     let input = r#"
-fn add(x: int, y: int) -> int {  }
+fn add(x: int, y: int): int {  }
 "#;
     let mut parser = AstBuilder::new(input);
     parser.parse().unwrap();
@@ -1914,7 +1954,7 @@ enum foo<T, X, U> {
 fn impl_decl() {
     let input = r#"
 impl add<string> {
-    fn add(a: string, b: string) -> string {
+    fn add(a: string, b: string): string {
         return concat(a, b);
     }
 }
@@ -1938,7 +1978,7 @@ import ::bar::baz;
 #[test]
 fn parse_multi_binop_ident() {
     let input = r#"
-fn add(x: int, y: int) -> int {
+fn add(x: int, y: int): int {
     let z = a + b * (c + d);
     return z;
 }
@@ -1951,7 +1991,7 @@ fn add(x: int, y: int) -> int {
 #[test]
 fn parse_multi_binop_lit() {
     let input = r#"
-fn add(x: int, y: int) -> int {
+fn add(x: int, y: int): int {
     let z = 1 + 2 * 5 + 6;
     return z;
 }
@@ -2207,4 +2247,17 @@ fn add() {
     } else {
         panic!("assert failed for function call with import path")
     }
+}
+
+#[test]
+fn parse_type_assign() {
+    let input = r#"
+fn add() {
+    let y: string = call();
+    let z: bool = !x && false || !y;
+}
+"#;
+    let mut parser = AstBuilder::new(input);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items());
 }

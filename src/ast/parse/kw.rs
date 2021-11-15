@@ -77,6 +77,7 @@ keywords! {
     Impl:               "impl",
     In:                 "in",
     Let:                "let",
+    Linked:             "linked",
     Loop:               "loop",
     Match:              "match",
     Mod:                "mod",
