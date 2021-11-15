@@ -1163,46 +1163,59 @@ impl Ty {
     }
 }
 
+fn lower_item(
+    item: &ty::Declaration,
+    tyctx: &TyCheckRes<'_, '_>,
+    fold: &Folder,
+    lowered: &mut Vec<Item>,
+) {
+    match &item.val {
+        ty::Decl::Adt(_adt) => {}
+        ty::Decl::Func(func) => {
+            // TODO: implement these in the lang
+            if func.ident == "write" || func.ident == "read" {
+                return;
+            }
+            if func.generics.is_empty() {
+                lowered.push(Item::Func(Func::lower(tyctx, fold, func)));
+            } else {
+                // Monomorphize
+                for mono in tyctx.mono_func(func) {
+                    lowered.push(Item::Func(Func::lower(tyctx, fold, &mono)));
+                }
+            }
+        }
+        ty::Decl::Impl(i) => {
+            let mut specialized = i.method.clone();
+            specialized.ident = Ident::new(
+                i.method.ident.span(),
+                &format!(
+                    "{}{}",
+                    i.method.ident,
+                    i.type_arguments.iter().map(|t| t.val.to_string()).collect::<String>()
+                ),
+            );
+            lowered.push(Item::Func(Func::lower(tyctx, fold, &specialized)));
+        }
+        ty::Decl::Const(var) => lowered.push(Item::Const(Const {
+            ty: Ty::lower(tyctx, &var.ty.val),
+            ident: var.ident,
+            init: Expr::lower(tyctx, fold, var.init.clone()),
+            is_global: true,
+        })),
+        _ => {}
+    }
+}
+
 crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Vec<Item> {
     let fold = Folder::default();
     let mut lowered = vec![];
-    for item in items {
-        match &item.val {
-            ty::Decl::Adt(_adt) => {}
-            ty::Decl::Func(func) => {
-                // TODO: implement these in the lang
-                if func.ident == "write" || func.ident == "read" {
-                    continue;
-                }
-                if func.generics.is_empty() {
-                    lowered.push(Item::Func(Func::lower(&tyctx, &fold, func)));
-                } else {
-                    // Monomorphize
-                    for mono in tyctx.mono_func(func) {
-                        lowered.push(Item::Func(Func::lower(&tyctx, &fold, &mono)));
-                    }
-                }
-            }
-            ty::Decl::Impl(i) => {
-                let mut specialized = i.method.clone();
-                specialized.ident = Ident::new(
-                    i.method.ident.span(),
-                    &format!(
-                        "{}{}",
-                        i.method.ident,
-                        i.type_arguments.iter().map(|t| t.val.to_string()).collect::<String>()
-                    ),
-                );
-                lowered.push(Item::Func(Func::lower(&tyctx, &fold, &specialized)));
-            }
-            ty::Decl::Const(var) => lowered.push(Item::Const(Const {
-                ty: Ty::lower(&tyctx, &var.ty.val),
-                ident: var.ident,
-                init: Expr::lower(&tyctx, &fold, var.init.clone()),
-                is_global: true,
-            })),
-            _ => {}
-        }
+
+    for item in tyctx.imported_items.iter() {
+        lower_item(item, &tyctx, &fold, &mut lowered)
+    }
+    for item in items.iter() {
+        lower_item(item, &tyctx, &fold, &mut lowered);
     }
     lowered
 }
