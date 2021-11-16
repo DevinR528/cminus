@@ -1,5 +1,9 @@
 # TODO
 
+## Refactor
+  
+  - split typeck into infer, stmt check, expr collect files
+
   - Get imports working robustly
     - get multiple level paths working (`import ::foo::bar::baz::item;`)
     - std library

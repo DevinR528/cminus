@@ -1,0 +1,11 @@
+fn write(_: int) {}
+
+fn main() {
+    let x = 25;
+    let y = 5;
+    while (x > y) {
+        write(x);
+        x -= y;
+    }
+    write(x);
+}
