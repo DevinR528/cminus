@@ -1,14 +1,17 @@
-void main () {
- float a[10];
- int i;
+linked fn write(_: float);
 
-	a[3] = 4.0;
-	write(a[3]);
-	i = 3.0;
-	a[i] = 7.0;
-	write(a[i]);
-	i = i + 2;
-	a[i] = 22.0;
-	write(a[5]);
-	exit;
+fn main () {
+    let a = [0.0; 10];
+    let i = 3;
+
+    a[3] = 4.0;
+    write(a[3]);
+
+    i = 3;
+    a[i] = 7.0;
+    write(a[i]);
+
+    i += 2;
+    a[i] = 22.0;
+    write(a[5]);
 }

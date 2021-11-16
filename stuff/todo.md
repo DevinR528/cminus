@@ -1,9 +1,12 @@
 # TODO
 
-## Refactor
+## Code/Refactor
   
-  - split typeck into infer, stmt check, expr collect files
+  - split typeck into infer, stmt check, expr collect files and cleanup
+  - use parking_lot for `Mutex` and crossbeam for `Sender/Receiver/channel` stuff
+  - Refactor `asmgen.rs` into something readable
 
+## Compiler work
   - Get imports working robustly
     - get multiple level paths working (`import ::foo::bar::baz::item;`)
     - std library
