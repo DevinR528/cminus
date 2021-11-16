@@ -167,9 +167,11 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
                 }
             }
         }
-        Stmt::While { cond, stmts } => {
+        Stmt::While { cond, blk } => {
             visit.visit_expr(cond);
-            visit.visit_stmt(stmt);
+            for stmt in &blk.stmts {
+                visit.visit_stmt(stmt);
+            }
         }
         Stmt::Match { expr, arms } => {
             visit.visit_expr(expr);
@@ -412,7 +414,7 @@ crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut S
                 }
             }
         }
-        Stmt::While { cond, stmts } => {
+        Stmt::While { cond, blk: stmts } => {
             visit.visit_expr(cond);
             for stmt in &mut stmts.stmts {
                 visit.visit_stmt(stmt);

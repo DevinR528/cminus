@@ -162,6 +162,27 @@ impl<'input> TyCheckRes<'_, 'input> {
             .or_else(|| self.global.get(&id))
             .cloned()
     }
+
+    crate fn patch_generic_from_path(&self, ty: &Type, span: Range) -> Type {
+        // Hack: until import/name resolution is a thing
+        //
+        // Then have another struct that walks all types and can check if there
+        // is a matching generic in the scope and convert Path(T) -> Generic {T}
+        if let Ty::Path(p) = &ty.val {
+            if let Some(gens_in_scope) = self
+                .var_func
+                .get_fn_by_span(span)
+                .and_then(|name| self.var_func.name_func.get(&name))
+                .map(|f| &f.generics)
+            {
+                if let Some(gen) = gens_in_scope.iter().find(|gty| gty.ident == p.segs[0]) {
+                    return Ty::Generic { ident: gen.ident, bound: gen.bound.clone() }
+                        .into_spanned(ty.span);
+                }
+            }
+        }
+        ty.clone()
+    }
 }
 
 // @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
@@ -195,9 +216,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Import(_) => {
                     let mut items = vec![];
                     while let Ok(Ok((count, item))) = self.rcv.as_ref().unwrap().recv() {
-                        println!("{:?}\n", item);
-                        println!("{}", count);
-
                         items.push(item);
                         if count == 0 {
                             break;
@@ -626,7 +644,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let lhs_ty = self.expr_ty.get(&**lhs);
                 let rhs_ty = self.expr_ty.get(&**rhs);
 
-                // println!("BINOP {:?} == {:?}", lhs_ty, rhs_ty);
                 if let Some(ty) = fold_ty(
                     self,
                     resolve_ty(self, lhs, lhs_ty).as_ref(),
@@ -697,6 +714,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let mut gen_arg_map = HashMap::default();
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
+                    // TODO: name resolution
+                    let ty_arg = self.patch_generic_from_path(ty_arg, expr.span).val;
                     // Don't use the same stack for each iteration
                     let mut stack = stack.clone();
 
@@ -713,7 +732,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .collect::<Vec<_>>();
 
                     self.generic_res.collect_generic_usage(
-                        &ty_arg.val,
+                        &ty_arg,
                         gen_arg_set_id,
                         gen_arg_idx,
                         &arguments,
@@ -722,7 +741,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                     // println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
 
-                    gen_arg_map.insert(gen.ident, ty_arg.val.clone());
+                    gen_arg_map.insert(gen.ident, ty_arg.clone());
                 }
 
                 let func_params = self
@@ -768,8 +787,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
                 }
 
-                let f = self.var_func.name_func.get(ident).expect("function is defined");
-
                 // This is commented out because of inference
                 // TODO: do more of this
 
@@ -804,6 +821,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::default();
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
+                    let ty_arg = self.patch_generic_from_path(ty_arg, expr.span);
+
                     let gen = &trait_def.generics[gen_arg_idx];
 
                     let arguments = trait_def
@@ -870,7 +889,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 };
                 self.expr_ty.insert(expr, ret_ty);
             }
-            Expr::Value(val) => {}
+            Expr::Value(val) => {
+                // inference collects these
+            }
             Expr::StructInit { path, fields } => {
                 let name = *path.segs.last().unwrap();
                 let struc =
@@ -1443,7 +1464,13 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     }
                 }
             }
-            Stmt::While { cond, stmts } => todo!(),
+            Stmt::While { cond, blk } => {
+                self.visit_expr(cond);
+
+                for s in &blk.stmts {
+                    self.visit_stmt(s);
+                }
+            }
             Stmt::Match { expr: ex, arms } => {
                 self.visit_expr(ex);
                 for arm in arms {
@@ -1486,7 +1513,6 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         self.visit_expr(ex);
                     }
                     if let Some(t) = ty.index_dim(self.tcxt, exprs, expr.span) {
-                        println!("{:?}", t);
                         self.tcxt.expr_ty.insert(expr, t);
                     }
                 } else {
@@ -1533,9 +1559,10 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
                 let func = self.tcxt.var_func.name_func.get(&path.segs[0]);
                 if let Some(func) = func {
+                    let ret_val = self.tcxt.patch_generic_from_path(&func.ret, expr.span).val;
                     // If the function is generic do complicated stuff
-                    if func.ret.val.has_generics() {
-                        let mut subed_ty = func.ret.val.clone();
+                    if ret_val.has_generics() {
+                        let mut subed_ty = ret_val;
 
                         // If there are no explicit type args rely on inference of the arguments
                         if type_args.is_empty() {
@@ -1567,7 +1594,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                 }
                             });
                             for (idx, gen) in idx_gen {
-                                subed_ty.subst_generic(gen, &type_args[idx].val);
+                                let ty_arg =
+                                    self.tcxt.patch_generic_from_path(&type_args[idx], expr.span);
+                                subed_ty.subst_generic(gen, &ty_arg.val);
                             }
                         }
                         self.tcxt.expr_ty.insert(expr, subed_ty);
@@ -1739,7 +1768,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     }
                 }
             }
-            Stmt::While { cond, stmts } => {
+            Stmt::While { cond, blk } => {
                 let cond_ty =
                     self.tcxt.expr_ty.get(cond).and_then(|t| resolve_ty(self.tcxt, cond, Some(t)));
 
@@ -1757,7 +1786,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         )
                     );
                 }
-                for stmt in &stmts.stmts {
+                for stmt in &blk.stmts {
                     self.visit_stmt(stmt);
                 }
             }
@@ -1872,17 +1901,15 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::Ret(expr) => {
-                let mut ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
-                let mut name = None;
+                let mut ret_ty =
+                    resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr)).map(|t| {
+                        self.tcxt.patch_generic_from_path(&t.into_spanned(DUMMY), stmt.span).val
+                    });
+
                 let func_ret_ty = self.tcxt.var_func.get_fn_by_span(expr.span).and_then(|fname| {
-                    name = Some(fname);
+                    self.tcxt.var_func.func_return.insert(fname);
                     self.tcxt.var_func.name_func.get(&fname).map(|f| f.ret.val.clone())
                 });
-                if let Some(name) = name {
-                    self.tcxt.var_func.func_return.insert(name);
-                } else {
-                    todo!("what happens if we can't find the ret val of a func decl when looking up ret stmt")
-                }
 
                 let mut stack = if let Some((def, ident)) = self
                     .tcxt
@@ -1912,7 +1939,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "call with wrong return type\nfound `{}` expected `{}`",
+                            "wrong return type\nfound `{}` expected `{}`",
                             ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
@@ -2446,13 +2473,11 @@ fn fold_ty(
             BinOp::AddAssign | BinOp::SubAssign => {
                 panic!(
                     "{}",
-                    Error::error_with_span(
-                        tcxt,
-                        span,
-                        "cannot assign to a statement, this isn't Rust ;)"
-                    )
+                    Error::error_with_span(tcxt, span, "cannot assign operation to a char")
                 )
             }
+            // HACK: TODO: this is special case for array checking, make this work correctly
+            BinOp::Add => Some(Ty::Char),
             _ => {
                 panic!("{}", Error::error_with_span(tcxt, span, "not a legal operation for `char`"))
             }

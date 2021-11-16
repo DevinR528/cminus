@@ -654,7 +654,7 @@ pub enum Stmt {
     /// If statement `if (expr) { stmts }`
     If { cond: Expression, blk: Block, els: Option<Block> },
     /// While loop `while (expr) { stmts }`
-    While { cond: Expression, stmts: Block },
+    While { cond: Expression, blk: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expression, arms: Vec<MatchArm> },
     /// Return statement `return expr`

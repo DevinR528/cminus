@@ -582,7 +582,7 @@ impl<'a> AstBuilder<'a> {
         })
     }
 
-    /// parse a list of expressions.
+    /// parse a list of expressions, eats trailing whitespace.
     fn make_expr_list(
         &mut self,
         open: &TokenMatch,
@@ -625,12 +625,47 @@ impl<'a> AstBuilder<'a> {
         self.push_call_stack("make_expr");
         self.eat_whitespace();
 
+        // array init
         if self.curr.kind == TokenMatch::OpenBracket {
-            // array init
-            let items = self.make_expr_list(&TokenMatch::OpenBracket, &TokenMatch::CloseBracket)?;
+            if self.cmp_seq_ignore_ws(&[
+                TokenMatch::OpenBracket,
+                TokenMatch::Literal,
+                TokenMatch::Semi,
+            ]) {
+                self.eat_if(&TokenMatch::OpenBracket);
+                self.eat_whitespace();
 
-            let span = ast::to_rng(start..self.curr_span().end);
-            Ok(ast::Expr::ArrayInit { items }.into_spanned(span))
+                let lit = self.make_literal()?;
+                self.eat_whitespace();
+
+                self.eat_if(&TokenMatch::Semi);
+                self.eat_whitespace();
+
+                let count = if let ast::Val::Int(int) = self.make_literal()?.val {
+                    int as usize
+                } else {
+                    return Err(ParseError::Error(
+                        "array literal must must be of the forum`[expr; int]`",
+                        ast::to_rng(start..self.curr_span().start),
+                    ));
+                };
+                self.eat_whitespace();
+                self.eat_if(&TokenMatch::CloseBracket);
+
+                let span = ast::to_rng(start..self.curr_span().end);
+                let lit_span = lit.span;
+                Ok(ast::Expr::ArrayInit {
+                    items: std::iter::repeat(ast::Expr::Value(lit).into_spanned(lit_span))
+                        .take(count)
+                        .collect(),
+                }
+                .into_spanned(span))
+            } else {
+                let items =
+                    self.make_expr_list(&TokenMatch::OpenBracket, &TokenMatch::CloseBracket)?;
+                let span = ast::to_rng(start..self.curr_span().end);
+                Ok(ast::Expr::ArrayInit { items }.into_spanned(span))
+            }
         } else if self.curr.kind == TokenMatch::Lt {
             // trait method calls
             let start = self.curr_span().start;
@@ -1146,6 +1181,11 @@ impl<'a> AstBuilder<'a> {
         if self.eat_if(&TokenMatch::OpenBrace) {
             loop {
                 self.eat_whitespace();
+                // Empty loop body
+                if self.curr.kind == TokenMatch::CloseBrace {
+                    self.eat_if(&TokenMatch::CloseBrace);
+                    break;
+                }
                 stmts.push(self.make_stmt()?);
                 self.eat_whitespace();
 
@@ -1159,7 +1199,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     fn make_stmt(&mut self) -> ParseResult<ast::Statement> {
-        self.push_call_stack("mut ");
+        self.push_call_stack("make_stmt");
         let start = self.input_idx;
         let stmt = if self.eat_if_kw(kw::Let) {
             self.make_assignment()?
@@ -1237,7 +1277,7 @@ impl<'a> AstBuilder<'a> {
         let stmts = self.make_block()?;
         self.eat_whitespace();
 
-        Ok(ast::Stmt::While { cond, stmts })
+        Ok(ast::Stmt::While { cond, blk: stmts })
     }
 
     fn make_match_stmt(&mut self) -> ParseResult<ast::Stmt> {
@@ -1294,7 +1334,31 @@ impl<'a> AstBuilder<'a> {
                         self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
+                    // *=
+                    } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
+                    // /=
+                    } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
+                    // |=
+                    } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
+                    // &=
+                    } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
                     } else if self.curr.kind == TokenMatch::Eq {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
@@ -1320,7 +1384,31 @@ impl<'a> AstBuilder<'a> {
                         self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
+                    // *=
+                    } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
+                    // /=
+                    } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
+                    // |=
+                    } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
+                    // &=
+                    } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
+                        self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
+                        self.eat_whitespace();
+                        let rval = self.make_expr()?;
+                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
                     } else if self.curr.kind == TokenMatch::Eq {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
@@ -1565,8 +1653,8 @@ impl<'a> AstBuilder<'a> {
                         text.remove(0);
                         text.pop();
 
-                        if text.len() == 1 {
-                            Val::Char(self.input_curr().chars().next().unwrap())
+                        if text.replace('\\', "").len() == 1 {
+                            Val::Char(text.chars().next().unwrap())
                         } else {
                             return Err(ParseError::Error(
                                 "multi character `char`",
@@ -1892,15 +1980,30 @@ impl<'a> AstBuilder<'a> {
     /// Check if a sequence matches `iter` ignoring whitespace, non destructively.
     fn cmp_seq_ignore_ws<'i>(&self, mut iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
         let mut iter = iter.into_iter();
-        if self.curr.kind != TokenMatch::Whitespace {
+        if !matches!(
+            self.curr.kind,
+            TokenKind::Whitespace | TokenKind::LineComment { .. } | TokenKind::BlockComment { .. }
+        ) {
             let first = iter.next().unwrap_or(&TokenMatch::Unknown);
             if first != &self.curr.kind {
                 return false;
             }
         }
 
-        let tkns = self.tokens.iter().filter(|t| t.kind != TokenMatch::Whitespace);
-        tkns.zip(iter).all(|(ours, cmp)| cmp == &ours.kind)
+        let tkns = self.tokens.iter().filter(|t| {
+            !matches!(
+                t.kind,
+                TokenKind::Whitespace
+                    | TokenKind::LineComment { .. }
+                    | TokenKind::BlockComment { .. }
+            )
+        });
+        for (cmp, ours) in tkns.zip(iter) {
+            if cmp.kind != *ours {
+                return false;
+            }
+        }
+        true
     }
 
     /// Throw away a sequence of tokens.
@@ -1908,7 +2011,14 @@ impl<'a> AstBuilder<'a> {
     /// Returns true if all the given tokens were matched.
     fn eat_seq_ignore_ws<'i>(&mut self, iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
         for kind in iter {
-            if kind == &self.curr.kind || self.curr.kind == TokenMatch::Whitespace {
+            if kind == &self.curr.kind
+                || matches!(
+                    self.curr.kind,
+                    TokenKind::Whitespace
+                        | TokenKind::LineComment { .. }
+                        | TokenKind::BlockComment { .. }
+                )
+            {
                 self.eat_tkn();
             } else {
                 return false;
