@@ -116,7 +116,7 @@ impl<'a> AstBuilder<'a> {
 
                             if let ast::Decl::Import(path) = &item.val {
                                 // TODO: handle ::foo::bar::item; not just ::foo::item;
-                                let path = path.segs[0].clone();
+                                let path = path.segs[0];
                                 let mut p = std::path::PathBuf::from(self.file);
 
                                 // This is always valid it's just so AstBuilder can impl Default
@@ -621,9 +621,9 @@ impl<'a> AstBuilder<'a> {
     /// - tuples (eventually)
     /// - expression tress
     fn make_expr(&mut self) -> ParseResult<ast::Expression> {
-        let start = self.input_idx;
         self.push_call_stack("make_expr");
         self.eat_whitespace();
+        let start = self.curr_span().start;
 
         // array init
         if self.curr.kind == TokenMatch::OpenBracket {
@@ -849,7 +849,7 @@ impl<'a> AstBuilder<'a> {
         } else if self.curr.kind == TokenMatch::Literal {
             let start = self.curr_span().start;
             let ex = ast::Expr::Value(self.make_literal()?)
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.curr_span().start));
             self.eat_whitespace();
 
             let op = self.make_op()?;
@@ -973,8 +973,8 @@ impl<'a> AstBuilder<'a> {
                 ast::Expr::Array { ident, exprs }
                     .into_spanned(ast::to_rng(start..self.curr_span().end))
             } else {
-                let start = self.curr_span().start;
                 self.eat_whitespace();
+                let start = self.curr_span().start;
 
                 let mut path = self.make_path()?;
                 let is_func_call = (self.cmp_seq_ignore_ws(&[
@@ -1200,7 +1200,7 @@ impl<'a> AstBuilder<'a> {
 
     fn make_stmt(&mut self) -> ParseResult<ast::Statement> {
         self.push_call_stack("make_stmt");
-        let start = self.input_idx;
+        let start = self.curr_span().start;
         let stmt = if self.eat_if_kw(kw::Let) {
             self.make_assignment()?
         } else if self.eat_if_kw(kw::If) {
@@ -1220,7 +1220,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
-        let span = ast::to_rng(start..self.curr_span().start);
+        let span = ast::to_rng(start..self.curr_span().end);
         Ok(stmt.into_spanned(span))
     }
 
@@ -1359,6 +1359,7 @@ impl<'a> AstBuilder<'a> {
                         self.eat_whitespace();
                         let rval = self.make_expr()?;
                         ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
+                    // =
                     } else if self.curr.kind == TokenMatch::Eq {
                         self.eat_if(&TokenMatch::Eq);
                         self.eat_whitespace();
@@ -2414,7 +2415,7 @@ fn add() {
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser
         .parse()
-        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
+        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", input, e))
         .unwrap_or_else(|e| panic!("{}", e));
     println!("{:#?}", parser.items());
 }
@@ -2429,7 +2430,7 @@ fn add() {
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser
         .parse()
-        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
+        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", input, e))
         .unwrap_or_else(|e| panic!("{}", e));
     if let Decl::Func(func) = &parser.items()[0].val {
         if let Stmt::Assign { rval, .. } = &func.stmts.stmts[0].val {
@@ -2458,7 +2459,7 @@ fn add() {
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser
         .parse()
-        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", &input, e))
+        .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", input, e))
         .unwrap_or_else(|e| panic!("{}", e));
     if let Decl::Func(func) = &parser.items()[0].val {
         let mut x = input.split("let");

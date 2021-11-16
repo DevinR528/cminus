@@ -331,6 +331,7 @@ impl<'ctx> CodeGen<'ctx> {
         arr: Location,
         exprs: &'ctx [Expr],
         ele_size: usize,
+        by_value: bool,
     ) -> Option<Location> {
         Some(if let Location::NumberedOffset { offset, reg } = arr {
             // Const indexing
@@ -347,29 +348,29 @@ impl<'ctx> CodeGen<'ctx> {
             // TODO: add bounds checking maybe
             // Dynamic indexing
             } else if exprs.len() == 1 {
-                let rval = self.build_value(&exprs[0], None)?;
+                let index_val = self.build_value(&exprs[0], None)?;
 
                 let tmpidx = self.free_reg();
                 let array_reg = self.free_reg();
-                // movq -16(%rbp), %rdx // array
-                // movq -8(%rbp), %rbx // index * ele_size
-                // addq %rdx, %rbx
-                // movq (%rbx), %rax
+                // lea -16(%rbp), %rxx // array
+                // movq -8(%rbp), %rxy // index * ele_size
+                // addq %rxy, %rxx
+                // movq (%rxx), %rax
                 self.asm_buf.extend_from_slice(&[
                     Instruction::SizedMov {
-                        src: rval,
+                        src: index_val,
                         dst: Location::Register(tmpidx),
                         size: exprs[0].type_of().size(),
-                    },
-                    Instruction::SizedMov {
-                        src: arr,
-                        dst: Location::Register(array_reg),
-                        size: ele_size,
                     },
                     Instruction::Math {
                         src: Location::Const { val: Val::Int(ele_size as isize) },
                         dst: Location::Register(tmpidx),
                         op: BinOp::Mul,
+                    },
+                    Instruction::Load {
+                        src: arr,
+                        dst: Location::Register(array_reg),
+                        size: ele_size,
                     },
                     Instruction::Math {
                         src: Location::Register(tmpidx),
@@ -377,7 +378,11 @@ impl<'ctx> CodeGen<'ctx> {
                         op: BinOp::Add,
                     },
                     Instruction::SizedMov {
-                        src: Location::NumberedOffset { offset: 0, reg: array_reg },
+                        src: if by_value {
+                            Location::NumberedOffset { offset: 0, reg: array_reg }
+                        } else {
+                            Location::Register(array_reg)
+                        },
                         dst: Location::Register(tmpidx),
                         size: ele_size,
                     },
@@ -458,6 +463,7 @@ impl<'ctx> CodeGen<'ctx> {
                 .difference(&self.used_regs)
                 .find(|r| !matches!(r, Register::RAX | Register::RSI | Register::RDI))
                 .expect("ran out of registers");
+
             self.used_regs.insert(free);
             self.asm_buf.push(Instruction::Mov {
                 src: val,
@@ -466,6 +472,7 @@ impl<'ctx> CodeGen<'ctx> {
             });
             val = Location::Register(free);
         }
+
         if matches!(expr_type, Ty::Float) {
             if self.total_stack % 16 != 0 {
                 self.total_stack += 8;
@@ -521,6 +528,30 @@ impl<'ctx> CodeGen<'ctx> {
                         op: BinOp::Sub,
                     });
                 }
+            } else if let Location::Register(reg) = &val {
+                self.asm_buf.extend_from_slice(&[
+                    Instruction::Push {
+                        loc: val.clone(),
+                        size: 8,
+                        comment: "register is not valid cvtss2sd loc",
+                    },
+                    Instruction::Cvt {
+                        src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                        dst: Location::FloatReg(FloatRegister::XMM0),
+                    },
+                    Instruction::Pop { loc: val, size: 8, comment: "remove tmp from stack" },
+                    Instruction::Mov {
+                        src: ONE,
+                        dst: Location::Register(Register::RAX),
+                        comment: "",
+                    },
+                    Instruction::Load {
+                        src: Location::NamedOffset(fmt_str),
+                        dst: Location::Register(Register::RDI),
+                        size,
+                    },
+                    Instruction::Call(Location::Label("printf".to_owned())),
+                ]);
             } else {
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Cvt { src: val, dst: Location::FloatReg(FloatRegister::XMM0) },
@@ -725,7 +756,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     unreachable!("array type must be array")
                 };
-                self.index_arr(arr, exprs, ele_size)?
+                self.index_arr(arr, exprs, ele_size, false)?
             }
             LValue::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
         })
@@ -739,7 +770,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
-                self.index_arr(arr, exprs, ele_size)?
+                self.index_arr(arr, exprs, ele_size, true)?
             }
             Expr::Urnary { op, expr, ty } => {
                 let val = self.build_value(expr, None)?;
@@ -1328,6 +1359,16 @@ impl<'ctx> CodeGen<'ctx> {
                                 size,
                             },
                         ]);
+                    } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
+                        self.clear_regs_except(Some(&lloc));
+                        println!("{:?} -> {:?}", lloc, rloc);
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: Location::NumberedOffset { offset: 0, reg: *reg },
+                            size,
+                        }]);
                     } else {
                         self.clear_regs_except(Some(&lloc));
 

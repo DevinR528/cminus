@@ -1,14 +1,18 @@
-linked fn write(_: char);
+linked fn write<T>(_: T);
 
 fn main() {
-    let a = ['p'; 8];
+    let a = ['D'; 8];
     let i = 7;
 
     a[7] = 'a';
-    write(a[3]);
+    write::<char>(a[3]);
+    write::<char>(a[i]);
+
     a[i] = 'd';
-    write(a[i]);
+    write::<char>(a[i]);
+    write::<char>(a[7]);
+
     i -= 2;
     a[i] = 'x';
-    write(a[5]);
+    write::<char>(a[5]);
 }
