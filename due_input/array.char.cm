@@ -1,0 +1,14 @@
+linked fn write(_: char);
+
+fn main() {
+    let a = ['p'; 8];
+    let i = 7;
+
+    a[7] = 'a';
+    write(a[3]);
+    a[i] = 'd';
+    write(a[i]);
+    i -= 2;
+    a[i] = 'x';
+    write(a[5]);
+}
