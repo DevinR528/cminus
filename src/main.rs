@@ -14,7 +14,7 @@
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
-#![allow(clippy::if_then_panic, unused)]
+#![allow(unused)]
 
 use std::{
     alloc::System,
@@ -59,8 +59,8 @@ fn process_file<'a>(
     let assemble = args.is_present("assemble");
     let output = args.value_of("output");
 
-    let input = std::fs::read_to_string(path)?;
-    // Read the file to string
+    // Tabs mess up our error messages
+    let input = std::fs::read_to_string(path)?.replace('\t', "");
 
     let mut parse_mem = Region::new(GLOBAL);
     let parse_time = Instant::now();

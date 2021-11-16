@@ -1,14 +1,16 @@
-void main () {
- int a[10];
- int i;
+linked fn write(_: int);
 
-	a[3] = 4;
-	write(a[3]);
-	i = 3;
-	a[i] = 7;
-	write(a[i]);
-	i = i + 2;
-	a[i] = 22;
-	write(a[5]);
-	exit;
+fn main () {
+    let a = [0; 10];
+    let i = 3;
+
+    a[3] = 4;
+    write(a[3]);
+
+    i = 3;
+    a[i] = 7;
+    write(a[i]);
+    i += 2;
+    a[i] = 22;
+    write(a[5]);
 }
