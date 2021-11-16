@@ -849,8 +849,14 @@ impl Stmt {
                 is_let,
             },
             ty::Stmt::Call(ty::Spanned {
-                val: ty::Expr::Call { path, args, type_args }, ..
+                val: ty::Expr::Call { path, args, mut type_args },
+                ..
             }) => {
+                // TODO: path/name resolution
+                for ty in type_args.iter_mut() {
+                    *ty = tyctx.patch_generic_from_path(ty, s.span);
+                }
+
                 let ident = path.segs.last().unwrap();
                 if type_args.iter().all(|arg| !arg.val.has_generics()) {
                     TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
@@ -912,7 +918,7 @@ impl Stmt {
                 blk: Block::lower(tyctx, fold, blk),
                 els: els.map(|e| Block::lower(tyctx, fold, e)),
             },
-            ty::Stmt::While { cond, stmts } => Stmt::While {
+            ty::Stmt::While { cond, blk: stmts } => Stmt::While {
                 cond: Expr::lower(tyctx, fold, cond),
                 stmts: Block::lower(tyctx, fold, stmts),
             },

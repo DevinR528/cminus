@@ -48,8 +48,13 @@ fn process_file<'a>(
     path: &str,
     args: &ArgMatches<'a>,
 ) -> Result<(), Box<dyn std::error::Error + 'a>> {
-    let need_stats = args.is_present("stats");
-    let verbose = args.is_present("verbose");
+    let mut need_stats = args.is_present("stats");
+    let verbose = if args.is_present("verbose") {
+        need_stats = true;
+        true
+    } else {
+        false
+    };
     let backend = args.value_of("backend");
     let assemble = args.is_present("assemble");
     let output = args.value_of("output");
