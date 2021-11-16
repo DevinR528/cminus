@@ -1,0 +1,13 @@
+void main() {
+ char a;
+
+    write("enter a:");
+    read(a);
+    if (a < 'n') {
+	write('a');
+    }
+    else {
+	write('z');
+    }
+	exit;
+}
