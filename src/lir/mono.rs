@@ -21,13 +21,15 @@ struct GenSubstitution<'a> {
 
 impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
     fn visit_func(&mut self, func: &'ast mut ty::Func) {
+        // TODO: this is REALLY bad since we lock anytime we do something like this, and making a
+        // bunch of thrown away allocations to the interner isn't ideal
         func.ident = Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty));
         crate::visit::walk_mut_func(self, func);
     }
 
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         if let Some(t) = self.tcxt.expr_ty.get(expr) {
-            if t.generic() == self.generic.ident {
+            if t.has_generics() && t.generic() == self.generic.ident {
                 self.tcxt.mono_expr_ty.borrow_mut().insert(expr.clone(), self.ty.clone());
             }
         }

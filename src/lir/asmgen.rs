@@ -352,7 +352,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let tmpidx = self.free_reg();
                 let array_reg = self.free_reg();
                 // movq -16(%rbp), %rdx // array
-                // movq -8(%rbp), %rbx // index
+                // movq -8(%rbp), %rbx // index * ele_size
                 // addq %rdx, %rbx
                 // movq (%rbx), %rax
                 self.asm_buf.extend_from_slice(&[
@@ -1152,7 +1152,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Value(val) => match val {
                 Val::Float(_) | Val::Int(_) | Val::Bool(_) => Location::Const { val: val.clone() },
-                Val::Char(_) => todo!(),
+                Val::Char(c) => Location::Const { val: Val::Int(*c as isize) },
                 Val::Str(s) => {
                     let cleaned = s.name().replace("\"", "");
                     let name = format!(".Sstring_{}", self.asm_buf.len());
@@ -1411,7 +1411,29 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.asm_buf.push(Instruction::Label(merge_label));
             }
-            Stmt::While { .. } => todo!(),
+            Stmt::While { cond, stmts } => {
+                let uncond_label = format!(".uncondwhile{}", self.asm_buf.len());
+                let uncond_loc = Location::Label(uncond_label.clone());
+                self.asm_buf.push(Instruction::Jmp(uncond_loc));
+
+                let name = format!(".jmpwhile{}", self.asm_buf.len());
+                let loop_body = Location::Label(name.clone());
+                self.asm_buf.push(Instruction::Label(name));
+                // Start loop body
+                for stmt in &stmts.stmts {
+                    self.gen_statement(stmt);
+                }
+
+                self.asm_buf.push(Instruction::Label(uncond_label));
+                let cond_val = self.build_value(cond, None).unwrap();
+                // Check if true
+                self.asm_buf.push(Instruction::Cmp {
+                    src: Location::Const { val: Val::Int(1) },
+                    dst: cond_val,
+                });
+                // Jump back to the loop body
+                self.asm_buf.push(Instruction::CondJmp { loc: loop_body, cond: JmpCond::Eq });
+            }
             Stmt::Match { expr, arms, ty: _ } => {
                 let val = self.build_value(expr, None).unwrap();
 
