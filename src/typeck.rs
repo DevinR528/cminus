@@ -459,7 +459,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.errors.push(Error::error_with_span(
                     self,
                     var.span,
-                    &format!("duplicate variable name `{}`", var.ident),
+                    &format!("[E0w] duplicate variable name `{}`", var.ident),
                 ));
             }
         } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {

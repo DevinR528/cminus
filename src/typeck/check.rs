@@ -75,7 +75,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "assign to expression of wrong type\nfound `{}` expected `{}`",
+                            "[E0tc] assign to expression of wrong type\nfound `{}` expected `{}`",
                             orig_rty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             orig_lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
@@ -103,7 +103,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         Error::error_with_span(
                             self.tcxt,
                             stmt.span,
-                            "condition of if must be of type bool",
+                            "[E0tc] condition of if must be of type bool",
                         )
                     );
                 }
@@ -243,7 +243,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             self.tcxt,
                             stmt.span,
                             &format!(
-                                "not a valid match type found: `{}`",
+                                "[E0tc] not a valid match type found: `{}`",
                                 match_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                             ),
                         )
@@ -289,7 +289,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "wrong return type\nfound `{}` expected `{}`",
+                            "[E0tc] wrong return type\nfound `{}` expected `{}`",
                             ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
@@ -306,7 +306,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt,
                         stmt.span,
                         &format!(
-                            "return type must be void `{}`",
+                            "[E0tc] return type must be void `{}`",
                             func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                         ),
                     ));
@@ -424,7 +424,7 @@ fn check_used_enum_generics(
                             tcxt,
                             span,
                             &format!(
-                                "enum `{}::{}` found with wrong items \nfound `{}` expected `{}`",
+                                "[E0tc] enum `{}::{}` found with wrong items \nfound `{}` expected `{}`",
                                 ident,
                                 variant,
                                 dumb.map_or("<unknown>".to_owned(), |t| t.to_string()),
@@ -486,7 +486,7 @@ fn check_pattern_type(
                 Error::error_with_span(
                     tcxt,
                     span,
-                    &format!("expected array found `{}::{}`", path, variant),
+                    &format!("[E0tc] expected array found `{}::{}`", path, variant),
                 )
             ),
             Pat::Array { size: p_size, items } => {
@@ -498,7 +498,7 @@ fn check_pattern_type(
                         tcxt,
                         span,
                         &format!(
-                            "found array of different sizes\nexpected `{}` found `{}`",
+                            "[E0tc] found array of different sizes\nexpected `{}` found `{}`",
                             size, p_size
                         ),
                     )
@@ -517,7 +517,7 @@ fn check_pattern_type(
                         Error::error_with_span(
                             tcxt,
                             span,
-                            &format!("expected array found `{}`", val),
+                            &format!("[E0tc] expected array found `{}`", val),
                         )
                     );
                 }
@@ -535,7 +535,7 @@ fn check_pattern_type(
                             tcxt,
                             span,
                             &format!(
-                                "no enum variant `{}::{}` found for `{}`",
+                                "[E0tc] no enum variant `{}::{}` found for `{}`",
                                 path, variant, ident
                             ),
                         )
@@ -548,7 +548,7 @@ fn check_pattern_type(
                                     tcxt,
                                     span,
                                     &format!(
-                                        "no enum variant `{}::{}` found for `{}`",
+                                        "[E0tc] no enum variant `{}::{}` found for `{}`",
                                         path, variant, ident
                                     ),
                                 )
@@ -578,7 +578,7 @@ fn check_pattern_type(
                             Error::error_with_span(
                                 tcxt,
                                 span,
-                                &format!("expected enum found `{}`", val),
+                                &format!("[E0tc] expected enum found `{}`", val),
                             )
                         );
                     }
@@ -596,7 +596,7 @@ fn check_pattern_type(
                 tcxt,
                 span,
                 &format!(
-                    "must match a valid enum found: `{}`",
+                    "[E0tc] must match a valid enum found: `{}`",
                     ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                 ),
             )
@@ -619,7 +619,7 @@ fn check_val_pat(
             Error::error_with_span(
                 tcxt,
                 span,
-                &format!("expected `{}` found `{}::{}`", expected, path, variant)
+                &format!("[E0tc] expected `{}` found `{}::{}`", expected, path, variant)
             )
         ),
         Pat::Array { .. } => panic!(
@@ -638,7 +638,7 @@ fn check_val_pat(
                     Error::error_with_span(
                         tcxt,
                         span,
-                        &format!("expected `{}` found `{}`", expected, val)
+                        &format!("[E0tc] expected `{}` found `{}`", expected, val)
                     )
                 );
             }
@@ -679,7 +679,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     tcxt.errors.push(Error::error_with_span(
                         tcxt,
                         stmt_span,
-                        &format!("mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
+                        &format!("[E0tc] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
                     None
                 } else {
@@ -701,7 +701,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     tcxt,
                     stmt_span,
                     &format!(
-                        "no struct `{}` found",
+                        "[E0tc] no struct `{}` found",
                         tcxt.type_of_ident(lhs.val.as_ident(), lhs.span)
                             .map_or("<unknown>".to_owned(), |t| t.to_string()),
                     ),
@@ -722,7 +722,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
         | Expr::Value(_) => {
             panic!(
                 "{}",
-                Error::error_with_span(tcxt, stmt_span, "invalid lValue")
+                Error::error_with_span(tcxt, stmt_span, "[E0tc] invalid lValue")
             )
         }
     };
@@ -753,7 +753,7 @@ fn walk_field_access(
                     tcxt.errors.push(Error::error_with_span(
                         tcxt,
                         expr.span,
-                        &format!("mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
+                        &format!("[E0tc] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
                     None
                 } else {
@@ -763,7 +763,7 @@ fn walk_field_access(
                 tcxt.errors.push(Error::error_with_span(
                     tcxt,
                     expr.span,
-                    &format!("ident `{}` not array", ident),
+                    &format!("[E0tc] ident `{}` not array", ident),
                 ));
                 // TODO: specific error here?
                 None
@@ -780,7 +780,7 @@ fn walk_field_access(
                 tcxt.errors.push(Error::error_with_span(
                     tcxt,
                     expr.span,
-                    &format!("no struct `{}` found", id),
+                    &format!("[E0tc] no struct `{}` found", id),
                 ));
                 None
             }
@@ -798,7 +798,7 @@ fn walk_field_access(
         | Expr::Value(_) => {
             panic!(
                 "{}",
-                Error::error_with_span(tcxt, expr.span, "invalid lValue")
+                Error::error_with_span(tcxt, expr.span, "[E0tc] invalid lValue")
             )
         }
     }
@@ -823,13 +823,16 @@ crate fn fold_ty(
             BinOp::AddAssign | BinOp::SubAssign => {
                 panic!(
                     "{}",
-                    Error::error_with_span(tcxt, span, "cannot assign operation to a char")
+                    Error::error_with_span(tcxt, span, "[E0tc] cannot assign operation to a char")
                 )
             }
             // HACK: TODO: this is special case for array checking, make this work correctly
             BinOp::Add => Some(Ty::Char),
             _ => {
-                panic!("{}", Error::error_with_span(tcxt, span, "not a legal operation for `char`"))
+                panic!(
+                    "{}",
+                    Error::error_with_span(tcxt, span, "[E0tc] not a legal operation for `char`")
+                )
             }
         },
         (Ty::String, Ty::String) => todo!(),
@@ -900,7 +903,7 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
                 Error::error_with_span(
                     tcxt,
                     span,
-                    "cannot assign to a statement, this isn't Rust ;)"
+                    "[E0tc] cannot assign to a statement, this isn't Rust ;)"
                 )
             )
         }
