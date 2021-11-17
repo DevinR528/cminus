@@ -1,0 +1,13 @@
+
+// Linked by the compiler in a hacky special way ;)
+linked fn write(_: float);
+
+fn main() {
+    let x = 25;
+    let y = 5;
+    while (x > y) {
+        write(1.135);
+        x -= y;
+    }
+    write(6.66);
+}
