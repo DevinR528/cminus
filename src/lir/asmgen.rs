@@ -409,9 +409,10 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        let mut pushed = false;
         if self.total_stack % 16 != 0 {
-            self.total_stack += 8;
             self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
+            pushed = true;
         }
 
         let expr_type = expr.type_of();
@@ -431,6 +432,14 @@ impl<'ctx> CodeGen<'ctx> {
             },
             Instruction::Call(Location::Label("scanf".to_owned())),
         ]);
+
+        if pushed {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const { val: Val::Int(8) },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Add,
+            });
+        }
     }
 
     fn call_printf(&mut self, expr: &'ctx Expr) {
@@ -474,10 +483,6 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         if matches!(expr_type, Ty::Float) {
-            if self.total_stack % 16 != 0 {
-                self.total_stack += 8;
-                self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
-            }
             if matches!(val, Location::Const { .. }) {
                 if ((self.total_stack + 8) % 16) != 0 {
                     self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
@@ -514,21 +519,29 @@ impl<'ctx> CodeGen<'ctx> {
                         size,
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
-                    // Ugh stupid printf needs to be 16 bit aligned ??
                     Instruction::Math {
                         src: Location::Const { val: Val::Int(8) },
                         dst: Location::Register(Register::RSP),
-                        op: BinOp::Sub,
+                        op: BinOp::Add,
                     },
                 ]);
                 if ((self.total_stack + 8) % 16) != 0 {
                     self.asm_buf.push(Instruction::Math {
+                        //
+                        // - 16 because we push in the above seq of instructions
                         src: Location::Const { val: Val::Int(8) },
                         dst: Location::Register(Register::RSP),
-                        op: BinOp::Sub,
+                        op: BinOp::Add,
                     });
                 }
             } else if let Location::Register(reg) = &val {
+                if self.total_stack % 16 != 0 {
+                    self.asm_buf.push(Instruction::Push {
+                        loc: ZERO,
+                        size: 8,
+                        comment: "stack isn't 16 byte aligned",
+                    });
+                }
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Push {
                         loc: val.clone(),
@@ -552,7 +565,22 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
+                if (self.total_stack % 16) != 0 {
+                    self.asm_buf.push(Instruction::Math {
+                        // `- 16` because we push in the above seq of instructions
+                        src: Location::Const { val: Val::Int(8) },
+                        dst: Location::Register(Register::RSP),
+                        op: BinOp::Add,
+                    });
+                }
             } else {
+                if self.total_stack % 16 != 0 {
+                    self.asm_buf.push(Instruction::Push {
+                        loc: ZERO,
+                        size: 8,
+                        comment: "stack isn't 16 byte aligned",
+                    });
+                }
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Cvt { src: val, dst: Location::FloatReg(FloatRegister::XMM0) },
                     Instruction::Mov {
@@ -567,6 +595,15 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
+                if self.total_stack % 16 != 0 {
+                    self.asm_buf.push(Instruction::Math {
+                        //
+                        // - 8 because we push only once if the stack is misaligned
+                        src: Location::Const { val: Val::Int(8) },
+                        dst: Location::Register(Register::RSP),
+                        op: BinOp::Add,
+                    });
+                }
             }
         } else if matches!(expr_type, Ty::Bool) {
             // FERK! this took me hours to figure out, don't clobber registers
@@ -635,8 +672,17 @@ impl<'ctx> CodeGen<'ctx> {
                 ]);
             }
         } else if matches!(expr_type, Ty::String) {
+            let first = if matches!(val, Location::NamedOffset(_)) {
+                Instruction::Load { src: val, dst: Location::Register(Register::RSI), size: 8 }
+            } else {
+                Instruction::Mov {
+                    src: val,
+                    dst: Location::Register(Register::RSI),
+                    comment: "str addr is stored on stack",
+                }
+            };
             self.asm_buf.extend_from_slice(&[
-                Instruction::Load { src: val, dst: Location::Register(Register::RSI), size: 8 },
+                first,
                 Instruction::Mov { src: ZERO, dst: Location::Register(Register::RAX), comment: "" },
                 Instruction::Load {
                     src: Location::NamedOffset(fmt_str),
@@ -1246,10 +1292,10 @@ impl<'ctx> CodeGen<'ctx> {
                         self.get_pointer(lval).unwrap()
                     };
 
-                    let rloc = self.build_value(rval, lval.as_ident()).unwrap();
+                    let mut rloc = self.build_value(rval, lval.as_ident()).unwrap();
 
                     if let Location::Const { .. } = lloc {
-                        unreachable!("{:?}", lloc);
+                        unreachable!("ICE: assign to a constant {:?}", lloc);
                     }
 
                     if lloc == rloc {
@@ -1339,6 +1385,60 @@ impl<'ctx> CodeGen<'ctx> {
                                 },
                             ]);
                         }
+                    } else if matches!(ty, Ty::String) {
+                        assert!(
+                            matches!(rloc, Location::NamedOffset(_)),
+                            "ICE: right hand term must be string const"
+                        );
+
+                        self.clear_regs_except(Some(&lloc));
+                        if lloc.is_stack_offset() {
+                            let reg = self.free_reg();
+                            self.asm_buf.extend_from_slice(&[
+                                Instruction::Load {
+                                    src: rloc,
+                                    dst: Location::Register(reg),
+                                    size: 8,
+                                },
+                                Instruction::Mov {
+                                    // Move the value on the right hand side of the `= here`
+                                    src: Location::Register(reg),
+                                    // to the left hand side of `here =`
+                                    dst: lloc,
+                                    comment: "move string addr",
+                                },
+                            ]);
+                        } else {
+                            self.asm_buf.extend_from_slice(&[Instruction::Load {
+                                // Move the value on the right hand side of the `= here`
+                                src: rloc,
+                                // to the left hand side of `here =`
+                                dst: lloc,
+                                size,
+                            }]);
+                        }
+                    } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
+                        self.clear_regs_except(Some(&lloc));
+
+                        if rloc.is_stack_offset() {
+                            let new = self.free_reg();
+                            self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                                // Move the value on the right hand side of the `= here`
+                                src: rloc,
+                                // to the left hand side of `here =`
+                                dst: Location::Register(new),
+                                size,
+                            }]);
+                            rloc = Location::Register(new);
+                        }
+
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: Location::NumberedOffset { offset: 0, reg: *reg },
+                            size,
+                        }]);
                     } else if lloc.is_stack_offset() && rloc.is_stack_offset() {
                         let register = self.free_reg();
                         self.clear_regs_except(None);
@@ -1359,16 +1459,6 @@ impl<'ctx> CodeGen<'ctx> {
                                 size,
                             },
                         ]);
-                    } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
-                        self.clear_regs_except(Some(&lloc));
-                        println!("{:?} -> {:?}", lloc, rloc);
-                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                            // Move the value on the right hand side of the `= here`
-                            src: rloc,
-                            // to the left hand side of `here =`
-                            dst: Location::NumberedOffset { offset: 0, reg: *reg },
-                            size,
-                        }]);
                     } else {
                         self.clear_regs_except(Some(&lloc));
 
@@ -1377,7 +1467,7 @@ impl<'ctx> CodeGen<'ctx> {
                             src: rloc,
                             // to the left hand side of `here =`
                             dst: lloc,
-                            size,
+                            size: 8,
                         }]);
                     }
                 }
