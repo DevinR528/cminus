@@ -1,4 +1,4 @@
-fn write(_: int) {}
+linked fn write(_: int);
 
 fn main() {
     let x = 25;

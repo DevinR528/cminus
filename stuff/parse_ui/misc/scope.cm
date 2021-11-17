@@ -1,0 +1,20 @@
+linked fn write<T>(_: T);
+
+fn main () {
+    let a = ['d', 'e', 'v', 'i', 'n'];
+    let i = 0;
+    if (a[0] > a[1]) {
+        let x = 10;
+        write::<char>(a[x - 6]);
+    } else {
+        let s = "hello";
+        write::<string>(s);
+    }
+
+    i = 0;
+    while (i < 5) {
+        let y = i;
+        write::<char>(a[y]);
+        i += 1;
+    }
+}
