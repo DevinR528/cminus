@@ -1,47 +1,29 @@
-void main () {
+linked fn write(_: char);
 
- char a[15];
- int i,j,t,least;
+fn main () {
+    let a = ['k', 'a', 'z', 'r', 'a', 'm', 'f', 'f', 'j', 'q', 'g', 'x', 'b', 'l', 'c'];
+    let i = 0;
 
-	a[0] = 'k';
-	a[1] = 'a';
-	a[2] = 'z';
-	a[3] = 'r';
-	a[4] = 'a';
-	a[5] = 'm';
-	a[6] = 'f';
-	a[7] = 'f';
-	a[8] = 'j';
-	a[9] = 'q';
-	a[10] = 'g';
-	a[11] = 'x';
-	a[12] = 'b';
-	a[13] = 'l';
-	a[14] = 'c';
+    while (i < 14) {
+        let least = i;
+        let j = i + 1;
 
-	i = 0;
-
-	while (i<14) {
-    	  least = i;
-	  j = i + 1;
-	  while (j<15) {
-              if (a[j] < a[least]) {
+        while (j < 15) {
+            if (a[j] < a[least]) {
                 least = j;
-              }
-	      j = j + 1;
-	  }
-          t = a[i];
-          a[i] = a[least];
-          a[least] = t;
-          i= i + 1;
-	}
+            }
+            j += 1;
+        }
 
-	i = 0;
-	while (i<15) {
-    	write(a[i]);
-	  	i = i + 1;
+        let t = a[i];
+        a[i] = a[least];
+        a[least] = t;
+        i += 1;
     }
 
-	exit;
-
+    i = 0;
+    while (i < 15) {
+        write(a[i]);
+        i += 1;
+    }
 }
