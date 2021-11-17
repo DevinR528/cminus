@@ -157,6 +157,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         // TODO: match this out so we know its an lval or just wait for later
                         // when that's checked by `StmtCheck`
                         let ident = lval.val.as_ident();
+
                         if self
                             .tcxt
                             .var_func
@@ -168,8 +169,8 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         {
                             self.tcxt.errors.push(Error::error_with_span(
                                 self.tcxt,
-                                lval.span,
-                                &format!("duplicate variable name `{}`", ident),
+                                ident.span(),
+                                &format!("[E0i] duplicate variable name `{}`", ident),
                             ));
                             self.tcxt.error_in_current_expr_tree = true;
                         }
@@ -183,7 +184,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                 self.tcxt,
                                 rval.span,
                                 &format!(
-                                    "assigned to wrong type\nfound `{}` expected `{}`",
+                                    "[E0i] assigned to wrong type\nfound `{}` expected `{}`",
                                     ty, lhs,
                                 ),
                             ));
@@ -205,7 +206,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         lval.span,
-                        &format!("undeclared variable name `{}`", lval.val.as_ident()),
+                        &format!("[E0i] undeclared variable name `{}`", lval.val.as_ident()),
                     ));
                     self.tcxt.error_in_current_expr_tree = true;
                 }
@@ -227,31 +228,15 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             Stmt::TraitMeth(expr) => self.visit_expr(expr),
             Stmt::If { cond, blk, els } => {
                 self.visit_expr(cond);
-
-                for stmt in &blk.stmts {
-                    self.visit_stmt(stmt);
-                }
-
-                if let Some(els) = els {
-                    for stmt in &els.stmts {
-                        self.visit_stmt(stmt);
-                    }
-                }
+                // DO NOT WALK DEEPER the calling method is doing the walking
             }
             Stmt::While { cond, blk } => {
                 self.visit_expr(cond);
-
-                for s in &blk.stmts {
-                    self.visit_stmt(s);
-                }
+                // DO NOT WALK DEEPER the calling method is doing the walking
             }
             Stmt::Match { expr: ex, arms } => {
                 self.visit_expr(ex);
-                for arm in arms {
-                    for stmt in &arm.blk.stmts {
-                        self.visit_stmt(stmt);
-                    }
-                }
+                // DO NOT WALK DEEPER the calling method is doing the walking
             }
             Stmt::Ret(expr) => {
                 self.visit_expr(expr);
@@ -274,7 +259,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         expr.span,
-                        &format!("no type infered for `{}`", ident),
+                        &format!("[E0i] no type infered for `{}`", ident),
                     ));
                     self.tcxt.error_in_current_expr_tree = true;
                 }
@@ -293,7 +278,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push(Error::error_with_span(
                         self.tcxt,
                         expr.span,
-                        &format!("no type infered for `{}`", ident),
+                        &format!("[E0i] no type infered for `{}`", ident),
                     ));
                     self.tcxt.error_in_current_expr_tree = true;
                 }
