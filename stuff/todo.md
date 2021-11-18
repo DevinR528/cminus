@@ -5,6 +5,10 @@
   - split typeck into infer, stmt check, expr collect files and cleanup
   - use parking_lot for `Mutex` and crossbeam for `Sender/Receiver/channel` stuff
   - Refactor `asmgen.rs` into something readable
+  - Add name resolution pass
+    - Add scopes/namespaces
+    - All rvalues (i.e. structs/enums/calls, not builtin types) are now paths for name resolution to resolve
+    - Eventually do this "async", each name-res candidate has a dependency graph (these are fulfilled with declarations)
 
 ## Compiler work
   - Get imports working robustly
@@ -14,6 +18,7 @@
   - extern/foreign/link/clang/dynamic some sort of keyword to signify dy linked function/type
     - we currently use linked
   - if `fn call<T>(a: T): T {...}` is generic make `call::<int>(x)` and `call(x)` work
+  - add support for uninitialized values MAYBE???
   - and...
 
 # The Whole Point
