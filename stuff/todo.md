@@ -19,6 +19,8 @@
     - we currently use linked
   - if `fn call<T>(a: T): T {...}` is generic make `call::<int>(x)` and `call(x)` work
   - add support for uninitialized values MAYBE???
+  - var args for native printf
+    - string needs to be convertable to a slice/array thing or impled as a struct with len and bufff
   - and...
 
 # The Whole Point
