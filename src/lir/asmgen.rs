@@ -36,6 +36,12 @@ const STATIC_PREAMBLE: &str = r#"
 const ZERO: Location = Location::Const { val: Val::Int(0) };
 const ONE: Location = Location::Const { val: Val::Int(1) };
 
+#[derive(Clone, Copy, Debug)]
+enum CanClearRegs {
+    Yes,
+    No,
+}
+
 #[derive(Debug)]
 crate struct CodeGen<'ctx> {
     asm_buf: Vec<Instruction>,
@@ -46,6 +52,7 @@ crate struct CodeGen<'ctx> {
     total_stack: usize,
     vars: HashMap<Ident, Location>,
     path: &'ctx Path,
+    can_clear: CanClearRegs,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -59,6 +66,7 @@ impl<'ctx> CodeGen<'ctx> {
             total_stack: 0,
             vars: HashMap::default(),
             path,
+            can_clear: CanClearRegs::Yes,
         }
     }
 
@@ -241,6 +249,12 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn clear_regs_except(&mut self, loc: Option<&Location>) {
+        println!("{:?}", self.can_clear);
+
+        if let CanClearRegs::No = self.can_clear {
+            println!("{:?}", self.can_clear);
+            return;
+        }
         self.used_regs.clear();
         let loc = if let Some(l) = loc {
             l
@@ -348,7 +362,7 @@ impl<'ctx> CodeGen<'ctx> {
             // TODO: add bounds checking maybe
             // Dynamic indexing
             } else if exprs.len() == 1 {
-                let index_val = self.build_value(&exprs[0], None)?;
+                let index_val = self.build_value(&exprs[0], None, CanClearRegs::No)?;
 
                 let tmpidx = self.free_reg();
                 let array_reg = self.free_reg();
@@ -419,7 +433,7 @@ impl<'ctx> CodeGen<'ctx> {
         let fmt_str = format_str(&expr_type).to_string();
         let size = expr_type.size();
 
-        let val = self.build_value(expr, None).unwrap();
+        let val = self.build_value(expr, None, CanClearRegs::No).unwrap();
 
         // if matches!(expr_type, Ty::String) {
         self.asm_buf.extend_from_slice(&[
@@ -458,7 +472,7 @@ impl<'ctx> CodeGen<'ctx> {
         let fmt_str = format_str(&expr_type).to_string();
         let size = expr_type.size();
 
-        let mut val = self.build_value(expr, None).unwrap();
+        let mut val = self.build_value(expr, None, CanClearRegs::No).unwrap();
 
         if [
             Location::Register(Register::RSI),
@@ -805,8 +819,14 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
-    fn build_value(&mut self, expr: &'ctx Expr, assigned: Option<Ident>) -> Option<Location> {
-        Some(match expr {
+    fn build_value(
+        &mut self,
+        expr: &'ctx Expr,
+        assigned: Option<Ident>,
+        can_clear: CanClearRegs,
+    ) -> Option<Location> {
+        self.can_clear = can_clear;
+        let val = Some(match expr {
             Expr::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
             Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
             Expr::AddrOf(_) => todo!(),
@@ -816,7 +836,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.index_arr(arr, exprs, ele_size, true)?
             }
             Expr::Urnary { op, expr, ty } => {
-                let val = self.build_value(expr, None)?;
+                let val = self.build_value(expr, None, can_clear)?;
 
                 let register = self.free_reg();
                 let val = if val.is_stack_offset() {
@@ -869,8 +889,9 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Binary { op, lhs, rhs, ty } => {
-                let mut lloc = self.build_value(lhs, None)?;
-                let mut rloc = self.build_value(rhs, None)?;
+                let mut lloc = self.build_value(lhs, None, CanClearRegs::No)?;
+                let mut rloc = self.build_value(rhs, None, CanClearRegs::No)?;
+                self.can_clear = can_clear;
 
                 self.order_operands(&mut lloc, &mut rloc, op, ty);
 
@@ -1076,10 +1097,10 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
-            Expr::Parens(ex) => self.build_value(ex, assigned)?,
+            Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
             Expr::Call { path, args, type_args, def: _ } => {
                 for (idx, arg) in args.iter().enumerate() {
-                    let val = self.build_value(arg, None).unwrap();
+                    let val = self.build_value(arg, None, can_clear).unwrap();
                     let ty = arg.type_of();
                     if let Ty::Array { size: _, ty } = ty {
                         self.asm_buf.push(Instruction::Load {
@@ -1110,7 +1131,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::TraitMeth { trait_, args, type_args, def: _ } => {
                 for (idx, arg) in args.iter().enumerate() {
-                    let val = self.build_value(arg, None).unwrap();
+                    let val = self.build_value(arg, None, can_clear).unwrap();
                     let ty = arg.type_of();
                     if let Ty::Array { size: _, ty } = ty {
                         self.asm_buf.push(Instruction::Load {
@@ -1154,7 +1175,7 @@ impl<'ctx> CodeGen<'ctx> {
                     todo!()
                 }
                 for item in items.iter() {
-                    let rval = self.build_value(item, None).unwrap();
+                    let rval = self.build_value(item, None, can_clear).unwrap();
 
                     let ele_size = item.type_of().size();
                     if let Some(Location::NumberedOffset { offset, reg }) = lval {
@@ -1196,7 +1217,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
                 // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
                 for (idx, item) in items.iter().enumerate() {
-                    let rval = self.build_value(item, None).unwrap();
+                    let rval = self.build_value(item, None, can_clear).unwrap();
 
                     if let Some(Location::NumberedOffset { offset, reg }) = lval {
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
@@ -1235,7 +1256,8 @@ impl<'ctx> CodeGen<'ctx> {
                     Location::NamedOffset(x.name().to_string())
                 }
             },
-        })
+        });
+        val
     }
 
     fn gen_statement(&mut self, stmt: &'ctx Stmt) {
@@ -1289,7 +1311,8 @@ impl<'ctx> CodeGen<'ctx> {
                         self.get_pointer(lval).unwrap()
                     };
 
-                    let mut rloc = self.build_value(rval, lval.as_ident()).unwrap();
+                    let mut rloc =
+                        self.build_value(rval, lval.as_ident(), CanClearRegs::Yes).unwrap();
 
                     if let Location::Const { .. } = lloc {
                         unreachable!("ICE: assign to a constant {:?}", lloc);
@@ -1477,7 +1500,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     // @copypaste this is the same as `Expr::Call`
                     for (idx, arg) in args.iter().enumerate() {
-                        let val = self.build_value(arg, None).unwrap();
+                        let val = self.build_value(arg, None, CanClearRegs::Yes).unwrap();
                         let ty = arg.type_of();
                         if let Ty::Array { size: _, ty } = ty {
                             self.asm_buf.push(Instruction::Load {
@@ -1508,7 +1531,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
             Stmt::If { cond, blk, els } => {
-                let cond_val = self.build_value(cond, None).unwrap();
+                let cond_val = self.build_value(cond, None, CanClearRegs::Yes).unwrap();
                 // Check if true
                 self.asm_buf.push(Instruction::Cmp {
                     src: Location::Const { val: Val::Int(1) },
@@ -1553,7 +1576,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 self.asm_buf.push(Instruction::Label(uncond_label));
-                let cond_val = self.build_value(cond, None).unwrap();
+                let cond_val = self.build_value(cond, None, CanClearRegs::Yes).unwrap();
                 // Check if true
                 self.asm_buf.push(Instruction::Cmp {
                     src: Location::Const { val: Val::Int(1) },
@@ -1563,7 +1586,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::CondJmp { loc: loop_body, cond: JmpCond::Eq });
             }
             Stmt::Match { expr, arms, ty: _ } => {
-                let val = self.build_value(expr, None).unwrap();
+                let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
 
                 for (_idx, arm) in arms.iter().enumerate() {
                     match &arm.pat {
@@ -1593,7 +1616,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }]);
             }
             Stmt::Ret(expr, _ty) => {
-                let val = self.build_value(expr, None).unwrap();
+                let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
                 self.asm_buf.extend_from_slice(&[
                     // return value is stored in %rax
                     Instruction::Mov {
