@@ -1,0 +1,25 @@
+linked fn putchar(_: char);
+
+fn debug(fmt: string, vals: [5; int], len: int): int {
+    let val_idx = 0;
+    let x = &fmt;
+    while (x != '\0') {
+        let ch = *x;
+        if (ch == '%') {
+            let val = vals[val_idx];
+            putchar('v');
+        } else {
+            putchar(ch);
+        }
+        x += 8;
+    }
+}
+
+fn main() {
+    let fmt = "hello %, %, %\n\0";
+    if (debug(fmt, [1, 2, 3, 0,0], 3) != 0) {
+        exit;
+    } else {
+        putchar('!');
+    }
+}
