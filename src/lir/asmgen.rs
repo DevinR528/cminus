@@ -708,14 +708,11 @@ impl<'ctx> CodeGen<'ctx> {
     fn push_stack(&mut self, ty: &Ty) {
         match ty {
             Ty::Array { size, ty } => {
-                for _el in 0..*size {
-                    // TODO: better just sub from %rsp
-                    self.asm_buf.push(Instruction::Push {
-                        loc: Location::Const { val: ty.null_val() },
-                        size: ty.size(),
-                        comment: "",
-                    });
-                }
+                self.asm_buf.push(Instruction::Math {
+                    src: Location::Const { val: Val::Int((size * ty.size()) as isize) },
+                    dst: Location::Register(Register::RSP),
+                    op: BinOp::Sub,
+                });
             }
             Ty::Struct { ident: _, gen: _, def } => {
                 for field in &def.fields {
