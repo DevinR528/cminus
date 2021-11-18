@@ -687,17 +687,6 @@ impl<'a> AstBuilder<'a> {
 
             let span = ast::to_rng(start..self.curr_span().start);
             Ok(ast::Expr::TraitMeth { trait_, type_args, args }.into_spanned(span))
-        } else if self.curr.kind == TokenMatch::OpenParen {
-            self.eat_if(&TokenMatch::OpenParen);
-
-            let expr = self.make_expr()?;
-
-            self.eat_if(&TokenMatch::OpenParen);
-
-            // tuple
-            // TODO: check there are only commas maybe??
-            let span = ast::to_rng(start..self.curr_span().end);
-            Ok(ast::Expr::Parens(box expr).into_spanned(span))
         } else if matches!(
             self.curr.kind,
             TokenKind::Ident
@@ -706,6 +695,7 @@ impl<'a> AstBuilder<'a> {
                 | TokenKind::And
                 | TokenKind::Bang
                 | TokenKind::Tilde
+                | TokenKind::OpenParen
         ) {
             // FIXME: we don't want to have to say `let x = enum foo::bar;` just `let x = foo::bar;`
             // TODO: don't parse for keywords if its a lit DUH
@@ -914,15 +904,22 @@ impl<'a> AstBuilder<'a> {
             let op = self.make_op()?;
             (expr, op)
         } else if self.curr.kind == TokenMatch::OpenParen {
+            let start = self.curr_span().start;
             // N.B.
             // We know we are in the middle of some kind of binop
-            // self.eat_if(&TokenMatch::OpenParen);
+            self.eat_if(&TokenMatch::OpenParen);
 
-            let id = self.make_expr()?;
+            let ex = self.make_expr()?;
+
+            let expr =
+                ast::Expr::Parens(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
+            self.eat_whitespace();
+
+            self.eat_if(&TokenMatch::CloseParen);
             self.eat_whitespace();
 
             let op = self.make_op()?;
-            (id, op)
+            (expr, op)
         } else {
             todo!("{:?}", self.curr)
         })
@@ -1116,22 +1113,19 @@ impl<'a> AstBuilder<'a> {
                 Some(AssocOp::BitXor)
             }
             TokenKind::CloseParen => {
-                self.eat_if(&TokenMatch::CloseParen);
+                // self.eat_if(&TokenMatch::CloseParen);
                 None
             }
             TokenKind::CloseBracket => {
-                self.eat_if(&TokenMatch::CloseBracket);
+                // self.eat_if(&TokenMatch::CloseBracket);
                 None
             }
             TokenKind::CloseBrace => {
-                self.eat_if(&TokenMatch::CloseBrace);
+                // self.eat_if(&TokenMatch::CloseBrace);
                 None
             }
             // The stops expressions at `match (expr)` sites
-            TokenKind::OpenBrace => {
-                self.eat_if(&TokenMatch::OpenBrace);
-                None
-            }
+            TokenKind::OpenBrace => None,
             // comma: argument lists, array elements, any initializer stuff (structs, enums)
             // semi: we need to recurse out of our expression tree before we eat this token
             TokenKind::Comma | TokenKind::Semi => None,
@@ -1431,10 +1425,9 @@ impl<'a> AstBuilder<'a> {
                 ast::Expr::Value(_) => todo!(),
             }
         } else if self.curr.kind == TokenMatch::Lt {
-            todo!("Trait method calls")
+            todo!("Trait method calls {}", self.call_stack.join("\n"))
         } else {
-            // TODO: handle blocks `{}` as stmt and expr
-            todo!("{:?}", self.curr)
+            return Err(ParseError::Error("make statement bottom out", self.curr_span()));
         })
     }
 
@@ -2012,14 +2005,15 @@ impl<'a> AstBuilder<'a> {
     /// Returns true if all the given tokens were matched.
     fn eat_seq_ignore_ws<'i>(&mut self, iter: impl IntoIterator<Item = &'i TokenMatch>) -> bool {
         for kind in iter {
-            if kind == &self.curr.kind
-                || matches!(
-                    self.curr.kind,
-                    TokenKind::Whitespace
-                        | TokenKind::LineComment { .. }
-                        | TokenKind::BlockComment { .. }
-                )
-            {
+            if matches!(
+                self.curr.kind,
+                TokenKind::Whitespace
+                    | TokenKind::LineComment { .. }
+                    | TokenKind::BlockComment { .. }
+            ) {
+                self.eat_tkn();
+            }
+            if kind == &self.curr.kind {
                 self.eat_tkn();
             } else {
                 return false;
@@ -2324,6 +2318,9 @@ fn add() {
         bar::bar -> {
             call();
             let x = y + 5 * z;
+            if (x > y) {
+                return 1;
+            }
         }
     }
 }
@@ -2341,7 +2338,6 @@ fn add() {
         call(1, 2, 3);
         x += 1;
     }
-    return;
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
@@ -2465,7 +2461,7 @@ fn add() {
         let mut x = input.split("let");
         let start = x.next().unwrap().chars().count();
         let end = x.next().unwrap().chars().count() + start;
-        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end))
+        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end + 1))
     } else {
         panic!("assert failed for function call with import path")
     }
