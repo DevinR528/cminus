@@ -1,0 +1,23 @@
+error: unused variable `y`, remove or reference
+  --> ./stuff/parse_ui/unused/used.cm:7:9
+6 |    inner += 1;
+7 |    let y = 0; // Also make sure our scopes work to check different unused with same name
+  |        ^^
+8 |}
+
+error: unused variable `size`, remove or reference
+  --> ./stuff/parse_ui/unused/used.cm:13:9
+12 |    let y = 5;
+13 |    let size = 2;
+   |        ^^^^^
+14 |    let j = 3;
+
+error: unused variable `inner`, remove or reference
+  --> ./stuff/parse_ui/unused/used.cm:19:13
+18 |        j += 1;
+19 |        let inner = "";
+   |            ^^^^^^
+20 |    }
+
+errors
+compilation stopped found 1 error
