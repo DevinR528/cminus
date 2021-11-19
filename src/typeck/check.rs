@@ -489,13 +489,24 @@ fn collect_enum_generics<'ast>(
 ///
 /// Panic's with a good compiler error if types do not match.
 fn check_pattern_type(
-    tcxt: &TyCheckRes<'_, '_>,
+    tcxt: &mut TyCheckRes<'_, '_>,
     pat: &Pat,
     ty: Option<&Ty>,
     span: Range,
     bound_vars: &mut HashMap<Ident, Ty>,
 ) {
-    match ty.as_ref().unwrap() {
+    let matcher_ty = if let Some(t) = ty {
+        t
+    } else {
+        tcxt.errors.push(Error::error_with_span(
+            tcxt,
+            span,
+            &format!("[E0tc] unknown pattern ident found `{}`", pat),
+        ));
+        tcxt.error_in_current_expr_tree = true;
+        return;
+    };
+    match matcher_ty {
         Ty::Array { size, ty: t } => match pat {
             Pat::Enum { path, variant, .. } => panic!(
                 "{}",
@@ -506,19 +517,16 @@ fn check_pattern_type(
                 )
             ),
             Pat::Array { size: p_size, items } => {
-                assert_eq!(
-                    size,
-                    p_size,
-                    "{}",
-                    Error::error_with_span(
+                if size != p_size {
+                    tcxt.errors.push(Error::error_with_span(
                         tcxt,
                         span,
                         &format!(
                             "[E0tc] found array of different sizes\nexpected `{}` found `{}`",
                             size, p_size
                         ),
-                    )
-                );
+                    ));
+                }
                 for item in items {
                     check_pattern_type(tcxt, &item.val, Some(&t.val), span, bound_vars);
                 }
@@ -528,48 +536,47 @@ fn check_pattern_type(
                     bound_vars.insert(*id, ty.cloned().unwrap());
                 }
                 Binding::Value(val) => {
-                    panic!(
-                        "{}",
-                        Error::error_with_span(
-                            tcxt,
-                            span,
-                            &format!("[E0tc] expected array found `{}`", val),
-                        )
-                    );
+                    tcxt.errors.push(Error::error_with_span(
+                        tcxt,
+                        span,
+                        &format!("[E0tc] expected array found `{}`", val),
+                    ));
                 }
             },
         },
         Ty::Struct { ident: _, gen: _ } => todo!(),
         Ty::Enum { ident, gen } => {
-            let enm = tcxt.name_enum.get(ident).expect("matched undefined enum");
+            let enm = tcxt.name_enum.get(&ident).expect("matched undefined enum");
             match pat {
                 Pat::Enum { path, variant, items, .. } => {
-                    assert!(
-                        path.segs.len() == 1 && (*ident) == path.segs[0],
-                        "{}",
-                        Error::error_with_span(
+                    if !(path.segs.len() == 1 && (*ident) == path.segs[0]) {
+                        tcxt.errors.push(Error::error_with_span(
                             tcxt,
                             span,
                             &format!(
                                 "[E0tc] no enum variant `{}::{}` found for `{}`",
                                 path, variant, ident
                             ),
-                        )
-                    );
+                        ));
+                        tcxt.error_in_current_expr_tree = true;
+                        return;
+                    }
+
                     let var_ty =
-                        enm.variants.iter().find(|v| v.ident == *variant).unwrap_or_else(|| {
-                            panic!(
-                                "{}",
-                                Error::error_with_span(
-                                    tcxt,
-                                    span,
-                                    &format!(
-                                        "[E0tc] no enum variant `{}::{}` found for `{}`",
-                                        path, variant, ident
-                                    ),
-                                )
-                            )
-                        });
+                        if let Some(var) = enm.variants.iter().find(|v| v.ident == *variant) {
+                            var
+                        } else {
+                            tcxt.errors.push(Error::error_with_span(
+                                tcxt,
+                                span,
+                                &format!(
+                                    "[E0tc] no enum variant `{}::{}` found for `{}`",
+                                    path, variant, ident
+                                ),
+                            ));
+                            tcxt.error_in_current_expr_tree = true;
+                            return;
+                        };
 
                     for (idx, it) in items.iter().enumerate() {
                         let var_ty = var_ty.types.get(idx).map(|t| {
@@ -589,14 +596,13 @@ fn check_pattern_type(
                         bound_vars.insert(*id, ty.cloned().unwrap());
                     }
                     Binding::Value(val) => {
-                        panic!(
-                            "{}",
-                            Error::error_with_span(
-                                tcxt,
-                                span,
-                                &format!("[E0tc] expected enum found `{}`", val),
-                            )
-                        );
+                        tcxt.errors.push(Error::error_with_span(
+                            tcxt,
+                            span,
+                            &format!("[E0tc] expected enum found `{}`", val),
+                        ));
+                        tcxt.error_in_current_expr_tree = true;
+                        return;
                     }
                 },
             }
