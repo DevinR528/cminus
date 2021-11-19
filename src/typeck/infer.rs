@@ -19,7 +19,7 @@ use crate::{
     typeck::{
         check::{fold_ty, resolve_ty},
         generic::{Node, TyRegion},
-        TyCheckRes,
+        ScopedIdent, TyCheckRes,
     },
     visit::Visit,
 };
@@ -137,26 +137,33 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     .unwrap_or_else(|| panic!("{:?}", rval))
                     .clone();
 
+                // Set after walking the right side trees
+                self.tcxt.set_record_used_vars(!is_let);
+
                 // @cleanup: this is duplicated in `TypeCheck::visit_var`
                 if let Some(fn_id) = self.tcxt.curr_fn {
                     if *is_let {
-                        let node = Node::Func(fn_id);
-                        let mut stack = if self.tcxt.generic_res.has_generics(&node) {
-                            vec![node]
-                        } else {
-                            vec![]
-                        };
-                        self.tcxt.generic_res.collect_generic_usage(
-                            &ty,
-                            self.tcxt.unique_id(),
-                            0,
-                            &[TyRegion::Expr(&lval.val)],
-                            &mut stack,
-                        );
+                        // let node = Node::Func(fn_id);
+                        // let mut stack = if self.tcxt.generic_res.has_generics(&node) {
+                        //     vec![node]
+                        // } else {
+                        //     vec![]
+                        // };
+                        // self.tcxt.generic_res.collect_generic_usage(
+                        //     &ty,
+                        //     self.tcxt.unique_id(),
+                        //     0,
+                        //     &[TyRegion::Expr(&lval.val)],
+                        //     &mut stack,
+                        // );
 
                         // TODO: match this out so we know its an lval or just wait for later
                         // when that's checked by `StmtCheck`
                         let ident = lval.val.as_ident();
+                        self.tcxt.var_func.unsed_vars.insert(
+                            ScopedIdent::func_scope(fn_id, ident),
+                            (lval.span, Cell::new(false)),
+                        );
 
                         if self
                             .tcxt
@@ -265,7 +272,14 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Deref { indir, expr } => todo!(),
-            Expr::AddrOf(_) => todo!(),
+            Expr::AddrOf(ex) => {
+                self.visit_expr(ex);
+                let exprty = self.tcxt.expr_ty.get(&**ex);
+
+                if let Some(ty) = exprty.cloned() {
+                    self.tcxt.expr_ty.insert(expr, Ty::Ptr(box ty.into_spanned(DUMMY)));
+                }
+            }
             Expr::Array { ident, exprs } => {
                 if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
                     for ex in exprs {
