@@ -1,27 +1,29 @@
-void main() {
-	int a,b;
-	
-	write("enter a:"); read(a);
-	write("enter b:"); read(b);
-	
-	if (b > a) { 
+linked fn write<T>(_: T);
+linked fn read(_: int);
+
+
+fn main() {
+	let a = 0;
+    let b = 0;
+
+	write::<string>("enter a:"); read(a);
+	write::<string>("enter b:"); read(b);
+
+	if (b > a) {
 		if (a > 0) {
-		    write("a = ");
-			write(a);
+		    write::<string>("a = ");
+			write::<int>(a);
+		} else {
+		    write::<string>("b = ");
+			write::<int>(b);
 		}
-		else {
-		    write("b = ");
-			write(b);
-		}
-	}
-	else {
+	} else {
 		if (a < 0) {
-		    write("a = ");
-			write(a);
-	    }
-		else {
-		    write("b = ");
-			write(b);
+		    write::<string>("a = ");
+			write::<int>(a);
+	    } else {
+		    write::<string>("b = ");
+			write::<int>(b);
 		}
 	}
 	exit;
