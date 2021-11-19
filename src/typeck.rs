@@ -1,10 +1,11 @@
 use std::{
     cell::{Cell, RefCell},
     fmt,
+    hash::{Hash, Hasher},
     sync::mpsc::Receiver,
 };
 
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
 
 use crate::{
     ast::{
@@ -34,6 +35,35 @@ use trait_solver::TraitSolve;
 
 use self::check::fold_ty;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+crate enum Scope {
+    File(u64),
+    // TODO: this really needs to be Func(FileScope, Ident) or Func(Path)?
+    Func(Ident),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+crate struct ScopedIdent {
+    scope: Scope,
+    ident: Ident,
+}
+
+impl ScopedIdent {
+    crate fn func_scope(func: Ident, name: Ident) -> Self {
+        Self { scope: Scope::Func(func), ident: name }
+    }
+
+    crate fn global(file: &str, name: Ident) -> Self {
+        let mut hasher = FxHasher::default();
+        hasher.write(file.as_bytes());
+        let file = hasher.finish();
+        Self { scope: Scope::File(file), ident: name }
+    }
+
+    crate fn ident(&self) -> Ident {
+        self.ident
+    }
+}
+
 #[derive(Debug, Default)]
 crate struct VarInFunction<'ast> {
     /// A backwards mapping of variable span -> function name.
@@ -45,7 +75,7 @@ crate struct VarInFunction<'ast> {
     /// Does this function have any return statements.
     func_return: HashSet<Ident>,
     /// All of the variables in a scope that are used.
-    unsed_vars: HashMap<Ident, (Range, Cell<bool>)>,
+    unsed_vars: HashMap<ScopedIdent, (Range, Cell<bool>)>,
 }
 
 impl VarInFunction<'_> {
@@ -64,7 +94,7 @@ impl VarInFunction<'_> {
     }
 }
 
-pub type AstReceiver = Receiver<ParseResult<(usize, Declaration)>>;
+pub type AstReceiver = Receiver<ParseResult<(String, usize, Declaration)>>;
 
 #[derive(Default)]
 crate struct TyCheckRes<'ast, 'input> {
@@ -110,6 +140,10 @@ crate struct TyCheckRes<'ast, 'input> {
     /// Trait resolver for checking the bounds on generic types.
     crate trait_solve: TraitSolve<'ast>,
 
+    // TODO: this isn't ideal since you can forget to set/unset...
+    /// Do we record uses of this variable during the following expr tree walk.
+    record_used: bool,
+
     uniq_generic_instance_id: Cell<usize>,
 
     /// Errors collected during parsing and type checking.
@@ -138,7 +172,7 @@ impl fmt::Debug for TyCheckRes<'_, '_> {
 
 impl<'input> TyCheckRes<'_, 'input> {
     crate fn new(input: &'input str, name: &'input str, rcv: AstReceiver) -> Self {
-        Self { name, input, rcv: Some(rcv), ..Self::default() }
+        Self { name, input, rcv: Some(rcv), record_used: true, ..Self::default() }
     }
 
     crate fn report_errors(&self) -> Result<(), &'static str> {
@@ -158,15 +192,27 @@ impl<'input> TyCheckRes<'_, 'input> {
         x
     }
 
-    crate fn type_of_ident(&self, id: Ident, span: Range) -> Option<Ty> {
-        // TODO: unused leaks into other scope
-        if let Some((_, b)) = self.var_func.unsed_vars.get(&id) {
-            b.set(true);
-        }
+    crate fn set_record_used_vars(&mut self, used: bool) -> bool {
+        let old = self.record_used;
+        self.record_used = used;
+        old
+    }
 
+    /// Find the `Type` of this identifier AND mark it as used.
+    crate fn type_of_ident(&self, id: Ident, span: Range) -> Option<Ty> {
         self.var_func
             .get_fn_by_span(span)
-            .and_then(|f| self.var_func.func_refs.get(&f).and_then(|s| s.get(&id)))
+            .and_then(|f| {
+                if self.record_used {
+                    // TODO: unused leaks into other scope
+                    if let Some((_, b)) =
+                        self.var_func.unsed_vars.get(&ScopedIdent::func_scope(f, id))
+                    {
+                        b.set(true);
+                    }
+                }
+                self.var_func.func_refs.get(&f).and_then(|s| s.get(&id))
+            })
             .or_else(|| self.global.get(&id))
             .cloned()
     }
@@ -223,7 +269,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Const(co) => {}
                 Decl::Import(_) => {
                     let mut items = vec![];
-                    while let Ok(Ok((count, item))) = self.rcv.as_ref().unwrap().recv() {
+                    while let Ok(Ok((file, count, item))) = self.rcv.as_ref().unwrap().recv() {
                         items.push(item);
                         if count == 0 {
                             break;
@@ -263,6 +309,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         for trait_ in impls {
             self.curr_fn = Some(trait_.method.ident);
             crate::visit::walk_func(self, &trait_.method);
+            // TODO: check return just like above
             self.curr_fn.take();
         }
 
@@ -270,9 +317,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .var_func
             .unsed_vars
             .iter()
-            .filter(|(id, (_, used))| !used.get() && !id.name().starts_with('_'))
-            .map(|(id, (sp, _))| (id, *sp))
+            .filter(|(id, (_, used))| !used.get() && !id.ident().name().starts_with('_'))
+            .map(|(id, (sp, _))| (id.ident(), *sp))
             .collect::<Vec<_>>();
+
         unused.sort_by(|a, b| a.1.cmp(&b.1));
 
         // TODO: see about unused declarations
@@ -462,6 +510,11 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     &format!("[E0w] duplicate variable name `{}`", var.ident),
                 ));
             }
+            self.var_func
+                .unsed_vars
+                .insert(ScopedIdent::func_scope(fn_id, var.ident), (var.span, Cell::new(false)));
+            // bail out before we set the scope as global
+            return;
         } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
             self.errors.push(Error::error_with_span(
                 self,
@@ -469,7 +522,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 &format!("global variable `{}` is already declared", var.ident),
             ));
         }
-        self.var_func.unsed_vars.insert(var.ident, (var.span, Cell::new(false)));
+        self.var_func
+            .unsed_vars
+            .insert(ScopedIdent::global(self.name, var.ident), (var.span, Cell::new(false)));
     }
 
     fn visit_params(&mut self, params: &[Param]) {
@@ -521,7 +576,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         &format!("duplicate param name `{}`", ident),
                     ));
                 }
-                self.var_func.unsed_vars.insert(*ident, (*span, Cell::new(false)));
+                self.var_func
+                    .unsed_vars
+                    .insert(ScopedIdent::func_scope(fn_id, *ident), (*span, Cell::new(false)));
             }
         } else {
             panic!("{}", Error::error_with_span(self, DUMMY, &format!("{:?}", params)))
@@ -540,6 +597,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         infer.visit_stmt(stmt);
 
         crate::visit::walk_stmt(self, stmt);
+        self.set_record_used_vars(true);
 
         // check the statement after walking incase there were var declarations
         let mut check = StmtCheck { tcxt: self };
