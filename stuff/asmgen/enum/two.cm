@@ -1,20 +1,21 @@
 linked fn write<T>(_: T);
 
 enum option {
-    foo(char),
+    foo(char, int),
     some,
     none,
 }
 
 fn main() {
-    let x = enum option::foo('c');
+    let x = enum option::foo('c', 11);
     match x {
         // TODO: if this is `x` weird stuff happens...
-        option::foo(ch) -> {
+        option::foo(ch, num) -> {
             write::<char>(ch);
+            write::<int>(num);
         },
         option::some -> {
-            write::<char>('x');
+            write::<string>("some variant");
         },
         option::none -> {
             exit;
