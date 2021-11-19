@@ -1,0 +1,7 @@
+error: Parser encountered incorrect token
+  --> ./stuff/parse_ui/enum/enum_err.cm:1:1
+0 |// Fail
+1 |
+  |enum option<T> {
+
+compilation stopped found 1 error

@@ -1,15 +1,15 @@
 // Generic list data structure with push and constructor "method" for stuff.
 
-T* alloc<T>(int size) {
+alloc<T>(size: int): *T {
     // TODO
-    T* x;
+    let x: *T = ??;
     return x;
 }
 
 struct list<T> {
-    int len;
-    int cap;
-    T* buf;
+    len: int,
+    cap: int,
+    buf: *T,
 }
 
 enum foo { a, b, c }

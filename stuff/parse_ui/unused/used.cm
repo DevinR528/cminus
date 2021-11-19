@@ -1,3 +1,4 @@
+// Fail
 linked fn write(_: bool);
 
 fn scope() {
