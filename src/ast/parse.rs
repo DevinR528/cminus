@@ -23,7 +23,7 @@ use self::lex::Base;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub type AstSender = Sender<ParseResult<(usize, ast::Declaration)>>;
+pub type AstSender = Sender<ParseResult<(String, usize, ast::Declaration)>>;
 
 // TODO: this is basically one file = one mod/crate/program unit add mod linking or
 // whatever.
@@ -142,7 +142,7 @@ impl<'a> AstBuilder<'a> {
                                     // don't get much benefit from threading now
                                     for item in parser.into_items() {
                                         cnt -= 1;
-                                        snd.send(Ok((cnt, item)));
+                                        snd.send(Ok((s.clone(), cnt, item)));
                                     }
                                     Ok(())
                                 });
