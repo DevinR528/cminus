@@ -9,6 +9,7 @@
     - Add scopes/namespaces
     - All rvalues (i.e. structs/enums/calls, not builtin types) are now paths for name resolution to resolve
     - Eventually do this "async", each name-res candidate has a dependency graph (these are fulfilled with declarations)
+  - Remove `string` type for `struct str/string` and all const strings are now `[char; size]`
 
 ## Compiler work
   - Get imports working robustly
@@ -21,6 +22,7 @@
   - add support for uninitialized values MAYBE???
   - var args for native printf
     - string needs to be convertable to a slice/array thing or impled as a struct with len and bufff
+  - `size_of` or something so that adding to pointer types isn't hardcoded crap...
   - and...
 
 # The Whole Point
