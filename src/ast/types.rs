@@ -261,14 +261,15 @@ pub enum Ty {
     Enum { ident: Ident, gen: Vec<Type> },
     /// Any kind of path, this could be a type name or an import path
     Path(Path),
-    /// A pointer to a type.
+    /// A pointer to a type. From either taking the address of `&x` or passed as argument `*x`.
     ///
     /// This is equivalent to indirection, for each layer of `Ty::Ptr(..)` we have
     /// to follow a reference to get at the value.
     Ptr(Box<Type>),
     /// This represents the number of times a pointer has been followed.
     ///
-    /// The number of dereferences represented as layers.
+    /// The number of dereferences represented as layers. A deref is `*` on a type that is an
+    /// address i.e. `&x`
     Ref(Box<Type>),
     /// A string of `char`'s.
     ///

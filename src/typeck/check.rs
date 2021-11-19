@@ -33,58 +33,74 @@ crate struct StmtCheck<'v, 'ast, 'input> {
     crate tcxt: &'v mut TyCheckRes<'ast, 'input>,
 }
 
+impl<'ast> StmtCheck<'_, 'ast, '_> {
+    fn check_assignment(
+        &mut self,
+        lval: &'ast Expression,
+        rval: &'ast Expression,
+        span: Range,
+        is_let: bool,
+    ) {
+        let orig_lty = lvalue_type(self.tcxt, lval, span);
+        let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
+
+        let mut stack = if let Some((def, ident)) = self
+            .tcxt
+            .curr_fn
+            .as_ref()
+            .and_then(|f| Some((self.tcxt.var_func.name_func.get(f)?, *f)))
+        {
+            if def.generics.is_empty() {
+                vec![]
+            } else {
+                vec![Node::Func(ident)]
+            }
+        } else {
+            vec![]
+        };
+        collect_enum_generics(self.tcxt, lval_ty.as_ref(), &rval.val, &mut stack);
+
+        let orig_rty = self.tcxt.expr_ty.get(rval);
+        let mut rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
+
+        check_used_enum_generics(
+            self.tcxt,
+            lval_ty.as_ref(),
+            rval_ty.as_mut(),
+            rval.span,
+            &rval.val,
+        );
+
+        coercion(lval_ty.as_ref(), rval_ty.as_mut());
+
+        if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
+            self.tcxt.errors.push(Error::error_with_span(
+                self.tcxt,
+                span,
+                &format!(
+                    "[E0tc] assign to expression of wrong type\nfound `{}` expected `{}`",
+                    orig_rty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                    orig_lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                ),
+            ));
+        } else if let Expr::Ident(id) = &lval.val {
+            if let Expr::Value(val) = &rval.val {
+                // TODO: I don't remember what consts does in const folding???
+                self.tcxt.consts.insert(*id, &val.val);
+            }
+        }
+    }
+}
+
 impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         match &stmt.val {
             Stmt::Const(_) => {}
-            Stmt::Assign { lval, rval, .. } | Stmt::AssignOp { lval, rval, .. } => {
-                let orig_lty = lvalue_type(self.tcxt, lval, stmt.span);
-                let lval_ty = resolve_ty(self.tcxt, lval, orig_lty.as_ref());
-
-                let mut stack = if let Some((def, ident)) = self
-                    .tcxt
-                    .curr_fn
-                    .as_ref()
-                    .and_then(|f| Some((self.tcxt.var_func.name_func.get(f)?, *f)))
-                {
-                    if def.generics.is_empty() {
-                        vec![]
-                    } else {
-                        vec![Node::Func(ident)]
-                    }
-                } else {
-                    vec![]
-                };
-                collect_enum_generics(self.tcxt, lval_ty.as_ref(), &rval.val, &mut stack);
-
-                let orig_rty = self.tcxt.expr_ty.get(rval);
-                let mut rval_ty = resolve_ty(self.tcxt, rval, orig_rty);
-
-                check_used_enum_generics(
-                    self.tcxt,
-                    lval_ty.as_ref(),
-                    rval_ty.as_mut(),
-                    rval.span,
-                    &rval.val,
-                );
-
-                coercion(lval_ty.as_ref(), rval_ty.as_mut());
-
-                if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
-                    self.tcxt.errors.push(Error::error_with_span(
-                        self.tcxt,
-                        stmt.span,
-                        &format!(
-                            "[E0tc] assign to expression of wrong type\nfound `{}` expected `{}`",
-                            orig_rty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                            orig_lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
-                        ),
-                    ));
-                } else if let Expr::Ident(id) = &lval.val {
-                    if let Expr::Value(val) = &rval.val {
-                        self.tcxt.consts.insert(*id, &val.val);
-                    }
-                }
+            Stmt::Assign { lval, rval, is_let, ty: _ty } => {
+                self.check_assignment(lval, rval, stmt.span, *is_let)
+            }
+            Stmt::AssignOp { lval, rval, .. } => {
+                self.check_assignment(lval, rval, stmt.span, false)
             }
             Stmt::Call(_expr) => {
                 // Hmm we need something here?
