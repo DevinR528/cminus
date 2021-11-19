@@ -1,12 +1,11 @@
-void main() {
- float a,b;
+linked fn write<T>(_: T);
 
-	a=1.5;
-	while (a) {
-		write(a);
-		a=a-0.1;
-	}
-	write(a);
-
-	exit;
+fn main() {
+    let b = 0.0;
+    let a = 1.5;
+    while (a) {
+        write::<float>(a);
+        a -= 0.1;
+    }
+    write::<float>(a);
 }

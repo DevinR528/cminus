@@ -1,12 +1,11 @@
-void main() {
- int a,b;
+linked fn write<T>(_: T);
 
-	a=1;
-	while (a<=10) {
-		write(a);
-		a=a+1;
-	}
-	write(a);
-
-	exit;
+fn main() {
+    let a = 1;
+    while (a<=10) {
+        write::<int>(a);
+        a=a+1;
+    }
+    write::<int>(a);
+    exit;
 }

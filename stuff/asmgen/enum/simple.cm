@@ -7,11 +7,11 @@ enum option {
 }
 
 fn main() {
-    let x = enum option::some;
-
+    let x = enum option::foo('c');
     match x {
-        option::foo(x) -> {
-            write(x);
+        // TODO: if this is `x` weird stuff happens...
+        option::foo(ch) -> {
+            write(ch);
         },
         option::some -> {
             write('1');
