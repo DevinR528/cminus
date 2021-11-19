@@ -627,12 +627,17 @@ impl Ty {
             Ty::Array { size, ty } => ty.size() * size,
             Ty::Struct { ident: _, gen: _, def } => def.fields.iter().map(|f| f.ty.size()).sum(),
             Ty::Enum { ident: _, gen: _, def } => {
-                def.variants.iter().map(|v| v.types.iter().map(|t| t.size()).sum::<usize>()).sum()
+                let variants = def
+                    .variants
+                    .iter()
+                    .map(|v| v.types.iter().map(|t| t.size()).sum::<usize>())
+                    .max()
+                    .unwrap_or(0);
+                // TODO: tag size
+                let tag = 8_usize;
+                tag + variants
             }
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::String => 8,
-            Ty::Int => 8,
-            Ty::Char => 8,
-            Ty::Float => 8,
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Char | Ty::Float => 8,
             Ty::Bool => 4,
             Ty::Void => 0,
             _ => unreachable!("generic type should be monomorphized"),
