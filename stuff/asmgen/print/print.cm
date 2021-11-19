@@ -1,9 +1,14 @@
 linked fn putchar(_: char);
 
-fn debug(fmt: string, vals: [5; int], len: int): int {
+struct str {
+    buf: *char,
+    len: int,
+}
+
+fn debug(fmt: str, vals: [5; int], len: int): int {
     let val_idx = 0;
-    let x = &fmt;
-    while (x != '\0') {
+    let x = fmt.buf;
+    while (val_idx > fmt.len) {
         let ch = *x;
         if (ch == '%') {
             let val = vals[val_idx];
@@ -16,7 +21,7 @@ fn debug(fmt: string, vals: [5; int], len: int): int {
 }
 
 fn main() {
-    let fmt = "hello %, %, %\n\0";
+    let fmt = "hello %, %, %\n";
     if (debug(fmt, [1, 2, 3, 0,0], 3) != 0) {
         exit;
     } else {

@@ -14,8 +14,6 @@ fn main() {
         n = n + 1;
     }
 
-    write::<string>("here");
-
     let m = 0;
     while (target[m+1] != 0) {
         cost[m*size] = m;
@@ -30,7 +28,6 @@ fn main() {
             cost[i*size+j] = cost[(i - 1)*size+j - 1];
 
             if (target[i] != source[j]) {
-                write::<int>(j+i);
                 cost[i*size+j] = cost[i*size+j] + 1;
             }
 
@@ -45,14 +42,8 @@ fn main() {
         }
         i = i + 1;
     }
-    i = 0;
-    while (i < 100) {
-        write::<int>(cost[i]);
-        i += 1;
-    }
 
     write::<int>(m);
     write::<int>(n);
     write::<int>(cost[m*size+n]);
-    exit;
 }
