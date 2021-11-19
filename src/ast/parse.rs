@@ -35,7 +35,12 @@ pub struct AstBuilder<'a> {
     input: &'a str,
     file: &'a str,
     input_idx: usize,
+
+    // HACK: FIXME
+    in_match_stmt: bool,
+
     items: Vec<ast::Declaration>,
+
     call_stack: Vec<&'static str>,
     stack_idx: usize,
 
@@ -578,7 +583,10 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             exprs
         } else {
-            vec![]
+            return Err(ParseError::Error(
+                "expected `{` for struct init expression",
+                self.curr_span(),
+            ));
         })
     }
 
@@ -702,119 +710,125 @@ impl<'a> AstBuilder<'a> {
             let x: Result<kw::Keywords, _> = self.input_curr().try_into();
             if let Ok(key) = x {
                 match key {
-                    kw::Enum => self.make_enum_init(),
-                    kw::Struct => self.make_struct_init(),
+                    // kw::Enum => self.make_enum_init(),
+                    // kw::Struct => self.make_struct_init(),
                     kw::True => {
-                        Ok(ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span()))
+                        return Ok(
+                            ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span())
+                        );
                     }
                     kw::False => {
-                        Ok(ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span()))
+                        return Ok(
+                            ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span())
+                        );
                     }
-                    t => Err(ParseError::Error("unexpected keyword", self.curr_span())),
-                }
-            } else {
-                // TODO: Refactor out
-                // Shunting Yard algo http://en.wikipedia.org/wiki/Shunting_yard_algorithm
-                let mut output: Vec<ast::Expression> = vec![];
-                let mut opstack: Vec<AssocOp> = vec![];
-                while self.curr.kind != TokenMatch::Semi {
-                    self.eat_whitespace();
-                    let (ex, op) = self.advance_to_op()?;
-                    self.eat_whitespace();
-                    if let Some(next) = op {
-                        // if the previous operator is of a higher precedence than the incoming
-                        match opstack.pop() {
-                            Some(prev)
-                                if next.precedence() < prev.precedence()
-                                    || (next.precedence() == prev.precedence()
-                                        && matches!(prev.fixity(), Fixit::Left)) =>
-                            {
-                                let lhs = output.pop().unwrap();
-
-                                let span = ast::to_rng(lhs.span.start..ex.span.end);
-                                let mut finish = ast::Expr::Binary {
-                                    op: prev.to_ast_binop().unwrap(),
-                                    lhs: box lhs,
-                                    rhs: box ex,
-                                }
-                                .into_spanned(span);
-
-                                while let Some(lfix_op) = opstack.pop() {
-                                    if matches!(lfix_op.fixity(), Fixit::Left) {
-                                        let lhs = output.pop().unwrap();
-                                        let span = ast::to_rng(lhs.span.start..finish.span.end);
-                                        finish = ast::Expr::Binary {
-                                            op: lfix_op.to_ast_binop().unwrap(),
-                                            lhs: box lhs,
-                                            rhs: box finish,
-                                        }
-                                        .into_spanned(span);
-                                    } else {
-                                        opstack.push(lfix_op);
-                                        break;
-                                    }
-                                }
-
-                                output.push(finish);
-                                opstack.push(next);
-                            }
-                            Some(prev) => {
-                                output.push(ex);
-                                opstack.push(prev);
-                                opstack.push(next);
-                            }
-                            None => {
-                                output.push(ex);
-                                opstack.push(next);
-                            }
-                        }
-                    // TODO: cleanup
-                    // There is probably a better way to do this
-                    } else {
-                        output.push(ex);
-
-                        // We have to process the stack/output and the last (expr, binop) pair
-                        loop {
-                            match (output.pop(), opstack.pop()) {
-                                (Some(rhs), Some(bin)) => {
-                                    if let Some(first) = output.pop() {
-                                        let span = ast::to_rng(first.span.start..rhs.span.end);
-                                        let finish = ast::Expr::Binary {
-                                            op: bin.to_ast_binop().unwrap(),
-                                            lhs: box first,
-                                            rhs: box rhs,
-                                        }
-                                        .into_spanned(span);
-
-                                        output.push(finish);
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                (Some(expr), None) => {
-                                    return Ok(expr);
-                                }
-                                (None, Some(op)) => {
-                                    return Err(ParseError::Expected(
-                                        "a term",
-                                        format!("only the {} operand", op),
-                                        self.curr_span(),
-                                    ));
-                                }
-                                (None, None) => {
-                                    unreachable!("dont think this is possible")
-                                }
-                            }
-                        }
-                        break;
+                    t => {
+                        return Err(ParseError::Error("unexpected keyword", self.curr_span()));
                     }
                 }
-
-                output.pop().ok_or_else(|| {
-                    ParseError::Error("failed to generate expression", self.curr_span())
-                })
             }
+            // TODO: Refactor out
+            // Shunting Yard algo http://en.wikipedia.org/wiki/Shunting_yard_algorithm
+            let mut output: Vec<ast::Expression> = vec![];
+            let mut opstack: Vec<AssocOp> = vec![];
+            while self.curr.kind != TokenMatch::Semi {
+                self.eat_whitespace();
+                let (ex, op) = self.advance_to_op()?;
+                self.eat_whitespace();
+                if let Some(next) = op {
+                    // if the previous operator is of a higher precedence than the incoming
+                    match opstack.pop() {
+                        Some(prev)
+                            if next.precedence() < prev.precedence()
+                                || (next.precedence() == prev.precedence()
+                                    && matches!(prev.fixity(), Fixit::Left)) =>
+                        {
+                            let lhs = output.pop().unwrap();
+
+                            let span = ast::to_rng(lhs.span.start..ex.span.end);
+                            let mut finish = ast::Expr::Binary {
+                                op: prev.to_ast_binop().unwrap(),
+                                lhs: box lhs,
+                                rhs: box ex,
+                            }
+                            .into_spanned(span);
+
+                            while let Some(lfix_op) = opstack.pop() {
+                                if matches!(lfix_op.fixity(), Fixit::Left) {
+                                    let lhs = output.pop().unwrap();
+                                    let span = ast::to_rng(lhs.span.start..finish.span.end);
+                                    finish = ast::Expr::Binary {
+                                        op: lfix_op.to_ast_binop().unwrap(),
+                                        lhs: box lhs,
+                                        rhs: box finish,
+                                    }
+                                    .into_spanned(span);
+                                } else {
+                                    opstack.push(lfix_op);
+                                    break;
+                                }
+                            }
+
+                            output.push(finish);
+                            opstack.push(next);
+                        }
+                        Some(prev) => {
+                            output.push(ex);
+                            opstack.push(prev);
+                            opstack.push(next);
+                        }
+                        None => {
+                            output.push(ex);
+                            opstack.push(next);
+                        }
+                    }
+                // TODO: cleanup
+                // There is probably a better way to do this
+                } else {
+                    output.push(ex);
+
+                    // We have to process the stack/output and the last (expr, binop) pair
+                    loop {
+                        match (output.pop(), opstack.pop()) {
+                            (Some(rhs), Some(bin)) => {
+                                if let Some(first) = output.pop() {
+                                    let span = ast::to_rng(first.span.start..rhs.span.end);
+                                    let finish = ast::Expr::Binary {
+                                        op: bin.to_ast_binop().unwrap(),
+                                        lhs: box first,
+                                        rhs: box rhs,
+                                    }
+                                    .into_spanned(span);
+
+                                    output.push(finish);
+                                } else {
+                                    break;
+                                }
+                            }
+                            (Some(expr), None) => {
+                                return Ok(expr);
+                            }
+                            (None, Some(op)) => {
+                                return Err(ParseError::Expected(
+                                    "a term",
+                                    format!("only the {} operand", op),
+                                    self.curr_span(),
+                                ));
+                            }
+                            (None, None) => {
+                                unreachable!("dont think this is possible")
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            output
+                .pop()
+                .ok_or_else(|| ParseError::Error("failed to generate expression", self.curr_span()))
         } else {
+            panic!("{:?}", self.curr);
             // See the above 4 todos/fixes
             Err(ParseError::Error("no top level expression", self.curr_span()))
         }
@@ -980,34 +994,57 @@ impl<'a> AstBuilder<'a> {
                     TokenMatch::Lt,
                 ]) || self.curr.kind == TokenMatch::OpenParen);
 
-                if path.segs.len() == 1 && !is_func_call {
+                // TODO: there has GOT to be a clearer way of writing this...
+                let is_struct_in_match = if self.in_match_stmt {
+                    // FIXME: this would NOT catch `match struct_foo {} {}` where `struct_foo` is
+                    // empty
+                    self.cmp_seq_ignore_ws(&[
+                        TokenMatch::Ident,
+                        TokenMatch::Colon,
+                        TokenMatch::Ident,
+                        TokenMatch::Comma,
+                    ])
+                } else {
+                    false
+                };
+                let is_struct = !path.segs.is_empty()
+                    && ((self.curr.kind == TokenMatch::OpenBrace && !self.in_match_stmt)
+                        || is_struct_in_match);
+
+                let is_itemless_enum = !path.segs.is_empty() && self.curr.kind == TokenMatch::Semi;
+
+                if path.segs.len() == 1 && !is_func_call && !is_struct && !is_itemless_enum {
                     ast::Expr::Ident(path.segs.remove(0))
                         .into_spanned(ast::to_rng(start..self.curr_span().start))
-                } else {
+                } else if is_func_call {
                     // We are most likely in a function call
-                    if is_func_call {
-                        let type_args = self.make_type_args()?;
+                    let type_args = self.make_type_args()?;
 
-                        self.eat_whitespace();
-                        self.eat_if(&TokenMatch::OpenParen);
+                    self.eat_whitespace();
+                    self.eat_if(&TokenMatch::OpenParen);
 
-                        let mut args = self.make_arg_list()?;
-                        // This is duplicated iff we have a no arg call
-                        self.eat_whitespace();
-                        self.eat_if(&TokenMatch::CloseParen);
+                    let mut args = self.make_arg_list()?;
+                    // This is duplicated iff we have a no arg call
+                    self.eat_whitespace();
+                    self.eat_if(&TokenMatch::CloseParen);
 
-                        ast::Expr::Call { path, type_args, args }
-                            .into_spanned(ast::to_rng(start..self.curr_span().end))
-                    } else {
-                        // TODO: better errors here (this is common bottom out)
-                        // TODO: enums will end up here, well they could also be functions ewww hmmm
-                        // TODO: enums will end up here, well they could also be functions ewww hmmm
-                        // TODO: enums will end up here, well they could also be functions ewww hmmm
-                        return Err(ParseError::Error(
-                            "ident, field access, array index or fn call",
-                            self.curr_span(),
-                        ));
-                    }
+                    // TODO an enum that is just a path
+                    // This can be an enum also
+                    ast::Expr::Call { path, type_args, args }
+                        .into_spanned(ast::to_rng(start..self.curr_span().end))
+                } else if is_struct {
+                    let fields = self.make_field_list()?;
+                    let span = ast::to_rng(start..self.curr_span().end);
+                    ast::Expr::StructInit { path, fields }.into_spanned(span)
+                } else if is_itemless_enum {
+                    let variant = path.segs.pop().unwrap();
+                    let span = ast::to_rng(start..self.curr_span().end);
+                    ast::Expr::EnumInit { path, variant, items: vec![] }.into_spanned(span)
+                } else {
+                    return Err(ParseError::Error(
+                        "ident, field access, array index or fn call",
+                        self.curr_span(),
+                    ));
                 }
             }
         } else {
@@ -1133,32 +1170,6 @@ impl<'a> AstBuilder<'a> {
         })
     }
 
-    fn make_enum_init(&mut self) -> ParseResult<ast::Expression> {
-        self.push_call_stack("make_enum_init");
-        let start = self.input_idx;
-
-        self.eat_if_kw(kw::Enum);
-        let mut path = self.make_path()?;
-        let variant = path.segs.pop().unwrap();
-        let items = self.make_expr_list(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
-
-        let span = ast::to_rng(start..self.curr_span().end);
-        Ok(ast::Expr::EnumInit { path, variant, items }.into_spanned(span))
-    }
-
-    fn make_struct_init(&mut self) -> ParseResult<ast::Expression> {
-        self.push_call_stack("make_struct_init");
-        let start = self.input_idx;
-
-        self.eat_if_kw(kw::Struct);
-        let path = self.make_path()?;
-
-        let fields = self.make_field_list()?;
-
-        let span = ast::to_rng(start..self.curr_span().end);
-        Ok(ast::Expr::StructInit { path, fields }.into_spanned(span))
-    }
-
     fn make_block(&mut self) -> ParseResult<ast::Block> {
         self.push_call_stack("make_block");
         let start = self.input_idx;
@@ -1202,7 +1213,10 @@ impl<'a> AstBuilder<'a> {
         } else if self.eat_if_kw(kw::While) {
             self.make_while_stmt()?
         } else if self.eat_if_kw(kw::Match) {
-            self.make_match_stmt()?
+            self.in_match_stmt = true;
+            let stmt = self.make_match_stmt()?;
+            self.in_match_stmt = false;
+            stmt
         } else if self.eat_if_kw(kw::Return) {
             self.make_return_stmt()?
         } else if self.eat_if_kw(kw::Exit) {
@@ -2272,7 +2286,7 @@ fn add() {
 fn parse_assign_struct() {
     let input = r#"
 fn add() {
-    let x = struct foo { x: 1, y: "string" };
+    let x = foo { x: 1, y: "string" };
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
@@ -2284,7 +2298,7 @@ fn add() {
 fn parse_assign_enum() {
     let input = r#"
 fn add() {
-    let x = enum foo::bar(a, 1+0, 1.6);
+    let x = foo::bar(a, 1+0, 1.6);
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
