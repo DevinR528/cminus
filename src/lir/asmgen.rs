@@ -1190,33 +1190,40 @@ impl<'ctx> CodeGen<'ctx> {
                         size: 8,
                     }]);
                 } else {
+                    // This was the other branch when it was in the for loop below
+                    // else {
+                    //     self.asm_buf.extend_from_slice(&[Instruction::Push {
+                    //         loc: rval,
+                    //         size: ele_size,
+                    //         comment: "we are allocating for enum payload",
+                    //     }]);
+                    // }
                     todo!()
                 }
+
+                let (mut running_offset, reg) =
+                    if let Some(Location::NumberedOffset { offset, reg }) = lval {
+                        (offset, reg.clone())
+                    } else {
+                        todo!("not sure")
+                    };
                 for item in items.iter() {
                     let rval = self.build_value(item, None, can_clear).unwrap();
 
                     let ele_size = item.type_of().size();
-                    if let Some(Location::NumberedOffset { offset, reg }) = lval {
-                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                            // Move the value on the right hand side of the `= here`
-                            src: rval,
-                            // to the left hand side of `here =`
-                            // The start offset - the current item size + the tag bits which are
-                            // first
-                            dst: Location::NumberedOffset {
-                                offset: (offset - (ele_size + 8)),
-                                reg,
-                            },
-                            size: ele_size,
-                        }]);
-                    } else {
-                        self.asm_buf.extend_from_slice(&[Instruction::Push {
-                            loc: rval,
-                            size: ele_size,
-                            comment: "",
-                        }]);
-                    }
+
+                    running_offset -= ele_size;
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        // Move the value on the right hand side of the `= here`
+                        src: rval,
+                        // to the left hand side of `here =`
+                        // The start offset - the current item size + the tag bits which are
+                        // first
+                        dst: Location::NumberedOffset { offset: running_offset, reg: reg.clone() },
+                        size: ele_size,
+                    }]);
                 }
+
                 if let Some(lval @ Location::NumberedOffset { .. }) = lval {
                     lval
                 } else {
@@ -1626,9 +1633,9 @@ impl<'ctx> CodeGen<'ctx> {
                     std::mem::swap(&mut self.asm_buf, &mut jump_stream[idx]);
                     for stmt in &arm.blk.stmts {
                         self.gen_statement(stmt);
-
-                        self.asm_buf.push(Instruction::Jmp(Location::Label(match_merge.clone())));
                     }
+                    self.asm_buf.push(Instruction::Jmp(Location::Label(match_merge.clone())));
+
                     // Now swap the asm_buf back to where it should be
                     std::mem::swap(&mut self.asm_buf, &mut jump_stream[idx]);
                 }
@@ -1698,8 +1705,17 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Pat::Bind(bind) => match bind {
                 Binding::Wild(ident) => {
-                    if let Some(idx) = item_idx {
-                        self.alloc_stack(*ident, ty);
+                    if let Location::NumberedOffset { offset, reg } = tag_val {
+                        if let Some(idx) = item_idx {
+                            let ref_loc = Location::NumberedOffset {
+                                // TODO: don't assume the type is a certain size (8 bytes)
+                                // We add 2 to make up for the tag and we assume the type is 8 bytes
+                                offset: offset - ((idx + 1) * 8),
+                                reg: reg.clone(),
+                            };
+
+                            self.vars.insert(*ident, ref_loc.clone());
+                        }
                     }
                 }
                 Binding::Value(val) => {
