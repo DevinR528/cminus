@@ -1,6 +1,8 @@
 // Generic list data structure with push and constructor "method" for stuff.
 
-alloc<T>(size: int): *T {
+linked fn write<T>(_: T);
+
+fn alloc<T>(size: int): *T {
     // TODO
     let x: *T = ??;
     return x;
@@ -14,9 +16,8 @@ struct list<T> {
 
 enum foo { a, b, c }
 
-struct list<T> list<T>(int size) {
-    struct list<T> x;
-    x = list {
+fn list<T>(int size): list<T> {
+    let x = list {
         len: 0,
         cap: size,
         buf: alloc::<T>(size),
@@ -24,7 +25,7 @@ struct list<T> list<T>(int size) {
     return x;
 }
 
-void push<T>(struct list<T>* this, T item) {
+fn push<T>(this: list<T>*, item: T) {
     if (this->cap <= this->len) {
         // allocate ...
     } else {
@@ -34,13 +35,11 @@ void push<T>(struct list<T>* this, T item) {
     }
 }
 
-void main() {
-    struct list<int> x;
-    x = list::<int>(3);
+fn main() {
+    let x = list::<int>(3);
     push::<int>(&x, 10);
 
-    struct list<enum foo> y;
-    y = list::<enum foo>(3);
+    let y = list::<enum foo>(3);
     // push::<enum foo>(&x, false);
 
 }

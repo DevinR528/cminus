@@ -3,11 +3,10 @@ enum two<X, Y> {
     more(Y),
 }
 
-enum two<A, B> test<A, B>(B hmm) {
+fn test<A, B>(hmm: B): two<A, B> {
     return two::more(hmm);
 }
 
 void main() {
-    enum two<int, char> x;
-    x = test::<int, char>('c');
+    let x = test::<int, char>('c');
 }

@@ -1,8 +1,9 @@
-void main() {
-    int x, y;
+linked fn write<T>(_: T);
 
-    x = 10;
-    y = 0;
+fn main() {
+    let x = 10;
+    let y = 0;
+
     match x {
         0 -> {}
         1 -> {}
@@ -11,8 +12,9 @@ void main() {
             y = a;
         }
     }
+
     if (y > 3) {
-        write("> 3");
+        write::<string>("> 3");
     }
 }
 
