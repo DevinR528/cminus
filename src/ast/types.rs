@@ -4,7 +4,11 @@ use std::{
     ops,
 };
 
-use crate::{ast::parse::symbol::Ident, error::Error, typeck::TyCheckRes};
+use crate::{
+    ast::parse::symbol::Ident,
+    error::Error,
+    typeck::{rawvec::RawVec, TyCheckRes},
+};
 
 crate trait TypeEquality<T = Self> {
     /// If the two types are considered equal.
@@ -166,7 +170,7 @@ pub enum Expr {
     /// An expression wrapped in parantheses (expr).
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
-    Call { path: Path, args: Vec<Expression>, type_args: Vec<Type> },
+    Call { path: Path, args: Vec<Expression>, type_args: RawVec<Type> },
     /// A call to a trait method with possible expression arguments `<<T>::trait>(expr)`.
     TraitMeth { trait_: Path, args: Vec<Expression>, type_args: Vec<Type> },
     /// Access the fields of a struct `expr.expr.expr;`.
