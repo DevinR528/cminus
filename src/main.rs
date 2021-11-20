@@ -10,7 +10,10 @@
     path_file_prefix,
     io_error_more,
     const_fn_trait_bound,
-    hash_drain_filter
+    hash_drain_filter,
+    ptr_internals,
+    vec_into_raw_parts,
+    allocator_api
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
