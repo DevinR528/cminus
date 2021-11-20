@@ -1014,7 +1014,7 @@ impl<'a> AstBuilder<'a> {
                     && ((self.curr.kind == TokenMatch::OpenBrace && !self.in_match_stmt)
                         || is_struct_in_match);
 
-                let is_itemless_enum = !path.segs.is_empty() && self.curr.kind == TokenMatch::Semi;
+                let is_itemless_enum = path.segs.len() > 1 && self.curr.kind == TokenMatch::Semi;
 
                 if path.segs.len() == 1 && !is_func_call && !is_struct && !is_itemless_enum {
                     ast::Expr::Ident(path.segs.remove(0))
@@ -1302,7 +1302,7 @@ impl<'a> AstBuilder<'a> {
         let arms = self.make_arms()?;
 
         self.eat_whitespace();
-        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_if(&TokenMatch::CloseBrace);
         self.eat_whitespace();
 
         Ok(ast::Stmt::Match { expr, arms })
