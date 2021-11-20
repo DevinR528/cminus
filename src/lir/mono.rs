@@ -27,6 +27,11 @@ impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
         crate::visit::walk_mut_func(self, func);
     }
 
+    fn visit_ty(&mut self, ty: &mut ty::Type) {
+        // println!("{:?} {:?} {:?}", self.generic, self.ty, ty);
+        ty.val.subst_generic(self.generic.ident, self.ty)
+    }
+
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         if let Some(t) = self.tcxt.expr_ty.get(expr) {
             if t.has_generics() && t.generic() == self.generic.ident {
@@ -34,11 +39,6 @@ impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
             }
         }
         crate::visit::walk_mut_expr(self, expr);
-    }
-
-    fn visit_ty(&mut self, ty: &mut ty::Type) {
-        // println!("{:?} {:?} {:?}", self.generic, self.ty, ty);
-        ty.val.subst_generic(self.generic.ident, self.ty)
     }
 }
 
@@ -54,56 +54,6 @@ impl<'a> TraitRes<'a> {
 }
 
 impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
-    fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
-        let mut x = None;
-        if let ty::Expr::TraitMeth { trait_, type_args: _, args } = &mut expr.val {
-            let ident = trait_.segs.last().unwrap();
-            if let Some(i) =
-                self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
-            {
-                let mut args = args.clone();
-                for arg in &mut args {
-                    // Incase there is a function/trait method call as an argument
-                    self.visit_expr(arg);
-                }
-                let ident = Ident::new(
-                    DUMMY,
-                    &format!(
-                        "{}{}",
-                        trait_,
-                        self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                    ),
-                );
-                x = Some(ty::Expr::Call {
-                    path: Path::single(ident),
-                    args,
-                    type_args: vec![i.method.ret.clone()],
-                });
-            } else {
-                panic!(
-                    "{}",
-                    Error::error_with_span(
-                        self.tcxt,
-                        expr.span,
-                        &format!(
-                            "`{}` is not implemented for `<{}>`",
-                            trait_,
-                            self.type_args
-                                .iter()
-                                .map(|t| t.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        )
-                    )
-                )
-            }
-        }
-
-        if let Some(replace) = x {
-            expr.val = replace;
-        }
-    }
-
     fn visit_stmt(&mut self, stmt: &'ast mut ty::Statement) {
         let mut x = None;
         if let ty::Stmt::TraitMeth(ty::Spanned {
@@ -128,7 +78,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                     ty::Expr::Call {
                         path: trait_.clone(),
                         args,
-                        type_args: vec![i.method.ret.clone()],
+                        type_args: crate::raw_vec![i.method.ret.clone()],
                     }
                     .into_spanned(DUMMY),
                 ));
@@ -157,6 +107,56 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
         // `walk_stmt` here to recurse into `Expr`, `visit_expr` stops (no walk call)
         crate::visit::walk_mut_stmt(self, stmt);
     }
+
+    fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
+        let mut x = None;
+        if let ty::Expr::TraitMeth { trait_, type_args: _, args } = &mut expr.val {
+            let ident = trait_.segs.last().unwrap();
+            if let Some(i) =
+                self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
+            {
+                let mut args = args.clone();
+                for arg in &mut args {
+                    // Incase there is a function/trait method call as an argument
+                    self.visit_expr(arg);
+                }
+                let ident = Ident::new(
+                    DUMMY,
+                    &format!(
+                        "{}{}",
+                        trait_,
+                        self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+                    ),
+                );
+                x = Some(ty::Expr::Call {
+                    path: Path::single(ident),
+                    args,
+                    type_args: crate::raw_vec![i.method.ret.clone()],
+                });
+            } else {
+                panic!(
+                    "{}",
+                    Error::error_with_span(
+                        self.tcxt,
+                        expr.span,
+                        &format!(
+                            "`{}` is not implemented for `<{}>`",
+                            trait_,
+                            self.type_args
+                                .iter()
+                                .map(|t| t.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        )
+                    )
+                )
+            }
+        }
+
+        if let Some(replace) = x {
+            expr.val = replace;
+        }
+    }
 }
 
 impl TyCheckRes<'_, '_> {
@@ -168,7 +168,7 @@ impl TyCheckRes<'_, '_> {
             // Mono the original function
             let mono_funcs = sub_mono_generic(func, res_list, self);
             mono_items.extend_from_slice(&mono_funcs);
-            // If `foo` was generic itself then any calls to generic functions `foo` makes
+            // If `foo` was generic itself then any calls to generic functions inside of `foo`
             // are dependent on the mono of `foo`
             let relations = self.generic_res.generic_dag().get(&node).unwrap();
             for node in relations.child_iter().filter(|n| matches!(n, Node::Func(_))) {
@@ -200,12 +200,19 @@ fn sub_mono_generic(
         generics.sort_by(|a, b| a.gen_idx.cmp(&b.gen_idx));
 
         for (i, gen) in generics.iter().enumerate() {
-            let gen_param = functions[idx].generics.get(gen.gen_idx).unwrap().clone();
+            let fn_gens = functions[idx].generics.len() - 1;
+            let safeidx = fn_gens.min(gen.gen_idx);
+            // if fn_gens < (gen.gen_idx + 1) { fn_gens.min(gen.gen_idx) } else { gen.gen_idx };
+            let gen_param = functions[idx]
+                .generics
+                .get(safeidx)
+                .unwrap_or_else(|| panic!("{:?} {}", functions[idx], gen.gen_idx))
+                .clone();
             // Replace ALL uses of this generic and remove the generic parameters
             let mut subs = GenSubstitution { generic: &gen_param, ty: &gen.ty, tcxt };
             subs.visit_func(&mut functions[idx]);
 
-            // CLEANUP: build the string then make a new ident so we aren't doing many little
+            // @cleanup: build the string then make a new ident so we aren't doing many little
             // allocs
             if i != generics.len() - 1 {
                 functions[idx].ident =
