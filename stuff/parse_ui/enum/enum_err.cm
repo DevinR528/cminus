@@ -4,9 +4,8 @@ enum option<T> {
     none,
 }
 
-void main() {
-    enum option<int> num;
-    num = option::some(10);
+fn main() {
+    let num = option::some(10);
 
     match num {
         option::some(a) -> {

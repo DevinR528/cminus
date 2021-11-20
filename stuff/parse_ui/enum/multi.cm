@@ -4,9 +4,7 @@ enum result<T, E> {
 }
 
 void main() {
-    enum result<int, char> res;
-    res = result::ok(10);
+    let res: result<int, char> = result::ok(10);
 
-    enum result<char, int> fib;
-    fib = result::error(10);
+    let fib: result<char, int> = result::error(10);
 }

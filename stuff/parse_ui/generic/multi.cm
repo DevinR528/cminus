@@ -6,10 +6,7 @@ fn foo<T, U, W>(x: U, y: W, it: T): T {
 }
 
 fn main() {
-    int x;
-    x = foo::<int, char, int>('c', 19);
-    char y;
-    y = foo::<char, char, int>('c', 19);
-    bool z;
-    z = foo::<bool, float, string>(1.1, "boop");
+    let x = foo::<int, char, int>('c', 19);
+    let y = foo::<char, char, int>('c', 19);
+    let z = foo::<bool, float, string>(1.1, "boop");
 }

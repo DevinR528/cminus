@@ -7,7 +7,7 @@ enum option {
 }
 
 fn main() {
-    let x = enum option::foo('c');
+    let x = option::foo('c');
     match x {
         // TODO: if this is `x` weird stuff happens...
         option::foo(ch) -> {
