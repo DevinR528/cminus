@@ -8,7 +8,7 @@ use std::{
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
-    ast::parse::symbol::Ident,
+    ast::{parse::symbol::Ident, types as ty},
     lir::{
         asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
         lower::{
@@ -814,6 +814,50 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
+    fn gen_call_expr(
+        &mut self,
+        path: &ty::Path,
+        args: &'ctx [Expr],
+        type_args: &[Ty],
+        can_clear: CanClearRegs,
+    ) -> Location {
+        for (idx, arg) in args.iter().enumerate() {
+            let val = self.build_value(arg, None, can_clear).unwrap();
+            let ty = arg.type_of();
+            if let Ty::Array { size: _, ty } = ty {
+                self.asm_buf.push(Instruction::Load {
+                    src: val,
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: ty.size(),
+                });
+            } else if let Ty::String = ty {
+                self.asm_buf.push(Instruction::Load {
+                    src: val,
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: ty.size(),
+                });
+            } else {
+                self.asm_buf.push(Instruction::SizedMov {
+                    src: val,
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: arg.type_of().size(),
+                });
+            }
+        }
+
+        let ident = if type_args.is_empty() {
+            path.to_string()
+        } else {
+            format!(
+                "{}{}",
+                path,
+                type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+            )
+        };
+        self.asm_buf.push(Instruction::Call(Location::Label(ident)));
+        Location::Register(Register::RAX)
+    }
+
     fn build_value(
         &mut self,
         expr: &'ctx Expr,
@@ -1104,73 +1148,10 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
             Expr::Call { path, args, type_args, def: _ } => {
-                for (idx, arg) in args.iter().enumerate() {
-                    let val = self.build_value(arg, None, can_clear).unwrap();
-                    let ty = arg.type_of();
-                    if let Ty::Array { size: _, ty } = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else if let Ty::String = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else {
-                        self.asm_buf.push(Instruction::SizedMov {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: arg.type_of().size(),
-                        });
-                    }
-                }
-
-                let ident = if type_args.is_empty() {
-                    path.to_string()
-                } else {
-                    format!(
-                        "{}{}",
-                        path,
-                        type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                    )
-                };
-                self.asm_buf.push(Instruction::Call(Location::Label(ident)));
-                Location::Register(Register::RAX)
+                self.gen_call_expr(path, args, type_args, can_clear)
             }
             Expr::TraitMeth { trait_, args, type_args, def: _ } => {
-                for (idx, arg) in args.iter().enumerate() {
-                    let val = self.build_value(arg, None, can_clear).unwrap();
-                    let ty = arg.type_of();
-                    if let Ty::Array { size: _, ty } = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else if let Ty::String = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else {
-                        self.asm_buf.push(Instruction::SizedMov {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: arg.type_of().size(),
-                        });
-                    }
-                }
-                let ident = format!(
-                    "{}{}",
-                    trait_,
-                    type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                );
-                self.asm_buf.push(Instruction::Call(Location::Label(ident)));
-                Location::Register(Register::RAX)
+                self.gen_call_expr(trait_, args, type_args, can_clear)
             }
             Expr::FieldAccess { .. } => todo!(),
             Expr::StructInit { .. } => {
@@ -1534,35 +1515,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else if "read" == &path.segs[0] {
                     self.call_scanf(&args[0]);
                 } else {
-                    // @copypaste this is the same as `Expr::Call`
-                    for (idx, arg) in args.iter().enumerate() {
-                        let val = self.build_value(arg, None, CanClearRegs::Yes).unwrap();
-                        let ty = arg.type_of();
-                        if let Ty::Array { size: _, ty } = ty {
-                            self.asm_buf.push(Instruction::Load {
-                                src: val,
-                                dst: Location::Register(ARG_REGS[idx]),
-                                size: ty.size(),
-                            });
-                        } else {
-                            self.asm_buf.push(Instruction::SizedMov {
-                                src: val,
-                                dst: Location::Register(ARG_REGS[idx]),
-                                size: arg.type_of().size(),
-                            });
-                        }
-                    }
-
-                    let ident = if type_args.is_empty() {
-                        path.to_string()
-                    } else {
-                        format!(
-                            "{}{}",
-                            path,
-                            type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                        )
-                    };
-                    self.asm_buf.push(Instruction::Call(Location::Label(ident)));
+                    self.gen_call_expr(path, args, type_args, CanClearRegs::Yes);
                 }
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
