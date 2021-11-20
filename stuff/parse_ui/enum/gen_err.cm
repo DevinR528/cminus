@@ -3,10 +3,8 @@ enum result<T, E> {
     error(E),
 }
 
-void main() {
-    enum result<int, char> res;
-    res = result::ok(10);
+fn main() {
+    let res: result<int, char> = result::ok(10);
 
-    enum result<char, int> fib;
-    fib = result::error('c'); // error on the correct generic param
+    let fib: result<char, int> = result::error('c'); // error on the correct generic param
 }
