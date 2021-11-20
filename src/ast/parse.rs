@@ -5,10 +5,13 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
-use crate::ast::{
-    lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
-    parse::symbol::Ident,
-    types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
+use crate::{
+    ast::{
+        lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
+        parse::symbol::Ident,
+        types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
+    },
+    typeck::rawvec::RawVec,
 };
 
 crate mod error;
@@ -1030,7 +1033,7 @@ impl<'a> AstBuilder<'a> {
 
                     // TODO an enum that is just a path
                     // This can be an enum also
-                    ast::Expr::Call { path, type_args, args }
+                    ast::Expr::Call { path, type_args: RawVec::from_vec(type_args), args }
                         .into_spanned(ast::to_rng(start..self.curr_span().end))
                 } else if is_struct {
                     let fields = self.make_field_list()?;
