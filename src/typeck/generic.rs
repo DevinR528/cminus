@@ -80,7 +80,10 @@ crate struct GenericParam {
     generics: HashMap<Ident, Option<Path>>,
     /// Any dependent generic types. When monomorphizing these will be walked to create
     /// mono variants of each type.
-    children: HashMap<Node, GenericParam>,
+    ///
+    /// We need to keep copies of the same function called with different args. we can dedup during
+    /// monomorphization.
+    children: Vec<(Node, GenericParam)>,
 }
 
 crate struct GenericParamIter<'a> {
@@ -91,7 +94,7 @@ crate struct GenericParamIter<'a> {
 impl<'a> Iterator for GenericParamIter<'a> {
     type Item = &'a Node;
     fn next(&mut self) -> Option<Self::Item> {
-        self.stack.extend(self.curr.children.iter());
+        self.stack.extend(self.curr.children.iter().map(|(a, b)| (a, b)));
         let next = self.stack.pop_front()?;
         self.curr = next.1;
         Some(next.0)
@@ -179,15 +182,17 @@ impl<'ast> GenericResolver<'ast> {
         _expr: &[TyRegion<'ast>],
         id: Ident,
         bound: Option<Path>,
-    ) -> Option<GenericParam> {
-        // println!("GEN STACK {:?} {:?}\n", stack, expr);
+    ) -> Option<()> {
+        // TODO: can this be more than 2 deep??
         let mut iter = stack.iter();
         let gp = self.item_generics.get_mut(iter.next()?)?;
 
         let mut generics = HashMap::default();
         generics.insert(id.to_owned(), bound);
 
-        gp.children.insert(*iter.next()?, GenericParam { generics, children: HashMap::default() })
+        gp.children.push((*iter.next()?, GenericParam { generics, children: vec![] }));
+
+        Some(())
     }
 
     crate fn push_resolved_child(
@@ -199,8 +204,7 @@ impl<'ast> GenericResolver<'ast> {
         exprs: Vec<TyRegion<'ast>>,
     ) {
         for node in stack.iter().rev() {
-            let _set = self
-                .node_resolved
+            self.node_resolved
                 // The map of function name -> indexed generic arguments
                 .entry(*node)
                 .or_default()
@@ -282,14 +286,3 @@ impl<'ast> GenericResolver<'ast> {
         }
     }
 }
-
-/*
-fn main() {
-    // This includes enums, structs, functions
-    res.collect_generic_declarations();
-
-    // direct use so `enum option<int> opt;` and `enum option<T> opt;` where T is
-    // inferred from a parent function.
-    res.collect_use_stmts();
-}
-*/
