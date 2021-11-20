@@ -28,6 +28,7 @@ use crate::{
 crate mod check;
 crate mod generic;
 crate mod infer;
+crate mod rawvec;
 crate mod trait_solver;
 
 use generic::{GenericResolver, Node};
@@ -778,6 +779,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::default();
+                let func = self.var_func.name_func.get(ident).expect("all functions are collected");
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     // TODO: name resolution
@@ -785,17 +787,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Don't use the same stack for each iteration
                     let mut stack = stack.clone();
 
-                    let func =
-                        self.var_func.name_func.get(ident).expect("all functions are collected");
                     let gen = &func.generics[gen_arg_idx];
                     // Find the param that is the "generic" and check against type argument
-                    let arguments = func
-                        .params
-                        .iter()
-                        .enumerate()
-                        .filter(|(_i, p)| gen.is_ty_eq(&p.ty.val))
-                        .map(|(i, _)| TyRegion::Expr(&args[i].val))
-                        .collect::<Vec<_>>();
+                    let mut arguments = vec![];
+                    for (i, p) in func.params.iter().enumerate() {
+                        if gen.is_ty_eq(&p.ty.val) {
+                            arguments.push(TyRegion::Expr(&args[i].val));
+                        }
+                    }
 
                     self.generic_res.collect_generic_usage(
                         &ty_arg,
@@ -844,7 +843,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             arg.span,
                             &format!(
-                                "call with wrong argument type\nfound `{}` expected `{}`",
+                                "[E0tc] call with wrong argument type\nfound `{}` expected `{}`",
                                 arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
