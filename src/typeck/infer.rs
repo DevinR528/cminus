@@ -327,11 +327,50 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Call { path, args, type_args } => {
+                let mut infered_ty_args = vec![];
                 for (idx, arg) in args.iter().enumerate() {
                     self.visit_expr(arg);
                 }
+
                 let func = self.tcxt.var_func.name_func.get(&path.segs[0]);
                 if let Some(func) = func {
+                    if type_args.is_empty() && !func.generics.is_empty() {
+                        for (arg, param) in args.iter().zip(&func.params) {
+                            if let Some(expr_ty) = self.tcxt.expr_ty.get(&arg) {
+                                if param.ty.val.has_generics() {
+                                    if let Some(ty_gen_pair) =
+                                        peel_out_ty(Some(expr_ty), &param.ty.val)
+                                    {
+                                        infered_ty_args.push(ty_gen_pair);
+                                    }
+                                }
+                            } else {
+                                self.tcxt.errors.push(Error::error_with_span(
+                                    self.tcxt,
+                                    expr.span,
+                                    &format!("[E0i] no type infered for argument"),
+                                ));
+                                self.tcxt.error_in_current_expr_tree = true;
+                            }
+                        }
+
+                        let last = infered_ty_args.len() - 1;
+                        for gen in &func.generics {
+                            let idx =
+                                infered_ty_args.iter().position(|(_, g)| gen.ident == *g).unwrap();
+                            // move idx to the head of the list
+                            infered_ty_args.swap(last, idx);
+                        }
+
+                        for (ty, _) in infered_ty_args {
+                            // SAFETY maybe:
+                            //
+                            // This will only ever be done on one thread at a time and nothing else
+                            // can mutate it, we are the only ones handling `type_args`.
+                            unsafe { type_args.push_shared(ty.into_spanned(DUMMY)) };
+                        }
+                    }
+
                     let ret_val = self.tcxt.patch_generic_from_path(&func.ret, expr.span).val;
                     // If the function is generic do complicated stuff
                     if ret_val.has_generics() {
@@ -367,8 +406,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                 }
                             });
                             for (idx, gen) in idx_gen {
-                                let ty_arg =
-                                    self.tcxt.patch_generic_from_path(&type_args[idx], expr.span);
+                                let ty_arg = self
+                                    .tcxt
+                                    .patch_generic_from_path(&type_args.slice()[idx], expr.span);
                                 subed_ty.subst_generic(gen, &ty_arg.val);
                             }
                         }
@@ -429,6 +469,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
     }
 }
 
+/// Return the concrete type and the matching generic.
 crate fn peel_out_ty(exty: Option<&Ty>, has_gen: &Ty) -> Option<(Ty, Ident)> {
     match (exty?, has_gen) {
         (t, Ty::Generic { ident, .. }) => Some((t.clone(), *ident)),
