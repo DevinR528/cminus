@@ -30,13 +30,7 @@ impl<T> RawVec<T> {
     #[inline]
     pub fn with_cap(cap: usize) -> Self {
         unsafe {
-            if mem::size_of::<T>() == 0 {
-                RawVec {
-                    ptr: Cell::new(NonNull::new_unchecked(ptr::null_mut())),
-                    len: Cell::new(0),
-                    cap: Cell::new(cap),
-                }
-            } else if cap == 0 {
+            if mem::size_of::<T>() == 0 || cap == 0 {
                 RawVec {
                     ptr: Cell::new(NonNull::new_unchecked(ptr::null_mut())),
                     len: Cell::new(0),
@@ -160,7 +154,7 @@ impl<T> RawVec<T> {
 
     #[inline]
     pub fn pop(&mut self) -> Option<T> {
-        if self.len() == 0 {
+        if self.is_empty() {
             None
         } else {
             unsafe {
@@ -211,6 +205,7 @@ impl<T> RawVec<T> {
     }
 }
 
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl<T: Send> Send for RawVec<T> {}
 unsafe impl<T: Sync> Sync for RawVec<T> {}
 
