@@ -231,7 +231,7 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Const(ast::Const { ident: id, ty, init: expr, span }).into_spanned(span))
     }
 
@@ -280,7 +280,7 @@ impl<'a> AstBuilder<'a> {
 
         let stmts = self.make_block()?;
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx(), self.file_id);
 
         Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
             .into_spanned(span))
@@ -339,7 +339,7 @@ impl<'a> AstBuilder<'a> {
             self.make_block()?
         };
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
 
         Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
             .into_spanned(span))
@@ -365,7 +365,7 @@ impl<'a> AstBuilder<'a> {
         };
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Impl(ast::Impl { path, type_arguments, method, span }).into_spanned(span))
     }
 
@@ -385,7 +385,7 @@ impl<'a> AstBuilder<'a> {
         let fields = self.make_fields()?;
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Adt(ast::Adt::Struct(ast::Struct { ident, fields, generics, span }))
             .into_spanned(span))
     }
@@ -406,7 +406,7 @@ impl<'a> AstBuilder<'a> {
         let variants = self.make_variants()?;
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Adt(ast::Adt::Enum(ast::Enum { ident, variants, generics, span }))
             .into_spanned(span))
     }
@@ -429,7 +429,7 @@ impl<'a> AstBuilder<'a> {
         let method = self.make_trait_fn(&generics)?;
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Trait(ast::Trait { path, generics, method, span }).into_spanned(span))
     }
 
@@ -444,7 +444,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_if(&TokenMatch::Semi);
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Import(path).into_spanned(span))
     }
 
@@ -489,7 +489,7 @@ impl<'a> AstBuilder<'a> {
         let default = self.eat_if(&TokenMatch::Semi);
         Ok(if default {
             let stmts = self.make_block()?;
-            let span = ast::to_rng(start..self.input_idx);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             ast::TraitMethod::Default(ast::Func {
                 ident,
                 ret,
@@ -500,7 +500,7 @@ impl<'a> AstBuilder<'a> {
             })
         } else {
             let stmts = ast::Block { stmts: vec![], span: self.curr_span() };
-            let span = ast::to_rng(start..self.input_idx);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             ast::TraitMethod::NoBody(ast::Func {
                 ident,
                 ret,
@@ -528,7 +528,7 @@ impl<'a> AstBuilder<'a> {
             let ident = self.make_ident()?;
             let types = self.make_types(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             variants.push(ast::Variant { ident, types, span });
 
             // TODO: report errors when missing commas if possible
@@ -562,7 +562,7 @@ impl<'a> AstBuilder<'a> {
 
             let ty = self.make_ty()?;
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             params.push(ast::Field { ident, ty, span });
 
             self.eat_whitespace();
@@ -596,7 +596,7 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::Colon);
                 self.eat_whitespace();
                 let init = self.make_expr()?;
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 exprs.push(ast::FieldInit { ident, init, span });
                 if self.eat_if(&TokenMatch::Comma) {
                     self.eat_whitespace();
@@ -657,7 +657,7 @@ impl<'a> AstBuilder<'a> {
     fn make_expr(&mut self) -> ParseResult<ast::Expression> {
         self.push_call_stack("make_expr");
         self.eat_whitespace();
-        let start = self.curr_span().start;
+        let start = self.input_idx;
 
         // array init
         if self.curr.kind == TokenMatch::OpenBracket {
@@ -680,13 +680,13 @@ impl<'a> AstBuilder<'a> {
                 } else {
                     return Err(ParseError::Error(
                         "array literal must must be of the forum`[expr; int]`",
-                        ast::to_rng(start..self.curr_span().start),
+                        ast::to_rng(start..self.input_idx, self.file_id),
                     ));
                 };
                 self.eat_whitespace();
                 self.eat_if(&TokenMatch::CloseBracket);
 
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 let lit_span = lit.span;
                 Ok(ast::Expr::ArrayInit {
                     items: std::iter::repeat(ast::Expr::Value(lit).into_spanned(lit_span))
@@ -697,12 +697,12 @@ impl<'a> AstBuilder<'a> {
             } else {
                 let items =
                     self.make_expr_list(&TokenMatch::OpenBracket, &TokenMatch::CloseBracket)?;
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 Ok(ast::Expr::ArrayInit { items }.into_spanned(span))
             }
         } else if self.curr.kind == TokenMatch::Lt {
             // trait method calls
-            let start = self.curr_span().start;
+            let start = self.input_idx;
 
             // Outer `<` token
             self.eat_if(&TokenMatch::Lt);
@@ -719,7 +719,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             self.eat_if(&TokenMatch::CloseParen);
 
-            let span = ast::to_rng(start..self.curr_span().start);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             Ok(ast::Expr::TraitMeth { trait_, type_args, args }.into_spanned(span))
         } else if matches!(
             self.curr.kind,
@@ -771,7 +771,7 @@ impl<'a> AstBuilder<'a> {
                         {
                             let lhs = output.pop().unwrap();
 
-                            let span = ast::to_rng(lhs.span.start..ex.span.end);
+                            let span = ast::to_rng(lhs.span.start..ex.span.end, self.file_id);
                             let mut finish = ast::Expr::Binary {
                                 op: prev.to_ast_binop().unwrap(),
                                 lhs: box lhs,
@@ -782,7 +782,8 @@ impl<'a> AstBuilder<'a> {
                             while let Some(lfix_op) = opstack.pop() {
                                 if matches!(lfix_op.fixity(), Fixit::Left) {
                                     let lhs = output.pop().unwrap();
-                                    let span = ast::to_rng(lhs.span.start..finish.span.end);
+                                    let span =
+                                        ast::to_rng(lhs.span.start..finish.span.end, self.file_id);
                                     finish = ast::Expr::Binary {
                                         op: lfix_op.to_ast_binop().unwrap(),
                                         lhs: box lhs,
@@ -818,7 +819,8 @@ impl<'a> AstBuilder<'a> {
                         match (output.pop(), opstack.pop()) {
                             (Some(rhs), Some(bin)) => {
                                 if let Some(first) = output.pop() {
-                                    let span = ast::to_rng(first.span.start..rhs.span.end);
+                                    let span =
+                                        ast::to_rng(first.span.start..rhs.span.end, self.file_id);
                                     let finish = ast::Expr::Binary {
                                         op: bin.to_ast_binop().unwrap(),
                                         lhs: box first,
@@ -877,9 +879,9 @@ impl<'a> AstBuilder<'a> {
             let op = self.make_op()?;
             (id, op)
         } else if self.curr.kind == TokenMatch::Literal {
-            let start = self.curr_span().start;
+            let start = self.input_idx;
             let ex = ast::Expr::Value(self.make_literal()?)
-                .into_spanned(ast::to_rng(start..self.curr_span().start));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
             self.eat_whitespace();
 
             let op = self.make_op()?;
@@ -891,7 +893,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Bang);
             let ex = self.make_expr()?;
             let expr = ast::Expr::Urnary { op: ast::UnOp::Not, expr: box ex }
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
@@ -906,7 +908,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Tilde);
             let ex = self.make_expr()?;
             let expr = ast::Expr::Urnary { op: ast::UnOp::OnesComp, expr: box ex }
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
@@ -925,7 +927,7 @@ impl<'a> AstBuilder<'a> {
             }
             let id = self.make_lh_expr()?;
             let expr = ast::Expr::Deref { indir, expr: box id }
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
@@ -936,23 +938,23 @@ impl<'a> AstBuilder<'a> {
 
             self.eat_if(&TokenMatch::And);
             let ex = self.make_expr()?;
-            let expr =
-                ast::Expr::AddrOf(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
+            let expr = ast::Expr::AddrOf(box ex)
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
             let op = self.make_op()?;
             (expr, op)
         } else if self.curr.kind == TokenMatch::OpenParen {
-            let start = self.curr_span().start;
+            let start = self.input_idx;
             // N.B.
             // We know we are in the middle of some kind of binop
             self.eat_if(&TokenMatch::OpenParen);
 
             let ex = self.make_expr()?;
 
-            let expr =
-                ast::Expr::Parens(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
+            let expr = ast::Expr::Parens(box ex)
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
             self.eat_whitespace();
 
             self.eat_if(&TokenMatch::CloseParen);
@@ -974,19 +976,19 @@ impl<'a> AstBuilder<'a> {
     fn make_lh_expr(&mut self) -> ParseResult<ast::Expression> {
         self.push_call_stack("make_lh_expr");
         Ok(if self.curr.kind == TokenMatch::Ident {
-            let start = self.curr_span().start;
+            let start = self.input_idx;
 
             if self.check_next(&TokenMatch::Dot) {
                 // We are in a field access
                 let lhs = ast::Expr::Ident(self.make_ident()?)
-                    .into_spanned(ast::to_rng(start..self.curr_span().end));
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
                 self.eat_if(&TokenMatch::Dot);
 
                 ast::Expr::FieldAccess { lhs: box lhs, rhs: box self.make_lh_expr()? }
-                    .into_spanned(ast::to_rng(start..self.curr_span().end))
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
             } else if self.check_next(&TokenMatch::OpenBracket) {
                 // We are in an array index expr
-                let start = self.curr_span().start;
+                let start = self.input_idx;
 
                 let ident = self.make_ident()?;
 
@@ -1008,10 +1010,10 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::CloseBracket);
 
                 ast::Expr::Array { ident, exprs }
-                    .into_spanned(ast::to_rng(start..self.curr_span().end))
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
             } else {
                 self.eat_whitespace();
-                let start = self.curr_span().start;
+                let start = self.input_idx;
 
                 let mut path = self.make_path()?;
                 let is_func_call = (self.cmp_seq_ignore_ws(&[
@@ -1041,7 +1043,7 @@ impl<'a> AstBuilder<'a> {
 
                 if path.segs.len() == 1 && !is_func_call && !is_struct && !is_itemless_enum {
                     ast::Expr::Ident(path.segs.remove(0))
-                        .into_spanned(ast::to_rng(start..self.curr_span().start))
+                        .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
                 } else if is_func_call {
                     // We are most likely in a function call
                     let type_args = self.make_type_args()?;
@@ -1057,14 +1059,14 @@ impl<'a> AstBuilder<'a> {
                     // TODO an enum that is just a path
                     // This can be an enum also
                     ast::Expr::Call { path, type_args: RawVec::from_vec(type_args), args }
-                        .into_spanned(ast::to_rng(start..self.curr_span().end))
+                        .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
                 } else if is_struct {
                     let fields = self.make_field_list()?;
-                    let span = ast::to_rng(start..self.curr_span().end);
+                    let span = ast::to_rng(start..self.input_idx(), self.file_id);
                     ast::Expr::StructInit { path, fields }.into_spanned(span)
                 } else if is_itemless_enum {
                     let variant = path.segs.pop().unwrap();
-                    let span = ast::to_rng(start..self.curr_span().end);
+                    let span = ast::to_rng(start..self.input_idx(), self.file_id);
                     ast::Expr::EnumInit { path, variant, items: vec![] }.into_spanned(span)
                 } else {
                     return Err(ParseError::Error(
@@ -1204,7 +1206,7 @@ impl<'a> AstBuilder<'a> {
         // If the function body is empty
         if self.cmp_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]) {
             self.eat_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]);
-            let span = ast::to_rng(start..self.curr_span().start);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             return Ok(ast::Block { stmts: vec![ast::Stmt::Exit.into_spanned(span)], span });
         }
 
@@ -1225,13 +1227,13 @@ impl<'a> AstBuilder<'a> {
                 }
             }
         }
-        let span = ast::to_rng(start..self.curr_span().end);
+        let span = ast::to_rng(start..self.input_idx(), self.file_id);
         Ok(ast::Block { stmts, span })
     }
 
     fn make_stmt(&mut self) -> ParseResult<ast::Statement> {
         self.push_call_stack("make_stmt");
-        let start = self.curr_span().start;
+        let start = self.input_idx;
         let stmt = if self.eat_if_kw(kw::Let) {
             self.make_assignment()?
         } else if self.eat_if_kw(kw::If) {
@@ -1254,7 +1256,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
-        let span = ast::to_rng(start..self.curr_span().end);
+        let span = ast::to_rng(start..self.input_idx(), self.file_id);
         Ok(stmt.into_spanned(span))
     }
 
@@ -1453,7 +1455,7 @@ impl<'a> AstBuilder<'a> {
             let blk = self.make_block()?;
             self.eat_if(&TokenMatch::Comma);
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             arms.push(ast::MatchArm { pat, blk, span })
         }
         Ok(arms)
@@ -1487,11 +1489,11 @@ impl<'a> AstBuilder<'a> {
                     vec![]
                 };
 
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 ast::Pat::Enum { path, variant, items }.into_spanned(span)
             } else {
                 // TODO: binding needs span
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 ast::Pat::Bind(ast::Binding::Wild(path.segs.remove(0))).into_spanned(span)
             }
         } else if self.eat_if(&TokenMatch::OpenBracket) {
@@ -1500,11 +1502,11 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             self.eat_if(&TokenMatch::CloseBracket);
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             ast::Pat::Array { size: pats.len(), items: pats }.into_spanned(span)
         } else if self.curr.kind == TokenMatch::Literal {
             // Literal
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             ast::Pat::Bind(ast::Binding::Value(self.make_literal()?)).into_spanned(span)
         } else {
             todo!("{:?}", self.curr)
@@ -1557,7 +1559,7 @@ impl<'a> AstBuilder<'a> {
                 }
             }
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
 
             params.push(ast::Param { ident, ty, span });
 
@@ -1588,7 +1590,7 @@ impl<'a> AstBuilder<'a> {
                 } else {
                     None
                 };
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 gens.push(ast::Generic { ident, bound, span });
 
                 self.eat_whitespace();
@@ -1776,7 +1778,7 @@ impl<'a> AstBuilder<'a> {
                         "string" => ast::Ty::String.into_spanned(span),
                         _ => {
                             let path = self.make_path()?;
-                            let span = ast::to_rng(start..self.curr_span().end);
+                            let span = ast::to_rng(start..self.input_idx(), self.file_id);
                             ast::Ty::Path(path).into_spanned(span)
                         }
                     };
@@ -1788,7 +1790,7 @@ impl<'a> AstBuilder<'a> {
                 panic!("{}", self.call_stack.join("\n"))
             }
             TokenKind::OpenBracket => {
-                let start = self.curr_span().start;
+                let start = self.input_idx;
                 self.eat_if(&TokenMatch::OpenBracket);
                 self.eat_whitespace();
                 self.make_array_type(start)?
@@ -1828,7 +1830,8 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
 
         let ty = self.make_ty()?;
-        let x = Ok(ast::Ty::Array { size, ty: box ty }.into_spanned(start..self.curr_span().end));
+        let x = Ok(ast::Ty::Array { size, ty: box ty }
+            .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id)));
         self.eat_if(&TokenMatch::CloseBracket);
         x
     }
@@ -1837,7 +1840,7 @@ impl<'a> AstBuilder<'a> {
     fn make_path(&mut self) -> ParseResult<Path> {
         let start = self.input_idx;
         let segs = self.make_seg()?;
-        Ok(Path { segs, span: ast::to_rng(start..self.curr_span().end) })
+        Ok(Path { segs, span: ast::to_rng(start..self.input_idx(), self.file_id) })
     }
 
     /// Parse `ident[ws]::ident[ws]...`.
@@ -2074,7 +2077,12 @@ impl<'a> AstBuilder<'a> {
             self.curr.len
         };
         let stop = self.input_idx + self.curr.len;
-        (self.input_idx..stop).into()
+        ast::to_rng(self.input_idx..stop, self.file_id)
+    }
+
+    /// The end count of the current cursor index.
+    fn input_idx(&self) -> usize {
+        self.input_idx + self.curr.len
     }
 }
 
@@ -2444,7 +2452,7 @@ fn add() {
         let mut x = input.split("let");
         let start = x.next().unwrap().chars().count();
         let end = x.next().unwrap().chars().count() + start;
-        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end + 1))
+        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end + 1, hash_file("test.file")))
     } else {
         panic!("assert failed for function call with import path")
     }

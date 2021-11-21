@@ -19,7 +19,8 @@ use crate::{
     typeck::{
         check::{fold_ty, resolve_ty},
         generic::{Node, TyRegion},
-        ScopedIdent, TyCheckRes,
+        scope::ScopedName,
+        TyCheckRes,
     },
     visit::Visit,
 };
@@ -161,7 +162,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         // when that's checked by `StmtCheck`
                         let ident = lval.val.as_ident();
                         self.tcxt.var_func.unsed_vars.insert(
-                            ScopedIdent::func_scope(fn_id, ident),
+                            ScopedName::func_scope(fn_id, ident, lval.span.file_id),
                             (lval.span, Cell::new(false)),
                         );
 
@@ -223,7 +224,10 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     lty.as_ref(),
                     rty,
                     op,
-                    to_rng(lval.span.start..rval.span.end),
+                    to_rng(lval.span.start..rval.span.end, {
+                        debug_assert!(lval.span.file_id == rval.span.file_id);
+                        lval.span.file_id
+                    }),
                 ) {
                     self.tcxt.expr_ty.insert(rval, unified);
                 }
@@ -436,7 +440,18 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::FieldAccess { lhs, rhs } => todo!(),
-            Expr::StructInit { path, fields } => todo!(),
+            Expr::StructInit { path, fields } => {
+                let struc = self.tcxt.name_struct.get(&path.segs[0]);
+                if let Some(struc) = struc {
+                    let gen =
+                        struc.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
+                    let ident = struc.ident;
+                    for field in fields.iter() {
+                        self.visit_expr(&field.init);
+                    }
+                    self.tcxt.expr_ty.insert(expr, Ty::Struct { ident, gen });
+                }
+            }
             Expr::EnumInit { path, variant, items } => {
                 let enm = self.tcxt.name_enum.get(&path.segs[0]);
 

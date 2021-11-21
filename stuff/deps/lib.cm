@@ -1,6 +1,6 @@
 linked fn write<T>(_: T);
 
-fn print_fmt(arg1: string, arg2: int) {
+fn print_fmt(arg1: string, arg2: int, foo: int) {
     write::<string>(arg1);
     write::<int>(arg2);
 }
