@@ -352,7 +352,10 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                 self.tcxt.errors.push(Error::error_with_span(
                                     self.tcxt,
                                     expr.span,
-                                    &format!("[E0i] no type infered for argument"),
+                                    &format!(
+                                        "[E0i] no type infered for argument `{}`",
+                                        param.ident
+                                    ),
                                 ));
                                 self.tcxt.error_in_current_expr_tree = true;
                             }
