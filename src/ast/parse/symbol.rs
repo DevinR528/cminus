@@ -88,7 +88,7 @@ fn ident_hash_eq() {
     let a = Ident::new(DUMMY, "caravan");
 
     // Eq ignores span
-    assert_eq!(x, Ident::new(to_rng(1..2), "hello"));
+    assert_eq!(x, Ident::new(to_rng(1..2, 0), "hello"));
 
     let mut map = rustc_hash::FxHashMap::default();
     map.insert(x, 1);
@@ -96,10 +96,10 @@ fn ident_hash_eq() {
     map.insert(z, 3);
     map.insert(a, 4);
 
-    assert!(map.contains_key(&Ident::new(to_rng(4..8), "planet")));
-    assert!(map.contains_key(&Ident::new(to_rng(4..8), "caravan")));
+    assert!(map.contains_key(&Ident::new(to_rng(4..8, 0), "planet")));
+    assert!(map.contains_key(&Ident::new(to_rng(4..8, 0), "caravan")));
 
-    assert_ne!(x, Ident::new(to_rng(1..2), "world"));
+    assert_ne!(x, Ident::new(to_rng(1..2, 0), "world"));
 }
 
 pub mod intern {

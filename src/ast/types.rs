@@ -17,8 +17,8 @@ crate trait TypeEquality<T = Self> {
 
 crate trait Spany: Sized {
     /// All enums implement `Spanned` to carry span info.
-    fn into_spanned<R: Into<Range>>(self, range: R) -> Spanned<Self> {
-        Spanned { val: self, span: range.into() }
+    fn into_spanned(self, span: Range) -> Spanned<Self> {
+        Spanned { val: self, span }
     }
 }
 
@@ -320,7 +320,7 @@ impl Ty {
             Ty::Func { ret, params, .. } => {
                 params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
             }
-            Ty::Path(_) => todo!(),
+            Ty::Path(p) => todo!("{}", p),
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
                 vec![]
             }
@@ -867,6 +867,7 @@ impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
 pub struct Range {
     pub start: usize,
     pub end: usize,
+    pub file_id: u64,
 }
 
 impl fmt::Debug for Range {
@@ -875,19 +876,12 @@ impl fmt::Debug for Range {
     }
 }
 
-impl From<ops::Range<usize>> for Range {
-    fn from(other: ops::Range<usize>) -> Self {
-        let (start, end) = (other.start, other.end);
-        Self { start, end }
-    }
-}
-
-crate const fn to_rng(other: ops::Range<usize>) -> Range {
+crate const fn to_rng(other: ops::Range<usize>, file_id: u64) -> Range {
     let (start, end) = (other.start, other.end);
-    Range { start, end }
+    Range { start, end, file_id }
 }
 
-pub const DUMMY: Range = to_rng(0..0);
+pub const DUMMY: Range = to_rng(0..0, 0);
 
 pub type Declaration = Spanned<Decl>;
 pub type Statement = Spanned<Stmt>;
