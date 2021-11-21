@@ -35,8 +35,10 @@ crate mod trait_solver;
 
 use check::fold_ty;
 use generic::{GenericResolver, Node};
-use scope::{hash_file, ScopedName};
+use scope::{hash_file, ScopeContents, ScopeWalker, ScopedName};
 use trait_solver::TraitSolve;
+
+use self::scope::{Scope, ScopeItem};
 
 #[derive(Debug, Default)]
 crate struct VarInFunction<'ast> {
@@ -114,6 +116,8 @@ crate struct TyCheckRes<'ast, 'input> {
     crate generic_res: GenericResolver<'ast>,
     /// Trait resolver for checking the bounds on generic types.
     crate trait_solve: TraitSolve<'ast>,
+    /// Name resolution and scope tracking.
+    crate name_res: ScopeWalker,
 
     // TODO: this isn't ideal since you can forget to set/unset...
     /// Do we record uses of this variable during the following expr tree walk.
@@ -226,6 +230,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     /// We first walk declarations and save function headers then once all the declarations have
     /// been collected we start type checking expressions.
     fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
+        // We just add all files we know about at this point
+        // we will do the same thing when we see an import too
+        self.name_res.add_file_scopes(&self.file_names);
+
         let mut funcs = vec![];
         let mut impls = vec![];
         for item in items {
@@ -252,6 +260,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     while let Ok(Ok(blob)) = self.rcv.as_ref().unwrap().recv() {
                         if !added_file {
                             let file_id = hash_file(blob.file);
+
+                            self.name_res.add_file_scope(file_id);
                             self.file_names.insert(file_id, blob.file);
                             self.inputs.insert(file_id, blob.input);
                         }
@@ -329,6 +339,11 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 t.span,
                 &format!("duplicate trait `{}` found", t.path),
             ));
+        } else {
+            self.name_res.add_decl(
+                t.span.file_id,
+                Scope::Trait { file: t.span.file_id, trait_: *t.path.segs.last().unwrap() },
+            );
         }
     }
 
@@ -339,11 +354,20 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 imp.span,
                 &format!("no trait `{}` found for this implementation", imp.path),
             ));
+        } else {
+            self.name_res.add_decl(
+                imp.span.file_id,
+                Scope::Impl { file: imp.span.file_id, imp: *imp.path.segs.last().unwrap() },
+            );
         }
     }
 
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
+            self.name_res.add_decl(
+                func.span.file_id,
+                Scope::Func { file: func.span.file_id, func: func.ident },
+            );
             // Current function scope (also the name)
             self.curr_fn = Some(func.ident);
 
@@ -420,8 +444,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 
     fn visit_adt(&mut self, adt: &'ast Adt) {
+        let span;
+        let ident;
         match adt {
             Adt::Struct(struc) => {
+                span = struc.span;
+                ident = struc.ident;
+
                 if self.name_struct.insert(struc.ident, struc).is_some() {
                     self.errors.push(Error::error_with_span(
                         self,
@@ -445,6 +474,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Adt::Enum(en) => {
+                span = en.span;
+                ident = en.ident;
+
                 if self.name_enum.insert(en.ident, en).is_some() {
                     self.errors.push(Error::error_with_span(
                         self,
@@ -468,6 +500,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
         }
+        self.name_res.add_decl(span.file_id, Scope::Adt { file: span.file_id, adt: ident })
     }
 
     // TODO: this is not what it used to be
@@ -502,6 +535,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 ScopedName::func_scope(fn_id, var.ident, var.span.file_id),
                 (var.span, Cell::new(false)),
             );
+
+            // This const is declared inside of a function
+            self.name_res.add_item(
+                var.span.file_id,
+                Scope::Func { file: var.span.file_id, func: fn_id },
+                ScopeItem::Var(var.ident),
+            );
+
             // bail out before we set the scope as global
             return;
         } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
@@ -511,6 +552,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 &format!("global variable `{}` is already declared", var.ident),
             ));
         }
+
+        // This const is declared in the file scope
+        self.name_res.add_item(
+            var.span.file_id,
+            Scope::File(var.span.file_id),
+            ScopeItem::Var(var.ident),
+        );
         self.var_func
             .unsed_vars
             .insert(ScopedName::global(var.span.file_id, var.ident), (var.span, Cell::new(false)));
@@ -519,6 +567,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_params(&mut self, params: &[Param]) {
         if let Some(fn_id) = self.curr_fn {
             for Param { ident, ty, span } in params {
+                // This param is declared inside of a function
+                self.name_res.add_item(
+                    span.file_id,
+                    Scope::Func { file: span.file_id, func: fn_id },
+                    ScopeItem::Var(*ident),
+                );
+
                 // TODO: Do this for returns and any place we match for Ty::Generic {..}
                 if ty.val.has_generics() {
                     self.generic_res.collect_generic_usage(
