@@ -95,14 +95,14 @@ impl VarInFunction<'_> {
     }
 }
 
-pub type AstReceiver = Receiver<ParseResult<(String, usize, Declaration)>>;
+pub type AstReceiver = Receiver<ParseResult<ParsedBlob>>;
 
 #[derive(Default)]
 crate struct TyCheckRes<'ast, 'input> {
     /// The name of the file being checked.
-    crate name: &'input str,
+    crate file_names: HashMap<u64, &'input str>,
     /// The content of the file as a string.
-    crate input: &'input str,
+    crate inputs: HashMap<u64, &'input str>,
 
     /// The name of the function currently in or `None` if global.
     curr_fn: Option<Ident>,
@@ -173,7 +173,14 @@ impl fmt::Debug for TyCheckRes<'_, '_> {
 
 impl<'input> TyCheckRes<'_, 'input> {
     crate fn new(input: &'input str, name: &'input str, rcv: AstReceiver) -> Self {
-        Self { name, input, rcv: Some(rcv), record_used: true, ..Self::default() }
+        let file_id = hash_file(name);
+        Self {
+            file_names: HashMap::from_iter([(file_id, name)]),
+            inputs: HashMap::from_iter([(file_id, input)]),
+            rcv: Some(rcv),
+            record_used: true,
+            ..Self::default()
+        }
     }
 
     crate fn report_errors(&self) -> Result<(), &'static str> {
@@ -270,17 +277,25 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Const(co) => {}
                 Decl::Import(_) => {
                     let mut items = vec![];
-                    while let Ok(Ok((file, count, item))) = self.rcv.as_ref().unwrap().recv() {
-                        items.push(item);
-                        if count == 0 {
+                    let mut added_file = false;
+                    // TODO: handle errors
+                    while let Ok(Ok(blob)) = self.rcv.as_ref().unwrap().recv() {
+                        if !added_file {
+                            let file_id = hash_file(blob.file);
+                            self.file_names.insert(file_id, blob.file);
+                            self.inputs.insert(file_id, blob.input);
+                        }
+
+                        items.push(blob.decl);
+
+                        if blob.count == 0 {
                             break;
                         }
                     }
                     let imports: &'static [Declaration] = items.leak();
+
                     self.visit_prog(imports);
-                    for import in imports {
-                        self.imported_items.push(import);
-                    }
+                    self.imported_items.extend(imports);
                 }
             }
         }

@@ -11,7 +11,7 @@ use crate::{
         parse::symbol::Ident,
         types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
     },
-    typeck::rawvec::RawVec,
+    typeck::{rawvec::RawVec, scope::hash_file},
 };
 
 crate mod error;
@@ -26,8 +26,14 @@ use self::lex::Base;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub type AstSender = Sender<ParseResult<(String, usize, ast::Declaration)>>;
+pub type AstSender = Sender<ParseResult<ParsedBlob>>;
 
+pub struct ParsedBlob {
+    pub file: &'static str,
+    pub input: &'static str,
+    pub count: usize,
+    pub decl: ast::Declaration,
+}
 // TODO: this is basically one file = one mod/crate/program unit add mod linking or
 // whatever.
 /// Create an AST from input `str`.
@@ -37,6 +43,7 @@ pub struct AstBuilder<'a> {
     curr: lex::Token,
     input: &'a str,
     file: &'a str,
+    file_id: u64,
     input_idx: usize,
 
     // HACK: FIXME
@@ -57,7 +64,15 @@ impl<'a> AstBuilder<'a> {
             lex::tokenize(input).chain(Some(Token::new(TokenKind::Eof, 0))).collect::<Vec<_>>();
         // println!("{:#?}", tokens);
         let curr = tokens.remove(0);
-        Self { tokens, curr, input, file, snd: Some(snd), ..Default::default() }
+        Self {
+            tokens,
+            curr,
+            input,
+            file,
+            file_id: hash_file(file),
+            snd: Some(snd),
+            ..Default::default()
+        }
     }
 
     pub fn items(&self) -> &[ast::Declaration] {
@@ -146,11 +161,19 @@ impl<'a> AstBuilder<'a> {
                                     }
 
                                     let mut cnt = parser.items().len();
+                                    let items = parser.into_items();
+                                    let file = Box::leak(box s);
+                                    let input = Box::leak(box input);
                                     // TODO: the receiver has to wait on all items so we really
                                     // don't get much benefit from threading now
-                                    for item in parser.into_items() {
+                                    for item in items {
                                         cnt -= 1;
-                                        snd.send(Ok((s.clone(), cnt, item)));
+                                        snd.send(Ok(ParsedBlob {
+                                            file,
+                                            input,
+                                            count: cnt,
+                                            decl: item,
+                                        }));
                                     }
                                     Ok(())
                                 });
