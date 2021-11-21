@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{hash_map::Entry, VecDeque},
     fmt,
     hash::{Hash, Hasher},
 };
@@ -9,7 +9,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
 use crate::{
     ast::{
         parse::symbol::Ident,
-        types::{Const, Expr, Path, Statement, Ty},
+        types::{Const, Expr, Path, Range, Statement, Ty},
     },
     typeck::Visit,
 };
@@ -51,14 +51,62 @@ impl ScopedName {
     }
 }
 
-#[derive(Clone, Debug)]
-crate struct ScopeContents {
-    scope: HashMap<ScopedName, ScopeContents>,
-    contents: Vec<Ident>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+crate enum Scope {
+    Trait { file: u64, trait_: Ident },
+    Impl { file: u64, imp: Ident },
+    Func { file: u64, func: Ident },
+    Adt { file: u64, adt: Ident },
+    Block(Range),
+    File(u64),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+crate enum ScopeItem {
+    Var(Ident),
+    Field(Ident),
+    Variant(Ident),
+}
+
+#[derive(Clone, Debug, Default)]
+crate struct ScopeContents {
+    contents: HashMap<Scope, Vec<ScopeItem>>,
+}
+
+#[derive(Clone, Debug, Default)]
 crate struct ScopeWalker {
-    global_scope: HashMap<ScopedName, ScopeContents>,
+    global_scope: HashMap<Scope, ScopeContents>,
+}
+
+impl ScopeWalker {
+    crate fn add_file_scopes(&mut self, files: &HashMap<u64, &str>) {
+        for k in files.keys() {
+            self.global_scope.insert(Scope::File(*k), ScopeContents::default());
+        }
+    }
+
+    crate fn add_file_scope(&mut self, file: u64) {
+        self.global_scope.insert(Scope::File(file), ScopeContents::default());
+    }
+
+    crate fn add_decl(&mut self, file: u64, decl_scope: Scope) {
+        if let Some(items) = self.global_scope.get_mut(&Scope::File(file)) {
+            items.contents.insert(decl_scope, vec![]);
+        }
+    }
+
+    crate fn add_item(&mut self, file: u64, decl_scope: Scope, item: ScopeItem) {
+        if let Some(items) = self.global_scope.get_mut(&Scope::File(file)) {
+            match items.contents.entry(decl_scope) {
+                Entry::Occupied(mut inner) => {
+                    inner.get_mut().push(item);
+                }
+                Entry::Vacant(v) => {
+                    v.insert(vec![item]);
+                }
+            };
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for ScopeWalker {
