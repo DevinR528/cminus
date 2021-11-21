@@ -1332,119 +1332,79 @@ impl<'a> AstBuilder<'a> {
                 // TODO: assingment is also valid here
                 //
                 // `x[0] = 6; x = call; v.v.f = yo;
-                ast::Expr::Ident(_) => {
-                    // @copypaste
-                    // +=
-                    if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
-                    // -=
-                    } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
-                    // *=
-                    } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
-                    // /=
-                    } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
-                    // |=
-                    } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
-                    // &=
-                    } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
-                    // =
-                    } else if self.curr.kind == TokenMatch::Eq {
-                        self.eat_if(&TokenMatch::Eq);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
-                    } else {
-                        todo!("{}", &self.input[self.input_idx..])
-                    }
-                }
-                ast::Expr::Deref { indir, expr } => {
-                    return Err(ParseError::Error("expression statement", self.curr_span()))
-                }
-                ast::Expr::AddrOf(_) => todo!(),
-                ast::Expr::Array { .. } => {
-                    // +=
-                    if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
-                    // -=
-                    } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
-                    // *=
-                    } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
-                    // /=
-                    } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
-                    // |=
-                    } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
-                    // &=
-                    } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
-                    } else if self.curr.kind == TokenMatch::Eq {
-                        self.eat_if(&TokenMatch::Eq);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
-                    } else {
-                        todo!("{}", &self.input[self.input_idx..])
-                    }
-                }
-                ast::Expr::Urnary { op, expr } => todo!(),
-                ast::Expr::Binary { op, lhs, rhs } => todo!(),
-                ast::Expr::Parens(_) => todo!(),
+                ast::Expr::Ident(_) => self.make_assign_stmt_expr(expr)?,
                 ast::Expr::Call { .. } => ast::Stmt::Call(expr),
-                ast::Expr::TraitMeth { trait_, args, type_args } => todo!(),
-                ast::Expr::FieldAccess { lhs, rhs } => todo!(),
-                ast::Expr::StructInit { path, fields } => todo!(),
-                ast::Expr::EnumInit { path, variant, items } => todo!(),
-                ast::Expr::ArrayInit { items } => todo!(),
-                ast::Expr::Value(_) => todo!(),
+                ast::Expr::Deref { .. } => self.make_assign_stmt_expr(expr)?,
+                ast::Expr::Array { .. } => self.make_assign_stmt_expr(expr)?,
+                ast::Expr::FieldAccess { .. } => self.make_assign_stmt_expr(expr)?,
+                // Maybe this is ok??
+                ast::Expr::Parens(_) => todo!(),
+
+                ast::Expr::AddrOf(_)
+                | ast::Expr::Urnary { .. }
+                | ast::Expr::Binary { .. }
+                | ast::Expr::TraitMeth { .. }
+                | ast::Expr::StructInit { .. }
+                | ast::Expr::EnumInit { .. }
+                | ast::Expr::ArrayInit { .. }
+                | ast::Expr::Value(_) => {
+                    return Err(ParseError::Error(
+                        "invalid left hand side of statement",
+                        self.curr_span(),
+                    ));
+                }
             }
         } else if self.curr.kind == TokenMatch::Lt {
             todo!("Trait method calls {}", self.call_stack.join("\n"))
         } else {
             return Err(ParseError::Error("make statement bottom out", self.curr_span()));
+        })
+    }
+
+    fn make_assign_stmt_expr(&mut self, expr: ast::Expression) -> ParseResult<ast::Stmt> {
+        // +=
+        Ok(if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+        // -=
+        } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
+        // *=
+        } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
+        // /=
+        } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
+        // |=
+        } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
+        // &=
+        } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
+        } else if self.curr.kind == TokenMatch::Eq {
+            self.eat_if(&TokenMatch::Eq);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
+        } else {
+            todo!("{}", &self.input[self.input_idx..])
         })
     }
 
@@ -1783,31 +1743,14 @@ impl<'a> AstBuilder<'a> {
                 if let Ok(key) = key {
                     todo!()
                 } else {
+                    let span = self.curr_span();
                     let ty = match text {
-                        "void" => {
-                            let span = self.curr_span();
-                            ast::Ty::Void.into_spanned(span)
-                        }
-                        "bool" => {
-                            let span = self.curr_span();
-                            ast::Ty::Bool.into_spanned(span)
-                        }
-                        "char" => {
-                            let span = self.curr_span();
-                            ast::Ty::Char.into_spanned(span)
-                        }
-                        "int" => {
-                            let span = self.curr_span();
-                            ast::Ty::Int.into_spanned(span)
-                        }
-                        "float" => {
-                            let span = self.curr_span();
-                            ast::Ty::Float.into_spanned(span)
-                        }
-                        "string" => {
-                            let span = self.curr_span();
-                            ast::Ty::String.into_spanned(span)
-                        }
+                        "void" => ast::Ty::Void.into_spanned(span),
+                        "bool" => ast::Ty::Bool.into_spanned(span),
+                        "char" => ast::Ty::Char.into_spanned(span),
+                        "int" => ast::Ty::Int.into_spanned(span),
+                        "float" => ast::Ty::Float.into_spanned(span),
+                        "string" => ast::Ty::String.into_spanned(span),
                         _ => {
                             let path = self.make_path()?;
                             let span = ast::to_rng(start..self.curr_span().end);
