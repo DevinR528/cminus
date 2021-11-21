@@ -1,0 +1,6 @@
+error: can only call debug_with on one "field" at a time
+ --> tests/ui/with_call.rs:8:5
+  |
+8 | /     #[dbg_with(debug_fail)]
+9 | |     B(usize, usize),
+  | |___________________^
