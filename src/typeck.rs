@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     fmt,
     hash::{Hash, Hasher},
+    iter::FromIterator,
     sync::mpsc::Receiver,
 };
 
@@ -9,7 +10,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
 
 use crate::{
     ast::{
-        parse::{symbol::Ident, ParseResult},
+        parse::{symbol::Ident, ParseResult, ParsedBlob},
         types::{
             to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
             Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany,
@@ -29,41 +30,13 @@ crate mod check;
 crate mod generic;
 crate mod infer;
 crate mod rawvec;
+crate mod scope;
 crate mod trait_solver;
 
+use check::fold_ty;
 use generic::{GenericResolver, Node};
+use scope::{hash_file, ScopedName};
 use trait_solver::TraitSolve;
-
-use self::check::fold_ty;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-crate enum Scope {
-    File(u64),
-    // TODO: this really needs to be Func(FileScope, Ident) or Func(Path)?
-    Func(Ident),
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-crate struct ScopedIdent {
-    scope: Scope,
-    ident: Ident,
-}
-
-impl ScopedIdent {
-    crate fn func_scope(func: Ident, name: Ident) -> Self {
-        Self { scope: Scope::Func(func), ident: name }
-    }
-
-    crate fn global(file: &str, name: Ident) -> Self {
-        let mut hasher = FxHasher::default();
-        hasher.write(file.as_bytes());
-        let file = hasher.finish();
-        Self { scope: Scope::File(file), ident: name }
-    }
-
-    crate fn ident(&self) -> Ident {
-        self.ident
-    }
-}
 
 #[derive(Debug, Default)]
 crate struct VarInFunction<'ast> {
@@ -75,8 +48,9 @@ crate struct VarInFunction<'ast> {
     crate name_func: HashMap<Ident, &'ast Func>,
     /// Does this function have any return statements.
     func_return: HashSet<Ident>,
-    /// All of the variables in a scope that are used.
-    unsed_vars: HashMap<ScopedIdent, (Range, Cell<bool>)>,
+    /// All of the variables in a scope that are declared. We track them to determine if they are
+    /// used.
+    unsed_vars: HashMap<ScopedName, (Range, Cell<bool>)>,
 }
 
 impl VarInFunction<'_> {
@@ -214,7 +188,7 @@ impl<'input> TyCheckRes<'_, 'input> {
                 if self.record_used {
                     // TODO: unused leaks into other scope
                     if let Some((_, b)) =
-                        self.var_func.unsed_vars.get(&ScopedIdent::func_scope(f, id))
+                        self.var_func.unsed_vars.get(&ScopedName::func_scope(f, id, span.file_id))
                     {
                         b.set(true);
                     }
@@ -247,11 +221,7 @@ impl<'input> TyCheckRes<'_, 'input> {
     }
 }
 
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
+// @cleanup: my guess is this will somewhat go away, stmt and smaller will be handled by TypeInferer
 impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     /// We first walk declarations and save function headers then once all the declarations have
     /// been collected we start type checking expressions.
@@ -333,8 +303,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .var_func
             .unsed_vars
             .iter()
-            .filter(|(id, (_, used))| !used.get() && !id.ident().name().starts_with('_'))
-            .map(|(id, (sp, _))| (id.ident(), *sp))
+            .filter(|(id, (_, used))| {
+                !used.get() && !id.ident().map_or(false, |n| n.name().starts_with('_'))
+            })
+            .map(|(id, (sp, _))| (id.ident().unwrap(), *sp))
             .collect::<Vec<_>>();
 
         unused.sort_by(|a, b| a.1.cmp(&b.1));
@@ -526,9 +498,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     &format!("[E0w] duplicate variable name `{}`", var.ident),
                 ));
             }
-            self.var_func
-                .unsed_vars
-                .insert(ScopedIdent::func_scope(fn_id, var.ident), (var.span, Cell::new(false)));
+            self.var_func.unsed_vars.insert(
+                ScopedName::func_scope(fn_id, var.ident, var.span.file_id),
+                (var.span, Cell::new(false)),
+            );
             // bail out before we set the scope as global
             return;
         } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
@@ -540,7 +513,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         }
         self.var_func
             .unsed_vars
-            .insert(ScopedIdent::global(self.name, var.ident), (var.span, Cell::new(false)));
+            .insert(ScopedName::global(var.span.file_id, var.ident), (var.span, Cell::new(false)));
     }
 
     fn visit_params(&mut self, params: &[Param]) {
@@ -592,9 +565,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         &format!("duplicate param name `{}`", ident),
                     ));
                 }
-                self.var_func
-                    .unsed_vars
-                    .insert(ScopedIdent::func_scope(fn_id, *ident), (*span, Cell::new(false)));
+                self.var_func.unsed_vars.insert(
+                    ScopedName::func_scope(fn_id, *ident, span.file_id),
+                    (*span, Cell::new(false)),
+                );
             }
         } else {
             panic!("{}", Error::error_with_span(self, DUMMY, &format!("{:?}", params)))
@@ -1050,7 +1024,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     )
                     .is_some()
                 {
-                    unimplemented!("No duplicates")
+                    // unimplemented!("No duplicates")
                 }
             }
             Expr::EnumInit { path, variant, items } => {
@@ -1158,7 +1132,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self.expr_ty.get(a),
                             self.expr_ty.get(b),
                             &BinOp::Add,
-                            (a.span.start..b.span.end).into(),
+                            to_rng(a.span.start..b.span.end, {
+                                debug_assert!(a.span.file_id == b.span.file_id);
+                                a.span.file_id
+                            }),
                         ),
                         [a, b] => fold_ty(
                             self,

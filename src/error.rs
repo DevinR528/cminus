@@ -13,7 +13,13 @@ crate struct Error<'input> {
 
 impl<'input> Error<'input> {
     crate fn error_with_span(tctx: &TyCheckRes<'_, 'input>, span: Range, msg: &str) -> Self {
-        Self { name: tctx.name, input: tctx.input, span, msg: msg.to_owned(), help: None }
+        Self {
+            name: tctx.file_names.get(&span.file_id).expect("error for non existent file"),
+            input: tctx.inputs.get(&span.file_id).expect("error for non existent file"),
+            span,
+            msg: msg.to_owned(),
+            help: None,
+        }
     }
 
     crate fn error_from_parts(
