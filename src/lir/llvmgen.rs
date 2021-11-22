@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, path::Path, vec};
+use std::{collections::HashMap, convert::TryInto, path::Path, vec};
 
 use either::Either;
 use inkwell::{
@@ -336,24 +336,45 @@ impl<'ctx> LLVMGen<'ctx> {
                 }
             }
             Expr::TraitMeth { trait_: _, args: _, type_args: _, def: _ } => todo!(),
-            Expr::FieldAccess { lhs, def, rhs, field_idx } => {
+            Expr::FieldAccess { lhs, def, rhs } => {
                 let struct_ptr = self.build_value(lhs, None).unwrap().into_pointer_value();
 
-                let field = self
-                    .builder
-                    .build_struct_gep(struct_ptr, *field_idx, def.ident.name())
-                    .unwrap();
                 match &**rhs {
                     Expr::Ident { ident, .. } => {
+                        let idx = def
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, f)| if f.ident == *ident { Some(i) } else { None })
+                            .unwrap();
+                        let field = self
+                            .builder
+                            .build_struct_gep(struct_ptr, idx.try_into().unwrap(), def.ident.name())
+                            .unwrap();
+
                         self.builder.build_load(field, &format!("{}.{}", def.ident, ident))
                     }
                     Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
                     Expr::AddrOf(_) => todo!(),
                     Expr::Array { ident, exprs, ty: _ } => {
+                        let idx = def
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, f)| if f.ident == *ident { Some(i) } else { None })
+                            .unwrap();
+                        let field = self
+                            .builder
+                            .build_struct_gep(struct_ptr, idx.try_into().unwrap(), def.ident.name())
+                            .unwrap();
+
                         let elptr = self.index_arr(field, exprs)?;
                         self.builder.build_load(elptr, &format!("{}.{}[]", def.ident, ident))
                     }
-                    Expr::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
+                    Expr::FieldAccess { lhs, def: _, rhs } => {
+                        self.build_value(lhs, assigned);
+                        self.build_value(rhs, assigned)?
+                    }
                     _ => unreachable!("not a possible right side field access"),
                 }
             }
