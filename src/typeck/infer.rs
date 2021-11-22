@@ -121,6 +121,142 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
             (None, None) => None,
         }
     }
+
+    fn infer_rhs_field(&mut self, lhs_ty: &Ty, rhs: &'ast Expression, parent: &'ast Expression) {
+        fn fetch_fields<'a>(
+            lhs_ty: &Ty,
+            span: Range,
+            tcxt: &mut TyCheckRes<'a, '_>,
+        ) -> Option<&'a Struct> {
+            match lhs_ty {
+                Ty::Struct { ident, gen } => tcxt.name_struct.get(ident).copied(),
+                Ty::Path(path) => tcxt.name_struct.get(&path.local_ident()).copied(),
+                Ty::Ptr(_) => todo!(),
+                Ty::Ref(_) => todo!(),
+                Ty::Generic { ident, bound } => None,
+                Ty::Array { size, ty } => todo!(),
+                _ => {
+                    tcxt.errors.write().push(Error::error_with_span(
+                        tcxt,
+                        span,
+                        &format!("[E0tc] invalid field accesor target"),
+                    ));
+                    tcxt.error_in_current_expr_tree.set(true);
+                    None
+                }
+            }
+        }
+        let fields = if let Some(s) = fetch_fields(lhs_ty, parent.span, self.tcxt) {
+            &s.fields
+        } else {
+            return;
+        };
+        match &rhs.val {
+            Expr::Ident(id) => {
+                if let Some(field_ty) = fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.val.clone()) } else { None }) {
+                    self.tcxt.expr_ty.insert(rhs, field_ty.clone());
+                    // We are at the end of the field access expression so, the whole expr resolves to this
+                    self.tcxt.expr_ty.insert(parent, field_ty);
+                } else {
+                    self.tcxt.errors.write().push(Error::error_with_span(
+                        self.tcxt,
+                        parent.span,
+                        &format!("[E0i] could not infer type of deref expression"),
+                    ));
+                    self.tcxt.error_in_current_expr_tree .set(true);
+                }
+            },
+            Expr::Deref { indir, expr } => {
+                self.infer_rhs_field(lhs_ty, &**expr, parent);
+
+                if let Some(refed_ty) = self.tcxt.expr_ty.get(&**expr) {
+                    let mut res_ty = refed_ty.clone();
+                    for _ in 0..*indir {
+                        res_ty = Ty::Ref(box res_ty.into_spanned(DUMMY));
+                    }
+
+                    self.tcxt.expr_ty.insert(expr, res_ty.clone());
+                    // We are at the end of the field access expression so, the whole expr resolves to this
+                    self.tcxt.expr_ty.insert(parent, res_ty);
+                } else {
+                    self.tcxt.errors.write().push(Error::error_with_span(
+                        self.tcxt,
+                        parent.span,
+                        &format!("[E0i] could not infer type of deref expression"),
+                    ));
+                    self.tcxt.error_in_current_expr_tree .set(true);
+                }
+            }
+            Expr::Array { ident, exprs } => {
+                if let arr @ Some(ty @ Ty::Array { .. }) = fields
+                    .iter()
+                    .find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None })
+                {
+                    let dim = ty.array_dim();
+                    if exprs.len() != dim {
+                        self.tcxt.errors.write().push(Error::error_with_span(
+                            self.tcxt,
+                            parent.span,
+                            &format!("[E0i] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
+                        ));
+                        self.tcxt.error_in_current_expr_tree .set(true);
+
+                    } else {
+                        self.tcxt.expr_ty.insert(rhs, ty.clone());
+                    // We are at the end of the field access expression so, the whole expr resolves to this
+                        self.tcxt.expr_ty.insert(parent, ty.clone());
+                    }
+                } else {
+                    self.tcxt.errors.write().push(Error::error_with_span(
+                        self.tcxt,
+                        parent.span,
+                        &format!("[E0i] ident `{}` not array", ident),
+                    ));
+                    self.tcxt.error_in_current_expr_tree .set(true);
+                }
+            },
+            Expr::FieldAccess { lhs, rhs: inner } => {
+                let id = lhs.val.as_ident();
+                if let Some(t @ Ty::Struct { ident, .. }) = &self.tcxt.type_of_ident(id, inner.span).and_then(|t| t.resolve()) {
+                    self.infer_rhs_field(&t, &**inner, parent);
+
+                    if let Some(accty) = self.tcxt.expr_ty.get(&**inner).cloned() {
+                        self.tcxt.expr_ty.insert(&**inner, accty);
+                    } else {
+                        self.tcxt.errors.write().push(Error::error_with_span(
+                            self.tcxt,
+                            parent.span,
+                            &format!("[E0tc] ident `{}` not struct", ident),
+                        ));
+                        self.tcxt.error_in_current_expr_tree .set(true);
+                    }
+                } else {
+                    self.tcxt.errors.write().push(Error::error_with_span(
+                        self.tcxt,
+                        inner.span,
+                        &format!("[E0i] tried to access field of non struct"),
+                    ));
+                    self.tcxt.error_in_current_expr_tree .set(true);
+                }
+            },
+            Expr::AddrOf(_)
+            // invalid lval
+            | Expr::Urnary { .. }
+            | Expr::Binary { .. }
+            | Expr::Parens(_)
+            | Expr::Call { .. }
+            | Expr::TraitMeth { .. }
+            | Expr::StructInit { .. }
+            | Expr::EnumInit { .. }
+            | Expr::ArrayInit { .. }
+            | Expr::Value(_) => {
+                self.tcxt.errors.write().push(
+                    Error::error_with_span(self.tcxt, parent.span, "[E0i] invalid lValue")
+                );
+                self.tcxt.error_in_current_expr_tree .set(true);
+            }
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
@@ -448,16 +584,32 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.expr_ty.insert(expr, imp.method.ret.val.clone());
                 }
             }
-            Expr::FieldAccess { lhs, rhs } => todo!(),
+            Expr::FieldAccess { lhs, rhs } => {
+                self.visit_expr(lhs);
+                if let Some(lhs_ty) = self.tcxt.expr_ty.get(&**lhs).cloned() {
+                    // `infer_rhs_field` adds the expressions type to type context
+                    self.infer_rhs_field(&lhs_ty, &rhs, expr);
+                } else {
+                    self.tcxt.errors.write().push(Error::error_with_span(
+                        self.tcxt,
+                        expr.span,
+                        &format!("[E0i] no type infered for argument `{}`", lhs.val.as_ident()),
+                    ));
+                    self.tcxt.error_in_current_expr_tree.set(true);
+                }
+            }
             Expr::StructInit { path, fields } => {
                 let struc = self.tcxt.name_struct.get(&path.segs[0]);
                 if let Some(struc) = struc {
                     let gen =
                         struc.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
                     let ident = struc.ident;
+
+                    // TODO remove??
                     for field in fields.iter() {
                         self.visit_expr(&field.init);
                     }
+
                     self.tcxt.expr_ty.insert(expr, Ty::Struct { ident, gen });
                 }
             }
@@ -468,9 +620,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     let gen =
                         enm.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
                     let ident = enm.ident;
+
+                    // TODO remove??
                     for arg in items.iter() {
                         self.visit_expr(arg);
                     }
+
                     self.tcxt.expr_ty.insert(expr, Ty::Enum { ident, gen });
                 }
             }

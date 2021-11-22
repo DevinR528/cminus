@@ -252,7 +252,7 @@ pub enum Expr {
         def: Impl,
     },
     /// Access the fields of a struct `expr.expr.expr;`.
-    FieldAccess { lhs: Box<Expr>, def: Struct, rhs: Box<Expr>, field_idx: u32 },
+    FieldAccess { lhs: Box<Expr>, def: Struct, rhs: Box<Expr> },
     /// An ADT is initialized with field values.
     StructInit { path: Path, fields: Vec<FieldInit>, def: Struct },
     /// An ADT is initialized with field values.
@@ -313,19 +313,7 @@ impl Expr {
                     _ => unreachable!("lhs of field access must be struct {:?}", left),
                 };
 
-                let field_idx = if let Expr::Ident { ident, .. } | Expr::Array { ident, .. } =
-                    &right
-                {
-                    def.fields
-                        .iter()
-                        .enumerate()
-                        .find_map(|(i, f)| if f.ident == *ident { Some(i as u32) } else { None })
-                        .expect("field access of unknown field")
-                } else {
-                    unreachable!("rhs of field access must be struct field")
-                };
-
-                Expr::FieldAccess { lhs: box left, def, rhs: box right, field_idx }
+                Expr::FieldAccess { lhs: box left, def, rhs: box right }
             }
             ty::Expr::Urnary { op, expr } => {
                 Expr::Urnary { op: UnOp::lower(op), expr: box Expr::lower(tyctx, fold, *expr), ty }
@@ -346,7 +334,7 @@ impl Expr {
                     path,
                     args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
                     type_args: type_args.into_iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
-                    def: Func::lower(tyctx, fold, func),
+                    def: Func::lower_minus_body(tyctx, fold, func),
                 }
             }
             ty::Expr::TraitMeth { trait_, args, type_args } => {
@@ -421,9 +409,7 @@ impl Expr {
             Expr::Parens(expr) => expr.type_of(),
             Expr::Call { def, .. } => def.ret.clone(),
             Expr::TraitMeth { trait_: _, args: _, type_args: _, def } => def.method.ret.clone(),
-            Expr::FieldAccess { lhs: _, def, rhs: _, field_idx } => {
-                def.fields[*field_idx as usize].ty.clone()
-            }
+            Expr::FieldAccess { lhs: _, rhs, .. } => rhs.type_of(),
             Expr::StructInit { def, .. } => Ty::Struct {
                 ident: def.ident,
                 gen: def.generics.iter().map(|g| g.to_type()).collect(),
@@ -436,6 +422,20 @@ impl Expr {
             },
             Expr::ArrayInit { items: _, ty } => ty.clone(),
             Expr::Value(v) => v.type_of(),
+        }
+    }
+
+    crate fn as_ident(&self) -> Ident {
+        match self {
+            Expr::Ident { ident, ty } => *ident,
+            Expr::Deref { indir, expr, ty } => expr.as_ident(),
+            Expr::AddrOf(expr) => expr.as_ident(),
+            Expr::Array { ident, exprs, ty } => *ident,
+            Expr::Parens(expr) => expr.as_ident(),
+            Expr::FieldAccess { lhs, def, rhs } => todo!(),
+            Expr::StructInit { path, fields, def } => todo!(),
+            Expr::EnumInit { path, variant, items, def } => todo!(),
+            _ => panic!("attempted to get ident of expression with no ident"),
         }
     }
 }
@@ -840,8 +840,8 @@ pub enum Stmt {
 }
 
 impl Stmt {
-    fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut s: ty::Statement) -> Self {
-        match s.val.clone() {
+    fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut statement: ty::Statement) -> Self {
+        match statement.val.clone() {
             ty::Stmt::Const(var) => Stmt::Const(Const {
                 ty: Ty::lower(tyctx, &var.ty.val),
                 ident: var.ident,
@@ -859,13 +859,13 @@ impl Stmt {
             }) => {
                 // TODO: path/name resolution
                 for ty in type_args.iter_mut() {
-                    *ty = tyctx.patch_generic_from_path(ty, s.span);
+                    *ty = tyctx.patch_generic_from_path(ty, statement.span);
                 }
 
                 let ident = path.segs.last().unwrap();
                 if type_args.iter().all(|arg| !arg.val.has_generics()) {
                     TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
-                        .visit_stmt(&mut s);
+                        .visit_stmt(&mut statement);
                 }
                 let func = tyctx.var_func.name_func.get(ident).expect("function is defined");
                 Stmt::Call {
@@ -887,7 +887,7 @@ impl Stmt {
             }) => {
                 if type_args.iter().all(|arg| !arg.val.has_generics()) {
                     TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
-                        .visit_stmt(&mut s);
+                        .visit_stmt(&mut statement);
                 }
 
                 // TODO: here and in Expr, not sure how OK this is...
@@ -936,8 +936,8 @@ impl Stmt {
                     ty,
                 }
             }
-            ty::Stmt::Ret(expr) => {
-                let expr = Expr::lower(tyctx, fold, expr);
+            ty::Stmt::Ret(ex) => {
+                let expr = Expr::lower(tyctx, fold, ex);
                 let ty = expr.type_of();
                 Stmt::Ret(expr, ty)
             }
@@ -1076,6 +1076,16 @@ impl Func {
             stmts: func.stmts.stmts.iter().map(|s| Stmt::lower(tyctx, fold, s.clone())).collect(),
         }
     }
+
+    fn lower_minus_body(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, func: &ty::Func) -> Self {
+        Func {
+            ret: Ty::lower(tyctx, &func.ret.val),
+            ident: func.ident,
+            params: func.params.iter().map(|p| Param::lower(tyctx, p.clone())).collect(),
+            generics: func.generics.iter().map(|g| Ty::lower(tyctx, &g.to_type())).collect(),
+            stmts: vec![],
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -1166,7 +1176,7 @@ impl Ty {
             ty::Ty::Bool => Ty::Bool,
             ty::Ty::Void => Ty::Void,
             ty::Ty::Generic { ident, bound } => Ty::Generic { ident: *ident, bound: bound.clone() },
-            ty::Ty::Path(_) => todo!(),
+            ty::Ty::Path(_) => Ty::lower(tyctx, &tyctx.name_res.resolve_name(ty, tyctx).unwrap()),
             ty::Ty::Func { .. } => {
                 todo!("pretty sure this is an error")
             }

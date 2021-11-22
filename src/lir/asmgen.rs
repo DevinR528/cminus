@@ -12,7 +12,8 @@ use crate::{
     lir::{
         asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
         lower::{
-            BinOp, Binding, CallExpr, Const, Expr, Func, LValue, MatchArm, Pat, Stmt, Ty, UnOp, Val,
+            BinOp, Binding, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat, Stmt,
+            Struct, Ty, UnOp, Val,
         },
         visit::Visit,
     },
@@ -1153,9 +1154,130 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::TraitMeth { trait_, args, type_args, def: _ } => {
                 self.gen_call_expr(trait_, args, type_args, can_clear)
             }
-            Expr::FieldAccess { .. } => todo!(),
-            Expr::StructInit { .. } => {
-                todo!()
+            Expr::FieldAccess { lhs, rhs, def } => {
+                let lval = self.vars.get(&lhs.as_ident()).cloned();
+                if let Some(Location::NumberedOffset { offset, reg }) = &lval {
+                    fn construct_field_offset<'a>(
+                        gen: &mut CodeGen<'a>,
+                        rhs: &'a Expr,
+                        offset: usize,
+                        reg: Register,
+                        def: &Struct,
+                    ) -> Option<Location> {
+                        match rhs {
+                            Expr::Ident { ident, ty } => {
+                                let mut count = 0;
+                                for f in &def.fields {
+                                    if f.ident == *ident {
+                                        return Some(Location::NumberedOffset {
+                                            offset: offset - count,
+                                            reg,
+                                        });
+                                    }
+                                    count += f.ty.size();
+                                }
+
+                                // type checking missed this field somehow
+                                return None;
+                            }
+                            Expr::Deref { indir, expr, ty } => {
+                                todo!("follow the pointer")
+                            }
+                            Expr::Array { ident, exprs, ty } => {
+                                let mut count = 0;
+                                for f in &def.fields {
+                                    if f.ident == *ident {
+                                        let arr = Location::NumberedOffset {
+                                            offset: offset - count,
+                                            reg,
+                                        };
+                                        let ele_size = if let Ty::Array { ty, .. } = ty {
+                                            ty.size()
+                                        } else {
+                                            ty.size()
+                                        };
+                                        return gen.index_arr(arr, exprs, ele_size, true);
+                                    }
+                                    count += f.ty.size();
+                                }
+
+                                // type checking missed this field somehow
+                                return None;
+                            }
+                            Expr::FieldAccess { lhs, rhs: inner, def: inner_def } => {
+                                let mut count = 0;
+                                for f in &def.fields {
+                                    if f.ident == lhs.as_ident() {
+                                        return construct_field_offset(
+                                            gen,
+                                            inner,
+                                            offset - count,
+                                            reg,
+                                            inner_def,
+                                        );
+                                    }
+                                    count += f.ty.size();
+                                }
+
+                                // type checking missed this field somehow
+                                return None;
+                            }
+                            Expr::AddrOf(_) => todo!(),
+                            Expr::Call { path, args, type_args, def } => todo!(),
+                            _ => unreachable!("not a valid struct field accessor"),
+                        }
+                    }
+
+                    construct_field_offset(self, rhs, *offset, *reg, def)?
+                } else {
+                    panic!("have not resolved field access")
+                }
+            }
+            Expr::StructInit { path: _, fields, .. } => {
+                fn flatten_struct_init(f: &FieldInit) -> Vec<&Expr> {
+                    match &f.init {
+                        Expr::StructInit { path, fields, def } => {
+                            fields.iter().flat_map(flatten_struct_init).collect::<Vec<_>>()
+                        }
+                        Expr::EnumInit { path, variant, items, def } => {
+                            items.iter().collect::<Vec<_>>()
+                        }
+                        Expr::ArrayInit { items, ty } => items.iter().collect::<Vec<_>>(),
+                        _ => vec![&f.init],
+                    }
+                }
+                let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
+                if let Some(Location::NumberedOffset { offset, reg }) = &lval {
+                    let mut running_offset = *offset;
+                    for expr in fields.iter().flat_map(flatten_struct_init) {
+                        let rval = self.build_value(expr, assigned, can_clear).unwrap();
+
+                        let ele_size = expr.type_of().size();
+
+                        running_offset -= ele_size;
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rval,
+                            // to the left hand side of `here =`
+                            // The start offset - the current item size + the tag bits which are
+                            // first
+                            dst: Location::NumberedOffset {
+                                offset: running_offset,
+                                reg: reg.clone(),
+                            },
+                            size: ele_size,
+                        }]);
+                    }
+
+                    if let Some(lval @ Location::NumberedOffset { .. }) = lval {
+                        lval
+                    } else {
+                        Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP }
+                    }
+                } else {
+                    // See enum init below
+                    todo!("{:?} {:?}", expr, assigned)
+                }
             }
             Expr::EnumInit { path: _, variant, items, def } => {
                 let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
