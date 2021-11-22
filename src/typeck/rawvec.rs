@@ -25,6 +25,12 @@ pub struct RawVec<T> {
     pub(crate) len: Cell<usize>,
 }
 
+impl<T> Default for RawVec<T> {
+    fn default() -> Self {
+        Self::with_cap(0)
+    }
+}
+
 impl<T> RawVec<T> {
     /// Make a new array with enough room to hold at least `cap` elements.
     #[inline]
@@ -34,7 +40,7 @@ impl<T> RawVec<T> {
                 RawVec {
                     ptr: Cell::new(NonNull::new_unchecked(ptr::null_mut())),
                     len: Cell::new(0),
-                    cap: Cell::new(cap),
+                    cap: Cell::new(0),
                 }
             } else {
                 let ptr = {
@@ -353,4 +359,19 @@ fn raw_vec_from() {
 fn raw_vec_from_empty() {
     let list: Vec<u8> = vec![];
     let mut raw = RawVec::from_vec(list);
+}
+
+#[test]
+fn raw_vec_push() {
+    let list: Vec<usize> = vec![];
+    let mut raw = RawVec::from_vec(list);
+
+    for i in 0..1000 {
+        //sysmalloc: Assertion `(old_top == initial_top (av) && old_size == 0) || ((unsigned long)
+        // (old_size) >= MINSIZE && prev_inuse (old_top) && ((unsigned long) old_end & (pagesize -
+        // 1)) == 0)
+        unsafe {
+            raw.push_shared(i);
+        }
+    }
 }
