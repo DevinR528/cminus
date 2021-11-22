@@ -130,13 +130,19 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             // TODO: deal with user explicitly provided types
             Stmt::Assign { lval, rval, ty: given_ty, is_let } => {
                 self.visit_expr(rval);
-                let ty = self
-                    .tcxt
-                    .expr_ty
-                    .get(rval)
-                    .or_else(|| given_ty.as_ref().map(|t| &t.val))
-                    .unwrap_or_else(|| panic!("{:?}", rval))
-                    .clone();
+                let ty = if let Some(t) =
+                    self.tcxt.expr_ty.get(rval).or_else(|| given_ty.as_ref().map(|t| &t.val))
+                {
+                    t.clone()
+                } else {
+                    self.tcxt.errors.write().push(Error::error_with_span(
+                        self.tcxt,
+                        lval.span,
+                        &format!("[E0i] variable not found `{}`", lval.val.as_ident()),
+                    ));
+                    self.tcxt.error_in_current_expr_tree.set(true);
+                    return;
+                };
 
                 // Set after walking the right side trees
                 self.tcxt.set_record_used_vars(!is_let);
@@ -175,12 +181,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             .insert(ident, ty)
                             .is_some()
                         {
-                            self.tcxt.errors.push(Error::error_with_span(
+                            self.tcxt.errors.write().push(Error::error_with_span(
                                 self.tcxt,
                                 ident.span(),
                                 &format!("[E0i] duplicate variable name `{}`", ident),
                             ));
-                            self.tcxt.error_in_current_expr_tree = true;
+                            self.tcxt.error_in_current_expr_tree.set(true);
                         }
                     } else if let Some(lhs) = self
                         .tcxt
@@ -188,7 +194,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         .and_then(|t| resolve_ty(self.tcxt, lval, Some(&t)))
                     {
                         if !ty.is_ty_eq(&lhs) {
-                            self.tcxt.errors.push(Error::error_with_span(
+                            self.tcxt.errors.write().push(Error::error_with_span(
                                 self.tcxt,
                                 rval.span,
                                 &format!(
@@ -196,7 +202,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                     ty, lhs,
                                 ),
                             ));
-                            self.tcxt.error_in_current_expr_tree = true;
+                            self.tcxt.error_in_current_expr_tree.set(true);
                         }
                     }
                     // For any assignment we need to know the type of the lvalue, this is because
@@ -211,12 +217,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 // We must know the type of `lvar` now
                 let lty = self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
                 if lty.is_none() {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.write().push(Error::error_with_span(
                         self.tcxt,
                         lval.span,
                         &format!("[E0i] undeclared variable name `{}`", lval.val.as_ident()),
                     ));
-                    self.tcxt.error_in_current_expr_tree = true;
+                    self.tcxt.error_in_current_expr_tree.set(true);
                 }
 
                 if let Some(unified) = fold_ty(
@@ -267,12 +273,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
                     self.tcxt.expr_ty.insert(expr, ty);
                 } else {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.write().push(Error::error_with_span(
                         self.tcxt,
                         expr.span,
                         &format!("[E0i] no type infered for `{}`", ident),
                     ));
-                    self.tcxt.error_in_current_expr_tree = true;
+                    self.tcxt.error_in_current_expr_tree.set(true);
                 }
             }
             Expr::Deref { indir, expr } => todo!(),
@@ -293,12 +299,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         self.tcxt.expr_ty.insert(expr, t);
                     }
                 } else {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.write().push(Error::error_with_span(
                         self.tcxt,
                         expr.span,
                         &format!("[E0i] no type infered for `{}`", ident),
                     ));
-                    self.tcxt.error_in_current_expr_tree = true;
+                    self.tcxt.error_in_current_expr_tree.set(true);
                 }
             }
             Expr::Urnary { op, expr: ex } => {
@@ -349,7 +355,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                     }
                                 }
                             } else {
-                                self.tcxt.errors.push(Error::error_with_span(
+                                self.tcxt.errors.write().push(Error::error_with_span(
                                     self.tcxt,
                                     expr.span,
                                     &format!(
@@ -357,7 +363,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                         param.ident
                                     ),
                                 ));
-                                self.tcxt.error_in_current_expr_tree = true;
+                                self.tcxt.error_in_current_expr_tree.set(true);
                             }
                         }
 

@@ -6,7 +6,7 @@ use crate::{ast::types::Range, typeck::TyCheckRes};
 crate struct Error<'input> {
     name: &'input str,
     input: &'input str,
-    span: Range,
+    crate span: Range,
     msg: String,
     help: Option<String>,
 }

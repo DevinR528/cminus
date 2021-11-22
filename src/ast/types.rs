@@ -434,16 +434,24 @@ impl Ty {
     ) -> Option<Self> {
         let mut new = self.clone();
         for expr in exprs {
-            if let Ty::Array { ty, size } = new {
+            if let Ty::Array { ty, ref size } = &new {
                 if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
-                    if i >= &(size as isize) {
-                        panic!(
-                            "{}",
-                            Error::error_with_span(tcxt, span, "out of bound of static array")
-                        )
+                    if i >= &(*size as isize) {
+                        if tcxt.errors.read().iter().any(|e| {
+                            (e.span.start..e.span.end).contains(&span.start)
+                                || (e.span.start..e.span.end).contains(&span.end)
+                        }) {
+                            break;
+                        }
+                        tcxt.errors.write().push(Error::error_with_span(
+                            tcxt,
+                            span,
+                            "out of bound of static array",
+                        ));
+                        tcxt.error_in_current_expr_tree.set(true);
                     }
                 }
-                new = ty.val;
+                new = ty.val.clone();
             } else {
                 break;
             }
