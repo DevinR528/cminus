@@ -13,13 +13,13 @@ use crate::{
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-struct GenSubstitution<'a> {
+struct GenSubstitution<'a, 'b> {
     generic: &'a Generic,
     ty: &'a Ty,
-    tcxt: &'a TyCheckRes<'a, 'a>,
+    tcxt: &'a TyCheckRes<'a, 'b>,
 }
 
-impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
+impl<'ast, 'b> VisitMut<'ast> for GenSubstitution<'ast, 'b> {
     fn visit_func(&mut self, func: &'ast mut ty::Func) {
         // TODO: this is REALLY bad since we lock anytime we do something like this, and making a
         // bunch of thrown away allocations to the interner isn't ideal
@@ -42,18 +42,18 @@ impl<'ast> VisitMut<'ast> for GenSubstitution<'ast> {
     }
 }
 
-crate struct TraitRes<'a> {
-    type_args: Vec<&'a Ty>,
-    tcxt: &'a TyCheckRes<'a, 'a>,
+crate struct TraitRes<'ast, 'a> {
+    type_args: Vec<&'ast Ty>,
+    tcxt: &'ast TyCheckRes<'ast, 'a>,
 }
 
-impl<'a> TraitRes<'a> {
-    crate fn new(tcxt: &'a TyCheckRes<'_, '_>, type_args: Vec<&'a Ty>) -> Self {
+impl<'ast, 'b> TraitRes<'ast, 'b> {
+    crate fn new(tcxt: &'ast TyCheckRes<'ast, 'b>, type_args: Vec<&'ast Ty>) -> Self {
         Self { tcxt, type_args }
     }
 }
 
-impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
+impl<'ast, 'a> VisitMut<'ast> for TraitRes<'ast, 'a> {
     fn visit_stmt(&mut self, stmt: &'ast mut ty::Statement) {
         let mut x = None;
         if let ty::Stmt::TraitMeth(ty::Spanned {
@@ -65,8 +65,9 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
             if let Some(i) =
                 self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
             {
-                let mut args = args.clone();
-                for arg in &mut args {
+                // TODO: fucking terrible
+                let args2: &'static mut [_] = args.clone().leak();
+                for arg in args2 {
                     self.visit_expr(arg);
                 }
                 let ident = format!(
@@ -77,7 +78,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                 x = Some(ty::Stmt::Call(
                     ty::Expr::Call {
                         path: trait_.clone(),
-                        args,
+                        args: args.to_vec(),
                         type_args: crate::raw_vec![i.method.ret.clone()],
                     }
                     .into_spanned(DUMMY),
@@ -110,13 +111,14 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
 
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         let mut x = None;
-        if let ty::Expr::TraitMeth { trait_, type_args: _, args } = &mut expr.val {
+        if let ty::Expr::TraitMeth { trait_, type_args: _, args } = &expr.val {
             let ident = trait_.segs.last().unwrap();
             if let Some(i) =
                 self.tcxt.trait_solve.impls.get(trait_).and_then(|imp| imp.get(&self.type_args))
             {
-                let mut args = args.clone();
-                for arg in &mut args {
+                // TODO: fucking terrible
+                let args2: &'static mut [_] = args.clone().leak();
+                for arg in args2 {
                     // Incase there is a function/trait method call as an argument
                     self.visit_expr(arg);
                 }
@@ -130,7 +132,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'a> {
                 );
                 x = Some(ty::Expr::Call {
                     path: Path::single(ident),
-                    args,
+                    args: args.to_vec(),
                     type_args: crate::raw_vec![i.method.ret.clone()],
                 });
             } else {
