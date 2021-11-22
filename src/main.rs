@@ -13,7 +13,8 @@
     hash_drain_filter,
     ptr_internals,
     vec_into_raw_parts,
-    allocator_api
+    allocator_api,
+    result_flattening
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -77,7 +78,7 @@ fn process_file<'a>(
         println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
         println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
         if verbose {
-            println!("{:?}", items);
+            println!("items: {:?}", items);
         }
     }
 

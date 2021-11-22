@@ -1,0 +1,24 @@
+linked fn write<T>(_: T);
+
+struct bar {
+    y: char
+}
+
+struct foo {
+    x: int,
+    inner: bar,
+}
+
+fn foo_plus(thing: foo) {
+    let z = thing.x;
+    write(z + 1)
+}
+
+fn main() {
+    let item = foo { x: 1, inner: bar { y: 'c' } };
+
+    foo_plus(item);
+
+    let a = item.x;
+    write(a);
+}

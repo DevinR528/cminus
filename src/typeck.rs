@@ -39,7 +39,7 @@ use generic::{GenericResolver, Node};
 use scope::{hash_file, ScopeContents, ScopeWalker, ScopedName};
 use trait_solver::TraitSolve;
 
-use self::scope::{Scope, ScopeItem};
+use self::scope::{ItemIn, Scope};
 
 #[derive(Debug, Default)]
 crate struct VarInFunction<'ast> {
@@ -74,7 +74,7 @@ impl VarInFunction<'_> {
 
 pub type AstReceiver = Receiver<ParseResult<ParsedBlob>>;
 
-#[derive(Default)]
+#[derive(Default, derive_help::Debug)]
 crate struct TyCheckRes<'ast, 'input> {
     /// The name of the file being checked.
     crate file_names: HashMap<u64, &'input str>,
@@ -82,16 +82,20 @@ crate struct TyCheckRes<'ast, 'input> {
     crate inputs: HashMap<u64, &'input str>,
 
     /// The name of the function currently in or `None` if global.
+    #[dbg_ignore]
     curr_fn: Option<Ident>,
     /// Global variables declared outside of functions.
+    #[dbg_ignore]
     global: HashMap<Ident, Ty>,
 
     /// All the info about variables local to a specific function.
     ///
     /// Parameters are included in the locals.
+    #[dbg_ignore]
     crate var_func: VarInFunction<'ast>,
 
     /// A mapping of expression -> type, this is the main inference table.
+    // #[dbg_ignore]
     crate expr_ty: HashMap<&'ast Expression, Ty>,
 
     /// An `Expression` -> `Ty` mapping made after monomorphization.
@@ -99,9 +103,11 @@ crate struct TyCheckRes<'ast, 'input> {
     /// Types reflect specializations that happens to the expressions. This
     /// only effects expressions where parameters are used (as far as I can tell) since
     /// `GenSubstitution` removes all the typed statements and expressions.
+    #[dbg_ignore]
     crate mono_expr_ty: RefCell<HashMap<Expression, Ty>>,
 
     /// A mapping of identities -> val, this is how const folding keeps track of `Expr::Ident`s.
+    #[dbg_ignore]
     crate consts: HashMap<Ident, &'ast Val>,
 
     // /// A mapping of struct name to the fields of that struct.
@@ -109,44 +115,40 @@ crate struct TyCheckRes<'ast, 'input> {
     // /// A mapping of enum name to the variants of that enum.
     // enum_fields: HashMap<Path, (Vec<Type>, Vec<Variant>)>,
     /// A mapping of struct name to struct def.
+    #[dbg_ignore]
     crate name_struct: HashMap<Ident, &'ast Struct>,
     /// A mapping of enum name to enum def.
+    #[dbg_ignore]
     crate name_enum: HashMap<Ident, &'ast Enum>,
 
     /// Resolve generic types at the end of type checking.
+    #[dbg_ignore]
     crate generic_res: GenericResolver<'ast>,
     /// Trait resolver for checking the bounds on generic types.
+    #[dbg_ignore]
     crate trait_solve: TraitSolve<'ast>,
     /// Name resolution and scope tracking.
     crate name_res: ScopeWalker,
 
     // TODO: this isn't ideal since you can forget to set/unset...
     /// Do we record uses of this variable during the following expr tree walk.
+    #[dbg_ignore]
     record_used: bool,
 
+    #[dbg_ignore]
     uniq_generic_instance_id: Cell<usize>,
 
+    // TODO: SHIT this is ugly
     /// Errors collected during parsing and type checking.
+    #[dbg_ignore]
     crate errors: RwLock<Vec<Error<'input>>>,
+    #[dbg_ignore]
+    crate error_in_current_expr_tree: Cell<bool>,
 
+    #[dbg_ignore]
     rcv: Option<AstReceiver>,
+    #[dbg_ignore]
     crate imported_items: Vec<&'static Declaration>,
-}
-
-impl fmt::Debug for TyCheckRes<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TyCheckResult")
-            // .field("global", &self.global)
-            // .field("curr_fn", &self.curr_fn)
-            // .field("func_refs", &self.var_func.func_refs)
-            // .field("func_params", &self.func_params)
-            // .field("expr_ty", &self.expr_ty)
-            // .field("struct_fields", &self.struct_fields)
-            // .field("enum_fields", &self.enum_fields)
-            .field("generic_res", &self.generic_res)
-            .field("trait_solve", &self.trait_solve)
-            .finish()
-    }
 }
 
 impl<'input> TyCheckRes<'_, 'input> {
@@ -293,28 +295,37 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for func in funcs {
             self.curr_fn = Some(func.ident);
+            self.name_res
+                .add_to_scope_stack(Scope::Func { file: func.span.file_id, func: func.ident });
 
             crate::visit::walk_func(self, func);
 
             if !matches!(func.ret.val, Ty::Void) && !self.var_func.func_return.contains(&func.ident)
             {
-                    self.errors.write().push(Error::error_with_span(
-                        self,
-                        func.span,
-                        &format!(
-                            "function `{}` has return type `{}` but no return statement",
-                            func.ident, func.ret.val
-                        ),
-                    ));
+                self.errors.write().push(Error::error_with_span(
+                    self,
+                    func.span,
+                    &format!(
+                        "function `{}` has return type `{}` but no return statement",
+                        func.ident, func.ret.val
+                    ),
+                ));
             }
+
+            self.name_res.pop_scope_stack();
             self.curr_fn.take();
         }
 
         // stabilize order
         impls.sort_by(|a, b| a.span.start.cmp(&b.span.start));
-        for trait_ in impls {
-            self.curr_fn = Some(trait_.method.ident);
-            crate::visit::walk_func(self, &trait_.method);
+        for imp in impls {
+            self.name_res
+                .add_to_scope_stack(Scope::Impl { file: imp.span.file_id, imp: imp.method.ident });
+
+            self.curr_fn = Some(imp.method.ident);
+            crate::visit::walk_func(self, &imp.method);
+
+            self.name_res.pop_scope_stack();
             // TODO: check return just like above
             self.curr_fn.take();
         }
@@ -334,21 +345,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // TODO: see about unused declarations
         // After all checking then we can check for unused vars
         for (unused, span) in unused {
-                self.errors.write().push(Error::error_with_span(
-                    self,
-                    span,
-                    &format!("unused variable `{}`, remove or reference", unused),
-                ));
+            self.errors.write().push(Error::error_with_span(
+                self,
+                span,
+                &format!("unused variable `{}`, remove or reference", unused),
+            ));
         }
     }
 
     fn visit_trait(&mut self, t: &'ast Trait) {
         if self.trait_solve.add_trait(t).is_some() {
-                self.errors.write().push(Error::error_with_span(
-                    self,
-                    t.span,
-                    &format!("duplicate trait `{}` found", t.path),
-                ));
+            self.errors.write().push(Error::error_with_span(
+                self,
+                t.span,
+                &format!("duplicate trait `{}` found", t.path),
+            ));
         } else {
             self.name_res.add_decl(
                 t.span.file_id,
@@ -456,12 +467,15 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 
     fn visit_adt(&mut self, adt: &'ast Adt) {
-        let span;
-        let ident;
         match adt {
             Adt::Struct(struc) => {
-                span = struc.span;
-                ident = struc.ident;
+                for field in &struc.fields {
+                    self.name_res.add_item(
+                        struc.span.file_id,
+                        Scope::Struct { file: struc.span.file_id, adt: struc.ident },
+                        ItemIn::Field(field.ident),
+                    );
+                }
 
                 if self.name_struct.insert(struc.ident, struc).is_some() {
                     self.errors.write().push(Error::error_with_span(
@@ -486,8 +500,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Adt::Enum(en) => {
-                span = en.span;
-                ident = en.ident;
+                for variant in &en.variants {
+                    self.name_res.add_item(
+                        en.span.file_id,
+                        Scope::Enum { file: en.span.file_id, adt: en.ident },
+                        ItemIn::Variant(variant.ident),
+                    );
+                }
 
                 if self.name_enum.insert(en.ident, en).is_some() {
                     self.errors.write().push(Error::error_with_span(
@@ -512,7 +531,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
         }
-        self.name_res.add_decl(span.file_id, Scope::Adt { file: span.file_id, adt: ident })
     }
 
     // TODO: this is not what it used to be
@@ -552,7 +570,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             self.name_res.add_item(
                 var.span.file_id,
                 Scope::Func { file: var.span.file_id, func: fn_id },
-                ScopeItem::Var(var.ident),
+                ItemIn::Var(var.ident),
             );
 
             // bail out before we set the scope as global
@@ -571,8 +589,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // This const is declared in the file scope
         self.name_res.add_item(
             var.span.file_id,
-            Scope::File(var.span.file_id),
-            ScopeItem::Var(var.ident),
+            Scope::Global { file: var.span.file_id, name: var.ident },
+            ItemIn::Var(var.ident),
         );
         self.var_func
             .unsed_vars
@@ -586,13 +604,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.name_res.add_item(
                     span.file_id,
                     Scope::Func { file: span.file_id, func: fn_id },
-                    ScopeItem::Var(*ident),
+                    ItemIn::Var(*ident),
                 );
 
+                let ty =
+                    self.name_res.resolve_name(&ty.val, self).unwrap_or_else(|| ty.val.clone());
+
                 // TODO: Do this for returns and any place we match for Ty::Generic {..}
-                if ty.val.has_generics() {
+                if ty.has_generics() {
                     self.generic_res.collect_generic_usage(
-                        &ty.val,
+                        &ty,
                         self.unique_id(),
                         0,
                         &[],
@@ -606,7 +627,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .and_then(|f| {
                             // TODO: this doesn't work for something like `enum result<T, E>`
                             // only checks `T` now
-                            f.generics.iter().find(|g| g.ident == *ty.val.generics()[0])
+                            f.generics.iter().find(|g| g.ident == *ty.generics()[0])
                         })
                         .is_some();
 
@@ -616,7 +637,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             *span,
                             &format!(
                                 "found parameter `{}` which is not a declared generic type",
-                                ty.val
+                                ty
                             ),
                         ));
                     }
@@ -626,7 +647,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .func_refs
                     .entry(fn_id)
                     .or_default()
-                    .insert(*ident, ty.val.clone())
+                    .insert(*ident, ty.clone())
                     .is_some()
                 {
                     self.errors.write().push(Error::error_with_span(
@@ -905,6 +926,20 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     let mut param_ty = func_params.get(idx).map(|p| p.ty.val.clone());
                     let mut arg_ty = self.expr_ty.get(arg).cloned();
 
+                    match &param_ty {
+                        Some(Ty::Generic { ident, .. }) => {
+                            if let Some(ty_arg) = gen_arg_map.get(ident).cloned() {
+                                param_ty = Some(ty_arg);
+                            }
+                        }
+                        Some(t @ Ty::Path(..)) => {
+                            if let Some(ty_arg) = self.name_res.resolve_name(t, self) {
+                                param_ty = Some(ty_arg);
+                            }
+                        }
+                        _ => {}
+                    }
+
                     if let Some(Ty::Generic { ident, .. }) = &param_ty {
                         if let Some(ty_arg) = gen_arg_map.get(ident).cloned() {
                             param_ty = Some(ty_arg);
@@ -1046,7 +1081,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     let field_ty = struc
                         .fields
                         .iter()
-                        .find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None })
+                        .find_map(|f| {
+                            if f.ident == *ident {
+                                self.name_res.resolve_name(&f.ty.val, self)
+                            } else {
+                                None
+                            }
+                        })
                         .expect("no field with that name found");
 
                     let exprty = self.expr_ty.get(&*init).cloned();
@@ -1071,7 +1112,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 &mut stack,
                             );
 
-                            gen_args.insert(gen, exprty.clone().unwrap().into_spanned(DUMMY));
+                            gen_args.insert(*gen, exprty.clone().unwrap().into_spanned(DUMMY));
                         } else {
                             panic!("undefined generic type used")
                         }
@@ -1299,7 +1340,7 @@ fn build_stack(tcxt: &TyCheckRes<'_, '_>, kind: Node) -> Vec<Node> {
 /// The left hand side of field access has been collected calling this collects the right side.
 ///
 /// The is used in the collection of expressions.
-fn check_field_access<'ast>(
+crate fn check_field_access<'ast>(
     tcxt: &mut TyCheckRes<'ast, '_>,
     lhs: &'ast Expression,
     rhs: &'ast Expression,
