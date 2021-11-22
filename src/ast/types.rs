@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     fmt,
     hash::{self, Hash, Hasher},
     ops,
@@ -7,7 +8,7 @@ use std::{
 use crate::{
     ast::parse::symbol::Ident,
     error::Error,
-    typeck::{rawvec::RawVec, TyCheckRes},
+    typeck::{check::fold_ty, rawvec::RawVec, TyCheckRes},
 };
 
 crate trait TypeEquality<T = Self> {
@@ -216,6 +217,30 @@ impl Expr {
             | Expr::Value(..) => todo!(),
         }
     }
+
+    crate fn type_of(&self) -> Option<Ty> {
+        match self {
+            Expr::Array { ident, exprs } => exprs[0].val.type_of(),
+            Expr::Urnary { op, expr } => expr.val.type_of(),
+            Expr::Binary { op, lhs, rhs } => {
+                let lty = lhs.val.type_of();
+                let rty = rhs.val.type_of();
+                if lty.as_ref().is_ty_eq(&rty.as_ref()) {
+                    lty
+                } else {
+                    None
+                }
+            }
+            Expr::Parens(ex) => ex.val.type_of(),
+            Expr::FieldAccess { lhs, rhs } => rhs.val.type_of(),
+            Expr::ArrayInit { items } => Some(Ty::Array {
+                size: items.len(),
+                ty: box items[0].val.type_of().unwrap().into_spanned(DUMMY),
+            }),
+            Expr::Value(v) => Some(v.val.to_type()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -228,6 +253,17 @@ impl Path {
     // This will use a `DUMMY` span. DO NOT USE until after type checking.
     crate fn single(seg: Ident) -> Self {
         Self { segs: vec![seg], span: DUMMY }
+    }
+
+    /// Return the file local identifier for this declaration.
+    ///
+    /// ## Panics
+    /// If the `Path` is empty.
+    ///
+    /// If we are in `lib.cm` and have `struct foo` our path is `lib::foo` and the local ident is
+    /// `foo`.
+    crate fn local_ident(&self) -> Ident {
+        self.segs.last().copied().unwrap()
     }
 }
 
@@ -867,7 +903,8 @@ impl<T: TypeEquality> TypeEquality for Option<&T> {
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "${:#?}@{:?}", self.val, self.span)
+        // f.debug_struct("Spanned").field("span", &self.span).field("val", &self.val).finish()
+        f.debug_tuple("Spanned").field(&self.val).finish()
     }
 }
 

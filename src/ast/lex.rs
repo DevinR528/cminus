@@ -882,15 +882,3 @@ impl PartialEq<TokenMatch> for TokenKind {
         other.eq(self)
     }
 }
-
-#[test]
-fn do_lex_stuff() {
-    let input = r#"
-void foo(int* x) {}
-
-int* ptr(int x) {
-    return &x;
-}
-"#;
-    println!("{:#?}", tokenize(input).collect::<Vec<_>>());
-}
