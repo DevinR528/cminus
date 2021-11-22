@@ -16,11 +16,11 @@ use crate::{
 
 crate mod error;
 crate mod kw;
-mod prec;
+mod ops;
 crate mod symbol;
 
 use error::ParseError;
-use prec::{AssocOp, Fixit};
+use ops::{AssocOp, Fixit};
 
 use self::lex::Base;
 
@@ -62,7 +62,6 @@ impl<'a> AstBuilder<'a> {
     pub fn new(input: &'a str, file: &'a str, snd: AstSender) -> Self {
         let mut tokens =
             lex::tokenize(input).chain(Some(Token::new(TokenKind::Eof, 0))).collect::<Vec<_>>();
-        // println!("{:#?}", tokens);
         let curr = tokens.remove(0);
         Self {
             tokens,
@@ -102,7 +101,6 @@ impl<'a> AstBuilder<'a> {
                     continue;
                 }
                 TokenKind::Ident => {
-                    // println!("{}", self.input_curr());
                     let keyword: kw::Keywords = self.input_curr().try_into()?;
                     match keyword {
                         kw::Const => {
@@ -2093,7 +2091,7 @@ const foo: [3; int] = 1;
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2103,7 +2101,7 @@ fn add(x: int, y: int): int {  }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2117,7 +2115,7 @@ struct foo {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2130,7 +2128,7 @@ struct foo<T, U> {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2142,7 +2140,7 @@ enum foo {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2154,7 +2152,7 @@ enum foo<T, X, U> {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2168,7 +2166,7 @@ impl add<string> {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2179,7 +2177,7 @@ import ::bar::baz;
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 2);
 }
 
 #[test]
@@ -2192,7 +2190,7 @@ fn add(x: int, y: int): int {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2205,7 +2203,7 @@ fn add(x: int, y: int): int {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2218,7 +2216,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2231,7 +2229,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2244,7 +2242,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2256,7 +2254,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2268,7 +2266,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2280,7 +2278,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2296,7 +2294,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2318,7 +2316,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2333,7 +2331,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2345,7 +2343,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2359,7 +2357,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2375,7 +2373,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2388,7 +2386,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2404,7 +2402,7 @@ fn add() {
         .parse()
         .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", input, e))
         .unwrap_or_else(|e| panic!("{}", e));
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2468,5 +2466,5 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
