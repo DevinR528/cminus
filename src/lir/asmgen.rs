@@ -424,8 +424,18 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let mut pushed = false;
-        if self.total_stack % 16 != 0 {
-            self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
+        if self.total_stack % 16 != 0 || self.total_stack == 0 {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const {
+                    val: Val::Int(if (self.total_stack + 8) % 16 != 0 { 16 } else { 8 }),
+                },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Sub,
+            });
+
+            if self.total_stack == 0 {
+                self.total_stack += 16;
+            }
             pushed = true;
         }
 
@@ -447,7 +457,7 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::Call(Location::Label("scanf".to_owned())),
         ]);
 
-        if pushed {
+        if pushed && self.total_stack > 16 {
             self.asm_buf.push(Instruction::Math {
                 src: Location::Const { val: Val::Int(8) },
                 dst: Location::Register(Register::RSP),
@@ -464,7 +474,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Ty::Char => ".char_wformat",
                 Ty::Float => ".float_wformat",
                 Ty::Array { ty, .. } => format_str(ty),
-                _ => unreachable!("not valid print strings"),
+                _ => unreachable!("not valid print string"),
             }
         }
 
@@ -472,7 +482,7 @@ impl<'ctx> CodeGen<'ctx> {
         let fmt_str = format_str(&expr_type).to_string();
         let size = expr_type.size();
 
-        let mut val = self.build_value(expr, None, CanClearRegs::No).unwrap();
+        let mut val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
 
         if [
             Location::Register(Register::RSI),
@@ -867,7 +877,10 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Option<Location> {
         self.can_clear = can_clear;
         let val = Some(match expr {
-            Expr::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
+            Expr::Ident { ident, ty: _ } => {
+                // panic!("{} {:?}", ident, self.vars);
+                self.vars.get(ident)?.clone()
+            }
             Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
             Expr::AddrOf(_) => todo!(),
             Expr::Array { ident, exprs, ty } => {
@@ -1157,77 +1170,6 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::FieldAccess { lhs, rhs, def } => {
                 let lval = self.vars.get(&lhs.as_ident()).cloned();
                 if let Some(Location::NumberedOffset { offset, reg }) = &lval {
-                    fn construct_field_offset<'a>(
-                        gen: &mut CodeGen<'a>,
-                        rhs: &'a Expr,
-                        offset: usize,
-                        reg: Register,
-                        def: &Struct,
-                    ) -> Option<Location> {
-                        match rhs {
-                            Expr::Ident { ident, ty } => {
-                                let mut count = 0;
-                                for f in &def.fields {
-                                    if f.ident == *ident {
-                                        return Some(Location::NumberedOffset {
-                                            offset: offset - count,
-                                            reg,
-                                        });
-                                    }
-                                    count += f.ty.size();
-                                }
-
-                                // type checking missed this field somehow
-                                return None;
-                            }
-                            Expr::Deref { indir, expr, ty } => {
-                                todo!("follow the pointer")
-                            }
-                            Expr::Array { ident, exprs, ty } => {
-                                let mut count = 0;
-                                for f in &def.fields {
-                                    if f.ident == *ident {
-                                        let arr = Location::NumberedOffset {
-                                            offset: offset - count,
-                                            reg,
-                                        };
-                                        let ele_size = if let Ty::Array { ty, .. } = ty {
-                                            ty.size()
-                                        } else {
-                                            ty.size()
-                                        };
-                                        return gen.index_arr(arr, exprs, ele_size, true);
-                                    }
-                                    count += f.ty.size();
-                                }
-
-                                // type checking missed this field somehow
-                                return None;
-                            }
-                            Expr::FieldAccess { lhs, rhs: inner, def: inner_def } => {
-                                let mut count = 0;
-                                for f in &def.fields {
-                                    if f.ident == lhs.as_ident() {
-                                        return construct_field_offset(
-                                            gen,
-                                            inner,
-                                            offset - count,
-                                            reg,
-                                            inner_def,
-                                        );
-                                    }
-                                    count += f.ty.size();
-                                }
-
-                                // type checking missed this field somehow
-                                return None;
-                            }
-                            Expr::AddrOf(_) => todo!(),
-                            Expr::Call { path, args, type_args, def } => todo!(),
-                            _ => unreachable!("not a valid struct field accessor"),
-                        }
-                    }
-
                     construct_field_offset(self, rhs, *offset, *reg, def)?
                 } else {
                     panic!("have not resolved field access")
@@ -1261,10 +1203,7 @@ impl<'ctx> CodeGen<'ctx> {
                             // to the left hand side of `here =`
                             // The start offset - the current item size + the tag bits which are
                             // first
-                            dst: Location::NumberedOffset {
-                                offset: running_offset,
-                                reg: reg.clone(),
-                            },
+                            dst: Location::NumberedOffset { offset: running_offset, reg: *reg },
                             size: ele_size,
                         }]);
                     }
@@ -1306,7 +1245,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let (mut running_offset, reg) =
                     if let Some(Location::NumberedOffset { offset, reg }) = lval {
-                        (offset, reg.clone())
+                        (offset, reg)
                     } else {
                         todo!("not sure")
                     };
@@ -1322,7 +1261,7 @@ impl<'ctx> CodeGen<'ctx> {
                         // to the left hand side of `here =`
                         // The start offset - the current item size + the tag bits which are
                         // first
-                        dst: Location::NumberedOffset { offset: running_offset, reg: reg.clone() },
+                        dst: Location::NumberedOffset { offset: running_offset, reg },
                         size: ele_size,
                     }]);
                 }
@@ -1396,239 +1335,187 @@ impl<'ctx> CodeGen<'ctx> {
                 self.alloc_stack(var.ident, &var.ty);
             }
             Stmt::Assign { lval, rval, is_let } => {
-                if let Some(global) = self.globals.get_mut(&lval.as_ident().unwrap()) {
-                    match rval {
-                        Expr::Ident { ident: _, ty: _ } => todo!(),
-                        Expr::StructInit { .. } => todo!(),
-                        Expr::EnumInit { .. } => todo!(),
-                        Expr::ArrayInit { .. } => todo!(),
-                        Expr::Value(val) => match val {
-                            Val::Float(_) => todo!(),
-                            Val::Int(num) => match global {
-                                Global::Int { name: _, content } => {
-                                    *content = *num as i64;
-                                }
-                                _ => todo!(),
-                            },
-                            Val::Bool(boo) => match global {
-                                Global::Int { name: _, content } => {
-                                    *content = *boo as i64;
-                                }
-                                _ => todo!(),
-                            },
-                            Val::Char(c) => match global {
-                                Global::Char { name: _, content } => {
-                                    *content = *c as u8;
-                                }
-                                hmm => todo!("{:?}", hmm),
-                            },
-                            Val::Str(s) => match global {
-                                Global::Text { name: _, content } => {
-                                    *content = s.name().to_string();
-                                }
-                                _ => todo!(),
-                            },
-                        },
-                        _ => {}
-                    }
+                let lloc = if *is_let {
+                    let ident = lval.as_ident().unwrap();
+                    self.alloc_stack(ident, lval.type_of())
                 } else {
-                    let lloc = if *is_let {
-                        let ident = lval.as_ident().unwrap();
-                        self.alloc_stack(ident, lval.type_of())
-                    } else {
-                        self.get_pointer(lval).unwrap()
-                    };
+                    self.get_pointer(lval).unwrap()
+                };
 
-                    let mut rloc =
-                        self.build_value(rval, lval.as_ident(), CanClearRegs::Yes).unwrap();
+                let mut rloc = self.build_value(rval, lval.as_ident(), CanClearRegs::Yes).unwrap();
 
-                    if let Location::Const { .. } = lloc {
-                        unreachable!("ICE: assign to a constant {:?}", lloc);
-                    }
+                if let Location::Const { .. } = lloc {
+                    unreachable!("ICE: assign to a constant {:?}", lloc);
+                }
 
-                    if lloc == rloc {
-                        return;
-                    }
+                if lloc == rloc {
+                    return;
+                }
 
-                    let ty = lval.type_of();
-                    let size = match ty {
-                        Ty::Array { ty, .. } => ty.size(),
-                        t => t.size(),
-                    };
+                let ty = lval.type_of();
+                let size = match ty {
+                    Ty::Array { ty, .. } => ty.size(),
+                    t => t.size(),
+                };
 
-                    if matches!(ty, Ty::Float) {
-                        if rloc.is_float_reg() {
-                            self.clear_float_regs_except(Some(&lloc));
-                            self.asm_buf.extend_from_slice(&[Instruction::FloatMov {
-                                src: rloc,
-                                dst: lloc,
-                            }]);
-                        } else if matches!(rloc, Location::Const { .. }) {
-                            let register = self.free_float_reg();
+                if matches!(ty, Ty::Float) {
+                    if rloc.is_float_reg() {
+                        self.clear_float_regs_except(Some(&lloc));
+                        self.asm_buf
+                            .extend_from_slice(&[Instruction::FloatMov { src: rloc, dst: lloc }]);
+                    } else if matches!(rloc, Location::Const { .. }) {
+                        let register = self.free_float_reg();
 
-                            self.clear_float_regs_except(Some(&lloc));
-
-                            self.asm_buf.extend_from_slice(&[
-                                // From stack pointer
-                                Instruction::Push { loc: rloc, size: 8, comment: "" },
-                                // To xmm? to store as float
-                                Instruction::FloatMov {
-                                    src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                                    dst: Location::FloatReg(register),
-                                },
-                                // Move xmm? value to where it is supposed to be
-                                Instruction::FloatMov {
-                                    src: Location::FloatReg(register),
-                                    dst: lloc,
-                                },
-                                // Ugh stupid printf needs to be 16 bit aligned so we have to do
-                                // our book keeping
-                                Instruction::Math {
-                                    src: Location::Const { val: Val::Int(8) },
-                                    dst: Location::Register(Register::RSP),
-                                    op: BinOp::Sub,
-                                },
-                            ]);
-                        // Promote any non float register to float
-                        // TODO: REMOVE
-                        } else if matches!(
-                            (&lloc, &rloc),
-                            (Location::NumberedOffset { .. }, Location::Register(_))
-                        ) {
-                            let register = self.free_float_reg();
-                            self.clear_float_regs_except(Some(&lloc));
-                            self.asm_buf.extend_from_slice(&[
-                                Instruction::Push {
-                                    loc: rloc,
-                                    size: 8,
-                                    comment: "we are promoting an int to float",
-                                },
-                                Instruction::FloatMov {
-                                    src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                                    dst: Location::FloatReg(register),
-                                },
-                                Instruction::FloatMov {
-                                    src: Location::FloatReg(register),
-                                    dst: lloc,
-                                },
-                                // Ugh stupid printf needs to be 16 bit aligned so we have to do
-                                // our book keeping
-                                Instruction::Math {
-                                    src: Location::Const { val: Val::Int(8) },
-                                    dst: Location::Register(Register::RSP),
-                                    op: BinOp::Sub,
-                                },
-                            ]);
-                        } else {
-                            let register = self.free_float_reg();
-                            self.clear_float_regs_except(Some(&lloc));
-                            self.asm_buf.extend_from_slice(&[
-                                Instruction::FloatMov {
-                                    src: rloc,
-                                    dst: Location::FloatReg(register),
-                                },
-                                Instruction::FloatMov {
-                                    src: Location::FloatReg(register),
-                                    dst: lloc,
-                                },
-                            ]);
-                        }
-                    } else if matches!(ty, Ty::String) {
-                        // assert!(
-                        //     matches!(rloc, Location::NamedOffset(_)),
-                        //     "ICE: right hand term must be string const"
-                        // );
-
-                        self.clear_regs_except(Some(&lloc));
-                        if lloc.is_stack_offset() {
-                            let reg = if let Location::Register(reg) = &rloc {
-                                *reg
-                            } else {
-                                let reg = self.free_reg();
-                                self.asm_buf.push(Instruction::Load {
-                                    src: rloc,
-                                    dst: Location::Register(reg),
-                                    size: 8,
-                                });
-                                reg
-                            };
-                            self.asm_buf.push(Instruction::Mov {
-                                // Move the value on the right hand side of the `= here`
-                                src: Location::Register(reg),
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                comment: "move string addr",
-                            });
-                        } else if matches!(rloc, Location::Register(_)) {
-                            self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                size,
-                            }]);
-                        } else {
-                            self.asm_buf.extend_from_slice(&[Instruction::Load {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                size,
-                            }]);
-                        }
-                    } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
-                        self.clear_regs_except(Some(&lloc));
-
-                        if rloc.is_stack_offset() {
-                            let new = self.free_reg();
-                            self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: Location::Register(new),
-                                size,
-                            }]);
-                            rloc = Location::Register(new);
-                        }
-
-                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                            // Move the value on the right hand side of the `= here`
-                            src: rloc,
-                            // to the left hand side of `here =`
-                            dst: Location::NumberedOffset { offset: 0, reg: *reg },
-                            size,
-                        }]);
-                    } else if lloc.is_stack_offset() && rloc.is_stack_offset() {
-                        let register = self.free_reg();
-                        self.clear_regs_except(None);
+                        self.clear_float_regs_except(Some(&lloc));
 
                         self.asm_buf.extend_from_slice(&[
-                            Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: Location::Register(register),
-                                size,
+                            // From stack pointer
+                            Instruction::Push { loc: rloc, size: 8, comment: "" },
+                            // To xmm? to store as float
+                            Instruction::FloatMov {
+                                src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                dst: Location::FloatReg(register),
                             },
-                            Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: Location::Register(register),
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                size,
+                            // Move xmm? value to where it is supposed to be
+                            Instruction::FloatMov { src: Location::FloatReg(register), dst: lloc },
+                            // Ugh stupid printf needs to be 16 bit aligned so we have to do
+                            // our book keeping
+                            Instruction::Math {
+                                src: Location::Const { val: Val::Int(8) },
+                                dst: Location::Register(Register::RSP),
+                                op: BinOp::Sub,
+                            },
+                        ]);
+                    // Promote any non float register to float
+                    // TODO: REMOVE
+                    } else if matches!(
+                        (&lloc, &rloc),
+                        (Location::NumberedOffset { .. }, Location::Register(_))
+                    ) {
+                        let register = self.free_float_reg();
+                        self.clear_float_regs_except(Some(&lloc));
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::Push {
+                                loc: rloc,
+                                size: 8,
+                                comment: "we are promoting an int to float",
+                            },
+                            Instruction::FloatMov {
+                                src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                dst: Location::FloatReg(register),
+                            },
+                            Instruction::FloatMov { src: Location::FloatReg(register), dst: lloc },
+                            // Ugh stupid printf needs to be 16 bit aligned so we have to do
+                            // our book keeping
+                            Instruction::Math {
+                                src: Location::Const { val: Val::Int(8) },
+                                dst: Location::Register(Register::RSP),
+                                op: BinOp::Sub,
                             },
                         ]);
                     } else {
-                        self.clear_regs_except(Some(&lloc));
+                        let register = self.free_float_reg();
+                        self.clear_float_regs_except(Some(&lloc));
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::FloatMov { src: rloc, dst: Location::FloatReg(register) },
+                            Instruction::FloatMov { src: Location::FloatReg(register), dst: lloc },
+                        ]);
+                    }
+                } else if matches!(ty, Ty::String) {
+                    // assert!(
+                    //     matches!(rloc, Location::NamedOffset(_)),
+                    //     "ICE: right hand term must be string const"
+                    // );
 
+                    self.clear_regs_except(Some(&lloc));
+                    if lloc.is_stack_offset() {
+                        let reg = if let Location::Register(reg) = &rloc {
+                            *reg
+                        } else {
+                            let reg = self.free_reg();
+                            self.asm_buf.push(Instruction::Load {
+                                src: rloc,
+                                dst: Location::Register(reg),
+                                size: 8,
+                            });
+                            reg
+                        };
+                        self.asm_buf.push(Instruction::Mov {
+                            // Move the value on the right hand side of the `= here`
+                            src: Location::Register(reg),
+                            // to the left hand side of `here =`
+                            dst: lloc,
+                            comment: "move string addr",
+                        });
+                    } else if matches!(rloc, Location::Register(_)) {
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
                             // Move the value on the right hand side of the `= here`
                             src: rloc,
                             // to the left hand side of `here =`
                             dst: lloc,
-                            size: 8,
+                            size,
+                        }]);
+                    } else {
+                        self.asm_buf.extend_from_slice(&[Instruction::Load {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: lloc,
+                            size,
                         }]);
                     }
+                } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
+                    self.clear_regs_except(Some(&lloc));
+
+                    if rloc.is_stack_offset() {
+                        let new = self.free_reg();
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: Location::Register(new),
+                            size,
+                        }]);
+                        rloc = Location::Register(new);
+                    }
+
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        // Move the value on the right hand side of the `= here`
+                        src: rloc,
+                        // to the left hand side of `here =`
+                        dst: Location::NumberedOffset { offset: 0, reg: *reg },
+                        size,
+                    }]);
+                } else if lloc.is_stack_offset() && rloc.is_stack_offset() {
+                    let register = self.free_reg();
+                    self.clear_regs_except(None);
+
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: Location::Register(register),
+                            size,
+                        },
+                        Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: Location::Register(register),
+                            // to the left hand side of `here =`
+                            dst: lloc,
+                            size,
+                        },
+                    ]);
+                } else {
+                    self.clear_regs_except(Some(&lloc));
+
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        // Move the value on the right hand side of the `= here`
+                        src: rloc,
+                        // to the left hand side of `here =`
+                        dst: lloc,
+                        size: 8,
+                    }]);
                 }
             }
             Stmt::Call { expr: CallExpr { path, args, type_args }, def } => {
@@ -1786,10 +1673,10 @@ impl<'ctx> CodeGen<'ctx> {
                                 // TODO: don't assume the type is a certain size (8 bytes)
                                 // We add 2 to make up for the tag and we assume the type is 8 bytes
                                 offset: offset - ((idx + 1) * 8),
-                                reg: reg.clone(),
+                                reg: *reg,
                             };
 
-                            self.vars.insert(*ident, ref_loc.clone());
+                            self.vars.insert(*ident, ref_loc);
                         }
                     }
                 }
@@ -1872,6 +1759,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         }
 
         self.current_stack = 0;
+        self.total_stack = 0;
         self.clear_regs_except(None);
         self.clear_float_regs_except(None);
 
@@ -1885,5 +1773,61 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         }
 
         self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
+    }
+}
+
+fn construct_field_offset<'a>(
+    gen: &mut CodeGen<'a>,
+    rhs: &'a Expr,
+    offset: usize,
+    reg: Register,
+    def: &Struct,
+) -> Option<Location> {
+    match rhs {
+        Expr::Ident { ident, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    return Some(Location::NumberedOffset { offset: offset - count, reg });
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        Expr::Deref { indir, expr, ty } => {
+            todo!("follow the pointer")
+        }
+        Expr::Array { ident, exprs, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    let arr = Location::NumberedOffset { offset: offset - count, reg };
+                    let ele_size =
+                        if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
+                    return gen.index_arr(arr, exprs, ele_size, true);
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        Expr::FieldAccess { lhs, rhs: inner, def: inner_def } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == lhs.as_ident() {
+                    return construct_field_offset(gen, inner, offset - count, reg, inner_def);
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        Expr::AddrOf(_) => todo!(),
+        Expr::Call { path, args, type_args, def } => todo!(),
+        _ => unreachable!("not a valid struct field accessor"),
     }
 }
