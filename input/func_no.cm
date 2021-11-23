@@ -1,0 +1,10 @@
+const c: int = 0;
+
+fn b(): int
+  {
+    return 4;
+  }
+
+fn main() {
+  c = b();
+}

@@ -1,0 +1,27 @@
+linked fn write<T>(_: T);
+
+fn a(x: int, y: int): int {
+    return x*y;
+}
+
+fn b(x: float, y: char) {
+    write(y);
+    write(x);
+}
+
+
+fn main()
+{
+  // let c = 0;
+  b();
+  // b(1);
+  // b(1,1,1);
+  // b(1.0,1);
+  // b(1,'a');
+  write(a());
+  // write(a(1));
+  // write(a(1,'a',3));
+  // write(a(1.0,'a'));
+  // write(a(1,1));
+  exit;
+}

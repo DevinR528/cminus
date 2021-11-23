@@ -1,0 +1,11 @@
+linked fn write<T>(_: T);
+linked fn read(_: int);
+
+fn main() {
+    let a = 0;
+    read(a); write(a);
+    write(1);
+    write(1+2);
+    write("hello, world!");
+    exit;
+}

@@ -1,0 +1,17 @@
+linked fn write(_: int);
+
+fn main () {
+    let i=1; let j=2; let k=3; let l=4;
+
+    let m = i + 7;
+    write(m);
+    let s0 = l - 5;
+    write(s0);
+    write(j*k*l);
+    write(j*k-l);
+    write(i+j+k*l);
+    write((k*l)/j-i);
+    write((i+j)*(k + (i*m))/s0);
+    exit;
+
+}

@@ -1,0 +1,23 @@
+linked fn write<T>(_: T);
+
+fn main() {
+    let a=1.1; let b=2.2; let c=3.3; let d=4.4;
+    write(a+b+c+d);
+
+    let i = 1.76; let j = 2.97; let k = 3.0; let l = 4.22;
+    write((i+j+k*l) + (a+b/c-d));
+
+    let m=a+b;
+    write(m);
+
+    l = m + c;
+    write(l);
+
+    a = 5;
+    write(a);
+
+    write(b < c);
+    write(d > 10.0);
+    write(a != 3.3);
+    exit;
+}

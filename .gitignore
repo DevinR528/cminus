@@ -1,6 +1,5 @@
 /target
 Cargo.lock
-/input
 .vscode
 .idea
 **/build/

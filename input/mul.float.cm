@@ -1,0 +1,9 @@
+linked fn write(_: float);
+
+fn main () {
+    write(10.0*20.0);
+    let i=7.1; let k=3.2; let l=4.3;
+    let j = i * k * l;
+    write(j);
+    exit;
+}
