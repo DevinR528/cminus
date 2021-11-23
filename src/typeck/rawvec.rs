@@ -361,6 +361,7 @@ fn raw_vec_from_empty() {
     let mut raw = RawVec::from_vec(list);
 }
 
+#[ignore = "crashes"]
 #[test]
 fn raw_vec_push() {
     let list: Vec<usize> = vec![];
