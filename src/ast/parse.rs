@@ -1379,6 +1379,9 @@ impl<'a> AstBuilder<'a> {
             }
         } else if self.curr.kind == TokenMatch::Lt {
             todo!("Trait method calls {}", self.call_stack.join("\n"))
+        } else if self.curr.kind == TokenMatch::OpenBrace {
+            let blk = self.make_block()?;
+            ast::Stmt::Block(blk)
         } else {
             return Err(ParseError::Error("make statement bottom out", self.curr_span()));
         })
@@ -2074,7 +2077,7 @@ impl<'a> AstBuilder<'a> {
         } else {
             self.curr.len
         };
-        let stop = self.input_idx + self.curr.len;
+        let stop = self.input_idx + current_len;
         ast::to_rng(self.input_idx..stop, self.file_id)
     }
 
