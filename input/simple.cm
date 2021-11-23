@@ -1,0 +1,6 @@
+
+void main()
+    {
+        write(1);
+        exit;
+    }

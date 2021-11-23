@@ -1,0 +1,45 @@
+/*This file tests the following error that can occur in
+declarations.
+
+[1] Variable declared but not referenced.
+
+Note: There are multiple ways in which each of the
+above errors is tested in this file */
+
+
+   const c: char = ' '; /* error-variable declared but never referenced */
+    const b: int = 0;
+
+fn C(a: int): char {
+        let  b = ' ';
+    return b; /*error-parameter a declared but not used */
+} /*I'm not sure the above constitutes an error -- jr*/
+
+fn E(): int {
+    let a = [0; 2];
+    let b1= [0; 2];
+    let c = [0; 2];
+    let d = [0; 2];
+    let e = [0; 2]; /*only e referenced*/
+
+    let f = 0;
+    let g = 0;
+    let h= 0;
+    let i= 0; /*all of these are referenced*/
+    while (h<100) {
+      i=i+1;
+    }
+
+    return 0;
+}
+
+fn D(a: int)
+{
+    let  b = ' ';
+    a=b; /*error no return statement */ // this is not an error return void is implicit
+}
+
+fn main()
+{
+    b=100 ;
+}
