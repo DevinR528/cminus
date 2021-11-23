@@ -1,15 +1,18 @@
-  int a;
+linked fn write(_: int);
+linked fn read(_: int);
 
-void decls(int a) {
-int x;
-    a = 0;
+const a: int = 0;
+
+fn decls(a: int) {
+  let x = 0;
+  a = 0;
 }
 
-void foo(int a, int b) {
-int y;
+fn foo(a: int, b: int) {
+  let y = 0;
     a = y + b;
 }
 
-void main() {
+fn main() {
    read(a);
 }
