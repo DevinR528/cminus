@@ -76,6 +76,13 @@ impl Ident {
     pub fn name(&self) -> &str {
         intern::with_intern(|intern| intern.lookup_str(self.tkn))
     }
+
+    pub fn push_str(&self, s: &str) -> Ident {
+        intern::with_intern(|intern| {
+            let base = intern.lookup_str(self.tkn);
+            Self { span: DUMMY, tkn: intern.intern(&format!("{}{}", base, s)) }
+        })
+    }
 }
 
 #[test]
