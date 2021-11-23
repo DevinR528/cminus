@@ -1,8 +1,10 @@
 /* Pseudo-code for the swap routine*/ 
+linked fn write(_: int);
+linked fn read(_: int);
 
-int x;
+const x: int = 0;
 
-void main() {
+fn main() {
   read(x);
   write(x);
 }

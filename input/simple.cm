@@ -1,5 +1,6 @@
+linked fn write(_: int);
 
-void main()
+fn main()
     {
         write(1);
         exit;

@@ -1,7 +1,10 @@
-int a;
-int b;
+linked fn write<T>(_: T);
+linked fn read(_: int);
 
-int decls() {
+const a: int = 0;
+const b: int = 0;
+
+fn decls(): int {
   write(a);
   if (a > 0) {
     a = a - 1;
@@ -13,14 +16,14 @@ int decls() {
   }
 }
 
-float foo() {
+fn foo(): float {
   write(a);
   write(b);
 
   return 7.3;
 }
 
-void main() {
+fn main() {
   read(a);
   write(decls());
   b = 10;

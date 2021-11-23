@@ -2,13 +2,22 @@
 This file test all types of expressions.
 *********************************************************/
 
- int i,j,k,l,m;
-  float a,b,c,d;
-  char C1,C2;
+const i: int = 0;
+const j: int = 0;
+const k: int = 0;
+const l: int = 0;
+const m: int = 0;
+
+const a: float = 0;
+const b: float = 0;
+const c: float = 0;
+const d: float = 0;
+
+const C1: float = 0;
+const C2: float = 0;
 
 
-void main() {
-
+fn main() {
      i = C1 + j;
      a = C1 + b;
      a = b + C1;
