@@ -18,7 +18,7 @@ use crate::{
             Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
         },
     },
-    error::Error,
+    error::{Error, ErrorReport},
     typeck::{
         check::{coercion, is_truthy, resolve_ty, StmtCheck},
         generic::TyRegion,
@@ -138,12 +138,8 @@ crate struct TyCheckRes<'ast, 'input> {
     #[dbg_ignore]
     uniq_generic_instance_id: Cell<usize>,
 
-    // TODO: SHIT this is ugly
-    /// Errors collected during parsing and type checking.
     #[dbg_ignore]
-    crate errors: RwLock<Vec<Error<'input>>>,
-    #[dbg_ignore]
-    crate error_in_current_expr_tree: Cell<bool>,
+    crate errors: ErrorReport<'input>,
 
     #[dbg_ignore]
     rcv: Option<AstReceiver>,
@@ -164,8 +160,8 @@ impl<'input> TyCheckRes<'_, 'input> {
     }
 
     crate fn report_errors(&self) -> Result<(), &'static str> {
-        if !self.errors.read().is_empty() {
-            for e in self.errors.read().iter() {
+        if !self.errors.is_empty() {
+            for e in self.errors.errors().iter() {
                 // if span_deduper.iter().any(|)
                 eprintln!("{}", e)
             }
@@ -193,7 +189,6 @@ impl<'input> TyCheckRes<'_, 'input> {
             .get_fn_by_span(span)
             .and_then(|f| {
                 if self.record_used {
-                    // TODO: unused leaks into other scope
                     if let Some((_, b)) =
                         self.var_func.unsed_vars.get(&ScopedName::func_scope(f, id, span.file_id))
                     {
@@ -255,7 +250,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     funcs.push(func);
                 }
                 Decl::Const(var) => {
-                    self.visit_var(var);
+                    self.visit_const(var);
                 }
                 Decl::Trait(trait_) => self.visit_trait(trait_),
                 Decl::Impl(imp) => {
@@ -302,7 +297,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
             if !matches!(func.ret.val, Ty::Void) && !self.var_func.func_return.contains(&func.ident)
             {
-                self.errors.write().push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     &format!(
@@ -345,7 +340,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // TODO: see about unused declarations
         // After all checking then we can check for unused vars
         for (unused, span) in unused {
-            self.errors.write().push(Error::error_with_span(
+            self.errors.push_error(Error::error_with_span(
                 self,
                 span,
                 &format!("unused variable `{}`, remove or reference", unused),
@@ -355,7 +350,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_trait(&mut self, t: &'ast Trait) {
         if self.trait_solve.add_trait(t).is_some() {
-            self.errors.write().push(Error::error_with_span(
+            self.errors.push_error(Error::error_with_span(
                 self,
                 t.span,
                 &format!("duplicate trait `{}` found", t.path),
@@ -370,7 +365,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_impl(&mut self, imp: &'ast Impl) {
         if let Err(e) = self.trait_solve.add_impl(imp) {
-            self.errors.write().push(Error::error_with_span(
+            self.errors.push_error(Error::error_with_span(
                 self,
                 imp.span,
                 &format!("no trait `{}` found for this implementation", imp.path),
@@ -393,7 +388,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             self.curr_fn = Some(func.ident);
 
             if self.var_func.insert(func.span, func.ident).is_some() {
-                self.errors.write().push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     "function takes up same span as other function",
@@ -401,7 +396,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
 
             if func.generics.is_empty() && func.ret.val.has_generics() {
-                self.errors.write().push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     "generic type used without being declared",
@@ -438,7 +433,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 let matching_gen = func.generics.iter().any(|g| g.ident == *ty.val.generics()[0]);
                 if !matching_gen {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         func.span,
                         &format!(
@@ -450,17 +445,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             };
 
             if self.var_func.name_func.insert(func.ident.to_owned(), func).is_some() {
-                self.errors.write().push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     &format!("multiple function declaration `{}`", func.ident),
                 ));
             }
         } else {
-            panic!(
-                "{}",
-                Error::error_with_span(self, func.span, "function defined within function")
-            )
+            self.errors.push_error(Error::error_with_span(
+                self,
+                func.span,
+                "function defined within function",
+            ));
         }
         // We have left this functions scope
         self.curr_fn.take();
@@ -478,7 +474,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 if self.name_struct.insert(struc.ident, struc).is_some() {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         struc.span,
                         "duplicate struct names",
@@ -509,7 +505,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 if self.name_enum.insert(en.ident, en).is_some() {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         en.span,
                         "duplicate struct names",
@@ -534,8 +530,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 
     // TODO: this is not what it used to be
-    fn visit_var(&mut self, var: &'ast Const) {
-        #[allow(clippy::if-then-panic)]
+    fn visit_const(&mut self, var: &'ast Const) {
         if let Some(fn_id) = self.curr_fn {
             let node = Node::Func(fn_id);
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
@@ -555,7 +550,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 .insert(var.ident, var.ty.val.clone())
                 .is_some()
             {
-                self.errors.write().push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     var.span,
                     &format!("[E0w] duplicate variable name `{}`", var.ident),
@@ -577,7 +572,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             return;
         } else {
             if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
-                self.errors.write().push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     var.span,
                     &format!("global variable `{}` is already declared", var.ident),
@@ -632,7 +627,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .is_some();
 
                     if !matching_gen {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             *span,
                             &format!(
@@ -650,7 +645,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .insert(*ident, ty.clone())
                     .is_some()
                 {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         *span,
                         &format!("duplicate param name `{}`", ident),
@@ -662,7 +657,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 );
             }
         } else {
-            panic!("{}", Error::error_with_span(self, DUMMY, &format!("{:?}", params)))
+            self.errors.push_error(Error::error_with_span(self, DUMMY, &format!("{:?}", params)));
         }
     }
 
@@ -673,7 +668,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_match_arm(&mut self, _arms: &'ast [MatchArm]) {}
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
-        self.error_in_current_expr_tree.set(false);
+        self.errors.poisoned(false);
 
         self.name_res.visit_stmt(stmt);
 
@@ -682,9 +677,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
         crate::visit::walk_stmt(self, stmt);
 
-        if self.error_in_current_expr_tree.get() {
-            return;
-        }
         self.set_record_used_vars(true);
 
         // check the statement after walking incase there were var declarations
@@ -693,7 +685,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 
     fn visit_expr(&mut self, expr: &'ast Expression) {
-        if self.error_in_current_expr_tree.get() {
+        if self.errors.is_poisoned() {
             return;
         }
 
@@ -703,12 +695,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // self.expr_ty.insert(expr, ty);
                     // Ok because of `x += 1;` turns into `x = x + 1;`
                 } else {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for ident expr",
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Array { ident, exprs } => {
@@ -716,14 +708,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.visit_expr(ex);
                 }
 
-                if self.error_in_current_expr_tree.get() {
-                    return;
-                }
-
                 for e in exprs {
                     let ty = self.expr_ty.get(e);
                     if !matches!(ty, Some(Ty::Int)) {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             expr.span,
                             &format!(
@@ -731,7 +719,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                             ),
                         ));
-                        self.error_in_current_expr_tree.set(true);
+                        self.errors.poisoned(true);
                     }
                 }
                 if let Some(ty) = self.type_of_ident(*ident, expr.span) {
@@ -739,12 +727,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
                     // }
                 } else {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for array expr",
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Urnary { op, expr: inner_expr } => {
@@ -755,12 +743,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         if is_truthy(ty) {
                             self.expr_ty.insert(expr, Ty::Bool);
                         } else {
-                            self.errors.write().push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "cannot negate non bool type",
                             ));
-                            self.error_in_current_expr_tree.set(true);
+                            self.errors.poisoned(true);
                         }
                     }
                     UnOp::OnesComp => {
@@ -768,12 +756,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         if let Some(Ty::Int | Ty::Ptr(_)) = ty {
                             self.expr_ty.insert(expr, Ty::Int);
                         } else {
-                            self.errors.write().push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "cannot negate non bool type",
                             ));
-                            self.error_in_current_expr_tree.set(true);
+                            self.errors.poisoned(true);
                         }
                     }
                 }
@@ -797,13 +785,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
-                if self.error_in_current_expr_tree.get() {
-                    return;
-                }
                 self.visit_expr(rhs);
-                if self.error_in_current_expr_tree.get() {
-                    return;
-                }
 
                 let lhs_ty = self.expr_ty.get(&**lhs);
                 let rhs_ty = self.expr_ty.get(&**rhs);
@@ -817,21 +799,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 ) {
                     if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
                         if !ty.is_ty_eq(&t2) {
-                            self.errors.write().push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "ICE: something went wrong in the compiler",
                             ));
-                            self.error_in_current_expr_tree.set(true);
+                            self.errors.poisoned(true);
                         }
                     }
                 } else {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         &format!("no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Parens(inner_expr) => {
@@ -839,32 +821,32 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 if let Some(ty) = self.expr_ty.get(&**inner_expr).cloned() {
                     if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
                         if !ty.is_ty_eq(&t2) {
-                            self.errors.write().push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "ICE: something went wrong in the compiler",
                             ));
-                            self.error_in_current_expr_tree.set(true);
+                            self.errors.poisoned(true);
                         }
                     }
                 } else {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for paren expr",
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Call { path, args, type_args } => {
                 let ident = path.segs.last().unwrap();
                 if self.var_func.name_func.get(ident).is_none() {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         &format!("no function named `{}`", path),
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
 
                 for arg in args {
@@ -914,12 +896,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .expect("function is known with params");
 
                 if args.len() != func_params.len() {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "wrong number of arguments",
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
 
                 for (idx, arg) in args.iter().enumerate() {
@@ -950,7 +932,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     coercion(param_ty.as_ref(), arg_ty.as_mut());
 
                     if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             arg.span,
                             &format!(
@@ -959,7 +941,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
                         ));
-                        self.error_in_current_expr_tree.set(true);
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -978,12 +960,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::TraitMeth { trait_, args, type_args } => {
                 let ident = *trait_.segs.last().unwrap();
                 if self.trait_solve.traits.get(trait_).is_none() {
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         &format!("no trait named `{}`", trait_),
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
                 for expr in args {
                     self.visit_expr(expr);
@@ -1036,7 +1018,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
 
                     if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             arg.span,
                             &format!(
@@ -1045,7 +1027,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
                         ));
-                        self.error_in_current_expr_tree.set(true);
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -1124,7 +1106,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
 
                     if !exprty.as_ref().is_ty_eq(&Some(&field_ty)) {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             init.span,
                             &format!(
@@ -1133,7 +1115,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 field_ty,
                             ),
                         ));
-                        self.error_in_current_expr_tree.set(true);
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -1164,12 +1146,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     if let Some(vars) = enm.variants.iter().find(|v| v.ident == *variant) {
                         vars
                     } else {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             expr.span,
                             &format!("enum `{}` has no variant `{}`", path, variant),
                         ));
-                        self.error_in_current_expr_tree.set(true);
+                        self.errors.poisoned(true);
                         return;
                     };
 
@@ -1211,7 +1193,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
 
                     if !exprty.as_ref().is_ty_eq(&Some(&variant_ty.val)) {
-                        self.errors.write().push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             item.span,
                             &format!(
@@ -1220,7 +1202,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 variant_ty.val,
                             ),
                         ));
-                        self.error_in_current_expr_tree.set(true);
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -1293,12 +1275,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // no is_some check: because of `x.y += 1;` being lowered to `x.y = w.y + 1;`
                 } else {
                     // TODO: this error is crappy
-                    self.errors.write().push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for field access",
                     ));
-                    self.error_in_current_expr_tree.set(true);
+                    self.errors.poisoned(true);
                 }
             }
         }
@@ -1402,7 +1384,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                 // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
                 // panic!("{:?}", expr);
-                tcxt.errors.write().push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
                     &format!(
@@ -1425,7 +1407,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
             if let Some(_ty) = ty {
                 // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
-                tcxt.errors.write().push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
                     &format!(
@@ -1433,7 +1415,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                         ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                     ),
                 ));
-                tcxt.error_in_current_expr_tree.set(true);
+                tcxt.errors.poisoned(true);
             }
         }
 
