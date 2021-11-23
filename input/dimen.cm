@@ -1,0 +1,6 @@
+const a: int = 0;
+const b: [10; int] = [0; 10];
+
+fn main() {
+    b = a[1];
+}

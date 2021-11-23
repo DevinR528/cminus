@@ -1,0 +1,24 @@
+
+const a: int = 0;
+const b: char = ' ';
+const c: float = 0.0;
+const d: [10; int] = [0; 10];
+
+fn main()
+{
+
+   if (b == b)
+    {
+     a = a + a;
+     c = c * a;
+     c = a - c;
+    }
+
+   if (c >= a) {
+     b = b || b;
+    }
+
+   a = a && c;
+
+   exit;
+}

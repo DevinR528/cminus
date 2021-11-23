@@ -1,0 +1,6 @@
+int a,b,c,d ;
+  char  d,e ;
+
+void main() {
+  read(a);
+}

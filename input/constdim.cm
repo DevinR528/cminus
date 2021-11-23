@@ -1,0 +1,22 @@
+/*This file tests the following error:
+
+[1] constant valued subscript outside the range
+    of the declaration of an array
+
+Note: There are multiple ways in which the
+above error is tested in this file */
+
+
+const b: float = 0.0;
+const z: [5; int] = [0; 5];
+
+fn B(a: [21; int]): int {
+    let c = [0; 100];
+    c[100] = 100; /*error-reference to element of c outside the range of c */
+    c[25] = c[101] + c[10000]; /* out of range (high) */
+    return B(a['A']); /* error-reference to element of a wrong type */
+}
+
+fn main() {
+  b = z[200];  /*out of range (high) */
+}
