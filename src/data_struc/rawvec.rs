@@ -11,10 +11,10 @@ use std::{
 #[macro_export]
 macro_rules! raw_vec {
     () => (
-        $crate::typeck::rawvec::RawVec::with_cap(0)
+        $crate::data_struc::rawvec::RawVec::with_cap(0)
     );
     ($($x:expr),*) => (
-        $crate::typeck::rawvec::RawVec::from_vec(vec![$($x),*])
+        $crate::data_struc::rawvec::RawVec::from_vec(vec![$($x),*])
     );
     ($($x:expr,)*) => (raw_vec![$($x),*])
 }
@@ -23,6 +23,7 @@ pub struct RawVec<T> {
     pub(crate) ptr: Cell<NonNull<T>>,
     pub(crate) cap: Cell<usize>,
     pub(crate) len: Cell<usize>,
+    alloc: Global,
 }
 
 impl<T> Default for RawVec<T> {
@@ -35,22 +36,33 @@ impl<T> RawVec<T> {
     /// Make a new array with enough room to hold at least `cap` elements.
     #[inline]
     pub fn with_cap(cap: usize) -> Self {
+        let alloc = Global;
         unsafe {
             if mem::size_of::<T>() == 0 || cap == 0 {
-                RawVec { ptr: Cell::new(NonNull::dangling()), len: Cell::new(0), cap: Cell::new(0) }
+                RawVec {
+                    ptr: Cell::new(NonNull::dangling()),
+                    len: Cell::new(0),
+                    cap: Cell::new(0),
+                    alloc,
+                }
             } else {
                 let ptr = {
                     let layout = Layout::array::<T>(cap).unwrap();
-
-                    alloc(layout) as *mut T
+                    alloc.allocate(layout).unwrap().as_non_null_ptr().cast()
                 };
 
-                RawVec {
-                    ptr: Cell::new(NonNull::new_unchecked(ptr)),
-                    len: Cell::new(0),
-                    cap: Cell::new(cap),
-                }
+                RawVec { ptr: Cell::new(ptr), len: Cell::new(0), cap: Cell::new(cap), alloc }
             }
+        }
+    }
+
+    #[inline]
+    pub unsafe fn from_raw_parts(ptr: *mut T, len: usize, cap: usize) -> Self {
+        RawVec {
+            ptr: Cell::new(NonNull::new_unchecked(ptr)),
+            len: Cell::new(len),
+            cap: Cell::new(cap),
+            alloc: Global,
         }
     }
 
@@ -58,6 +70,7 @@ impl<T> RawVec<T> {
     pub fn from_vec(v: Vec<T>) -> RawVec<T> {
         // We are now responsible for the memory, we own the buffer
         let (p, l, c) = v.into_raw_parts();
+
         unsafe { RawVec::from_raw_parts(p, l, c) }
     }
 
@@ -118,23 +131,27 @@ impl<T> RawVec<T> {
 
     pub fn grow(&self, cap: usize) {
         if self.cap() == 0 && cap > 0 {
-            let new_ptr = unsafe {
+            unsafe {
                 let layout = Layout::array::<T>(cap).unwrap();
-                alloc(layout) as *mut T
-            };
+                let new_ptr = self.alloc.allocate(layout).unwrap().as_non_null_ptr();
 
-            self.cap.set(cap);
-            self.ptr.set(NonNull::new(new_ptr).unwrap());
+                self.cap.set(cap);
+                self.ptr.set(new_ptr.cast());
+            }
+
             return;
         }
 
         if mem::size_of::<T>() > 0 && cap > self.cap() {
             unsafe {
-                let layout = Layout::array::<T>(self.cap()).unwrap();
+                let old_layout = Layout::array::<T>(self.cap()).unwrap();
+                let new_layout = Layout::array::<T>(cap).unwrap();
 
-                let new_ptr = realloc(self.ptr() as *mut u8, layout, cap) as *mut T;
+                let new_ptr =
+                    self.alloc.grow(self.ptr.get().cast(), old_layout, new_layout).unwrap();
+
                 self.cap.set(cap);
-                self.ptr.set(NonNull::new(new_ptr).unwrap());
+                self.ptr.set(new_ptr.cast());
             }
         }
     }
@@ -147,7 +164,15 @@ impl<T> RawVec<T> {
     #[inline]
     pub unsafe fn push_shared(&self, item: T) {
         if self.len() == self.cap() {
-            let new_size = (self.len().max(4) * 2) - 3;
+            let new_size = if self.is_empty() {
+                if mem::size_of::<T>() < 1024 {
+                    4
+                } else {
+                    8
+                }
+            } else {
+                (self.len() + 1).next_power_of_two()
+            };
             self.grow(new_size);
         }
 
@@ -198,15 +223,6 @@ impl<T> RawVec<T> {
             }
             self.len.set(len - 1);
             ret
-        }
-    }
-
-    #[inline]
-    pub unsafe fn from_raw_parts(ptr: *mut T, len: usize, cap: usize) -> Self {
-        RawVec {
-            ptr: Cell::new(NonNull::new_unchecked(ptr)),
-            len: Cell::new(len),
-            cap: Cell::new(cap),
         }
     }
 }
@@ -367,7 +383,7 @@ fn raw_vec_from_empty() {
 }
 
 #[test]
-fn raw_vec_push() {
+fn raw_vec_push_lots() {
     let list: Vec<usize> = vec![];
     let mut raw = RawVec::from_vec(list);
 
@@ -377,7 +393,7 @@ fn raw_vec_push() {
         }
     }
     assert_eq!(raw.len(), 1000);
-    assert_eq!(raw.cap(), 1027);
+    assert_eq!(raw.cap(), 1024);
 }
 
 #[test]
