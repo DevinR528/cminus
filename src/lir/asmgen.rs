@@ -1514,6 +1514,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Stmt::Call { expr: CallExpr { path, args, type_args }, def } => {
+                // TODO: fix so that only gen_call_expr is called no special case printf/scanf
                 if "write" == &path.segs[0] {
                     self.call_printf(&args[0]);
                 } else if "read" == &path.segs[0] {
