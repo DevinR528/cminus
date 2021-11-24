@@ -1,5 +1,5 @@
 use std::{
-    alloc::{alloc, realloc, Allocator, Global, Layout},
+    alloc::{alloc, dealloc, realloc, Allocator, Global, Layout},
     cell::Cell,
     fmt,
     mem::{self, ManuallyDrop},
@@ -37,11 +37,7 @@ impl<T> RawVec<T> {
     pub fn with_cap(cap: usize) -> Self {
         unsafe {
             if mem::size_of::<T>() == 0 || cap == 0 {
-                RawVec {
-                    ptr: Cell::new(NonNull::new_unchecked(ptr::null_mut())),
-                    len: Cell::new(0),
-                    cap: Cell::new(0),
-                }
+                RawVec { ptr: Cell::new(NonNull::dangling()), len: Cell::new(0), cap: Cell::new(0) }
             } else {
                 let ptr = {
                     let layout = Layout::array::<T>(cap).unwrap();
@@ -88,7 +84,11 @@ impl<T> RawVec<T> {
     /// Return number of elements array can hold before reallocation.
     #[inline]
     pub fn cap(&self) -> usize {
-        self.cap.get()
+        if mem::size_of::<T>() == 0 {
+            usize::MAX
+        } else {
+            self.cap.get()
+        }
     }
 
     #[inline]
@@ -120,7 +120,6 @@ impl<T> RawVec<T> {
         if self.cap() == 0 && cap > 0 {
             let new_ptr = unsafe {
                 let layout = Layout::array::<T>(cap).unwrap();
-
                 alloc(layout) as *mut T
             };
 
@@ -148,7 +147,8 @@ impl<T> RawVec<T> {
     #[inline]
     pub unsafe fn push_shared(&self, item: T) {
         if self.len() == self.cap() {
-            self.grow(4);
+            let new_size = (self.len().max(4) * 2) - 3;
+            self.grow(new_size);
         }
 
         unsafe {
@@ -249,12 +249,17 @@ impl<T: Eq> Eq for RawVec<T> {}
 
 impl<T> Drop for RawVec<T> {
     fn drop(&mut self) {
+        if mem::size_of::<T>() == 0 || self.cap.get() == 0 {
+            return;
+        }
         // Safety:
         // We are the only owner so go nuts
         unsafe {
             let ptr = self.ptr();
-            // Give ownership of `Self` to `Vec` to clean up
-            Vec::from_raw_parts(ptr, self.len(), self.cap());
+            let layout = Layout::array::<T>(self.cap()).unwrap();
+            self.len.set(0);
+            self.cap.set(0);
+            dealloc(ptr as *mut u8, layout)
         }
     }
 }
@@ -361,18 +366,37 @@ fn raw_vec_from_empty() {
     let mut raw = RawVec::from_vec(list);
 }
 
-#[ignore = "crashes"]
 #[test]
 fn raw_vec_push() {
     let list: Vec<usize> = vec![];
     let mut raw = RawVec::from_vec(list);
 
     for i in 0..1000 {
-        //sysmalloc: Assertion `(old_top == initial_top (av) && old_size == 0) || ((unsigned long)
-        // (old_size) >= MINSIZE && prev_inuse (old_top) && ((unsigned long) old_end & (pagesize -
-        // 1)) == 0)
         unsafe {
             raw.push_shared(i);
         }
     }
+    assert_eq!(raw.len(), 1000);
+    assert_eq!(raw.cap(), 1027);
+}
+
+#[test]
+fn raw_vec_push_zst() {
+    #[derive(Debug)]
+    struct ZeroSized;
+
+    let list: Vec<ZeroSized> = vec![];
+    let mut raw = RawVec::from_vec(list);
+
+    for i in 0..1000 {
+        unsafe {
+            raw.push_shared(ZeroSized);
+        }
+    }
+
+    // This is just 0x1 since NonNull uses `T::layout() as * const T` to define a dangling ptr
+    assert_eq!(raw.ptr(), NonNull::<ZeroSized>::dangling().as_ptr());
+
+    assert_eq!(raw.len(), 1000);
+    assert_eq!(raw.cap(), usize::MAX);
 }
