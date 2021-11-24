@@ -1,7 +1,8 @@
-void main() {
-  int a, b;
+linked fn write(_: int);
 
-     b=1;
+fn main() {
+  let a = 1; let b = 1;
+
     while (b<=10) {
       a=1;
       while (a <= 10) {

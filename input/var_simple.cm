@@ -1,8 +1,9 @@
+linked fn read(_: int);
 
-int   a;
-char      c;
-float      f;
+const a: int = 0;
+const c: char = '0';
+const f: float = 0.0;
 
-void main() {
-  read(a);
+fn main() {
+    read(a);
 }

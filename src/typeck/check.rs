@@ -852,18 +852,22 @@ crate fn fold_ty(
         (Ty::Char, Ty::Char) => match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
             BinOp::AddAssign | BinOp::SubAssign => {
-                panic!(
-                    "{}",
-                    Error::error_with_span(tcxt, span, "[E0tc] cannot assign operation to a char")
-                )
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] cannot assign operation to a char",
+                ));
+                None
             }
             // HACK: TODO: this is special case for array checking, make this work correctly
             BinOp::Add => Some(Ty::Char),
             _ => {
-                panic!(
-                    "{}",
-                    Error::error_with_span(tcxt, span, "[E0tc] not a legal operation for `char`")
-                )
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] not a legal operation for `char`",
+                ));
+                None
             }
         },
         (Ty::String, Ty::String) => todo!(),
@@ -878,7 +882,14 @@ crate fn fold_ty(
             | BinOp::BitAnd
             | BinOp::BitXor
             | BinOp::BitOr => Some(Ty::Ptr(t.clone())),
-            _ => panic!("illegal operation"),
+            _ => {
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] illegal pointer operation",
+                ));
+                None
+            }
         },
         // swap left and write so the above arm catches
         (l @ Ty::Int, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
@@ -891,7 +902,14 @@ crate fn fold_ty(
         (Ty::Void, Ty::Void) => Some(Ty::Void),
         (Ty::Bool, Ty::Bool) => match op {
             BinOp::And | BinOp::Or => Some(Ty::Bool),
-            _ => panic!("illegal boolean operation"),
+            _ => {
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] illegal boolean operation",
+                ));
+                None
+            }
         },
         // TODO: deal with structs/enums
         (Ty::Struct { .. }, _) => todo!(""),
@@ -929,14 +947,12 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
         // TODO: Carr's rules remove
         BinOp::And | BinOp::Or => Some(Ty::Bool),
         BinOp::AddAssign | BinOp::SubAssign => {
-            panic!(
-                "{}",
-                Error::error_with_span(
-                    tcxt,
-                    span,
-                    "[E0tc] cannot assign to a statement, this isn't Rust ;)"
-                )
-            )
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                span,
+                "[E0tc] cannot assign to a statement, this isn't Rust ;)",
+            ));
+            None
         }
     }
 }

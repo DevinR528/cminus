@@ -1,12 +1,12 @@
-void main() {
- float a,b;
+linked fn write(_: int);
 
-    a=1.5;
+fn main() {
+  let a = 1.5; let b = 0.0;
+
     while (a) {
         write(a);
-        a=a-0.1;
+        a= a+0.1;
     }
     write(a);
-
     exit;
 }

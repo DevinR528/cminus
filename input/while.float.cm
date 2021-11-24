@@ -1,7 +1,8 @@
-void main() {
- float a,b;
+linked fn write(_: float)
 
-    a=1.0;
+fn main() {
+    let a = 1.0; let b = 0.0;
+
     while (a<=10.0) {
         write(a);
         a=a+1.0;
