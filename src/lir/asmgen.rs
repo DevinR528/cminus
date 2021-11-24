@@ -428,12 +428,16 @@ impl<'ctx> CodeGen<'ctx> {
             }
         }
 
+        let expr_type = expr.type_of();
+        let fmt_str = format_str(&expr_type).to_string();
+        let size = expr_type.size();
+
+        let val = self.build_value(expr, None, CanClearRegs::No).unwrap();
+
         let mut pushed = false;
         if self.total_stack % 16 != 0 || self.total_stack == 0 {
             self.asm_buf.push(Instruction::Math {
-                src: Location::Const {
-                    val: Val::Int(if (self.total_stack + 8) % 16 != 0 { 16 } else { 8 }),
-                },
+                src: Location::Const { val: Val::Int((16 - (self.total_stack % 16)) as isize) },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Sub,
                 cmt: "sub to align scanf stack",
@@ -444,12 +448,6 @@ impl<'ctx> CodeGen<'ctx> {
             }
             pushed = true;
         }
-
-        let expr_type = expr.type_of();
-        let fmt_str = format_str(&expr_type).to_string();
-        let size = expr_type.size();
-
-        let val = self.build_value(expr, None, CanClearRegs::No).unwrap();
 
         // if matches!(expr_type, Ty::String) {
         self.asm_buf.extend_from_slice(&[
@@ -463,9 +461,9 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::Call(Location::Label("scanf".to_owned())),
         ]);
 
-        if pushed && self.total_stack > 16 {
+        if pushed {
             self.asm_buf.push(Instruction::Math {
-                src: Location::Const { val: Val::Int(8) },
+                src: Location::Const { val: Val::Int((16 - (self.total_stack % 16)) as isize) },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Add,
                 cmt: "put the stack back",
@@ -514,11 +512,9 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let mut pushed = false;
-        if self.total_stack % 16 != 0 || self.total_stack == 0 {
+        if (self.total_stack % 16 != 0 || self.total_stack == 0) {
             self.asm_buf.push(Instruction::Math {
-                src: Location::Const {
-                    val: Val::Int(if (self.total_stack + 8) % 16 != 0 { 16 } else { 8 }),
-                },
+                src: Location::Const { val: Val::Int((16 - self.total_stack % 16) as isize) },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Sub,
                 cmt: "printf stack misaligned",
@@ -710,9 +706,9 @@ impl<'ctx> CodeGen<'ctx> {
             ]);
         }
 
-        if pushed && self.total_stack > 16 {
+        if pushed {
             self.asm_buf.push(Instruction::Math {
-                src: Location::Const { val: Val::Int(8) },
+                src: Location::Const { val: Val::Int((16 - (self.total_stack % 16)) as isize) },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Add,
                 cmt: "stack was larger than 16bits and misaligned",
@@ -1409,7 +1405,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 src: Location::Const { val: Val::Int(8) },
                                 dst: Location::Register(Register::RSP),
                                 op: BinOp::Add,
-                                cmt: "even out after push",
+                                cmt: "even out after push in promote",
                             },
                         ]);
                     } else {
