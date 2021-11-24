@@ -1,6 +1,8 @@
-void main() {
- int a;
- int c[10];
+linked fn write(_: float);
+
+fn main() {
+    let a = 0;
+    let c = [0; 10];
 
     a=0;
     while (a < 10) {

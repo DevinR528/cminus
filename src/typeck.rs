@@ -159,14 +159,13 @@ impl<'input> TyCheckRes<'_, 'input> {
         }
     }
 
-    crate fn report_errors(&self) -> Result<(), &'static str> {
+    crate fn report_errors(&self) -> Result<(), usize> {
         if !self.errors.is_empty() {
             for e in self.errors.errors().iter() {
-                // if span_deduper.iter().any(|)
                 eprintln!("{}", e)
             }
-            // println!("{:?}", self);
-            return Err("errors");
+            // TODO: see ./src/main.rs for comment
+            return Err(self.errors.errors().len());
         }
         Ok(())
     }
@@ -840,14 +839,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
             Expr::Call { path, args, type_args } => {
                 let ident = path.segs.last().unwrap();
-                if self.var_func.name_func.get(ident).is_none() {
-                    self.errors.push_error(Error::error_with_span(
-                        self,
-                        expr.span,
-                        &format!("no function named `{}`", path),
-                    ));
-                    self.errors.poisoned(true);
-                }
 
                 for arg in args {
                     self.visit_expr(arg);
@@ -858,7 +849,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::default();
-                let func = self.var_func.name_func.get(ident).expect("all functions are collected");
+                let func = if let Some(f) = self.var_func.name_func.get(ident) {
+                    f
+                } else {
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        expr.span,
+                        &format!("[E0tc] no function named `{}` defined", path),
+                    ));
+                    return;
+                };
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     // TODO: name resolution

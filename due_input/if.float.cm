@@ -4,12 +4,12 @@ linked fn read(_: float);
 fn main() {
     let a = 0.0;
 
-    write::<string>("enter a:");
+    write("enter a:");
     read(a);
-    write::<int>(a);
+    write(a);
     if (a < 0.0) {
-        write::<int>(1);
+        write(1);
     } else {
-        write::<int>(0);
+        write(0);
     }
 }
