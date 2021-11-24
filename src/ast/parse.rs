@@ -5,26 +5,35 @@ use std::{
     sync::mpsc::{channel, Receiver, Sender},
 };
 
-use crate::ast::{
-    lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
-    parse::symbol::Ident,
-    types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
+use crate::{
+    ast::{
+        lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
+        parse::symbol::Ident,
+        types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
+    },
+    typeck::{rawvec::RawVec, scope::hash_file},
 };
 
 crate mod error;
 crate mod kw;
-mod prec;
+mod ops;
 crate mod symbol;
 
 use error::ParseError;
-use prec::{AssocOp, Fixit};
+use ops::{AssocOp, Fixit};
 
 use self::lex::Base;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
-pub type AstSender = Sender<ParseResult<(String, usize, ast::Declaration)>>;
+pub type AstSender = Sender<ParseResult<ParsedBlob>>;
 
+pub struct ParsedBlob {
+    pub file: &'static str,
+    pub input: &'static str,
+    pub count: usize,
+    pub decl: ast::Declaration,
+}
 // TODO: this is basically one file = one mod/crate/program unit add mod linking or
 // whatever.
 /// Create an AST from input `str`.
@@ -34,8 +43,14 @@ pub struct AstBuilder<'a> {
     curr: lex::Token,
     input: &'a str,
     file: &'a str,
+    file_id: u64,
     input_idx: usize,
+
+    // HACK: FIXME
+    in_match_stmt: bool,
+
     items: Vec<ast::Declaration>,
+
     call_stack: Vec<&'static str>,
     stack_idx: usize,
 
@@ -47,9 +62,16 @@ impl<'a> AstBuilder<'a> {
     pub fn new(input: &'a str, file: &'a str, snd: AstSender) -> Self {
         let mut tokens =
             lex::tokenize(input).chain(Some(Token::new(TokenKind::Eof, 0))).collect::<Vec<_>>();
-        // println!("{:#?}", tokens);
         let curr = tokens.remove(0);
-        Self { tokens, curr, input, file, snd: Some(snd), ..Default::default() }
+        Self {
+            tokens,
+            curr,
+            input,
+            file,
+            file_id: hash_file(file),
+            snd: Some(snd),
+            ..Default::default()
+        }
     }
 
     pub fn items(&self) -> &[ast::Declaration] {
@@ -79,7 +101,6 @@ impl<'a> AstBuilder<'a> {
                     continue;
                 }
                 TokenKind::Ident => {
-                    // println!("{}", self.input_curr());
                     let keyword: kw::Keywords = self.input_curr().try_into()?;
                     match keyword {
                         kw::Const => {
@@ -138,11 +159,19 @@ impl<'a> AstBuilder<'a> {
                                     }
 
                                     let mut cnt = parser.items().len();
+                                    let items = parser.into_items();
+                                    let file = Box::leak(box s);
+                                    let input = Box::leak(box input);
                                     // TODO: the receiver has to wait on all items so we really
                                     // don't get much benefit from threading now
-                                    for item in parser.into_items() {
+                                    for item in items {
                                         cnt -= 1;
-                                        snd.send(Ok((s.clone(), cnt, item)));
+                                        snd.send(Ok(ParsedBlob {
+                                            file,
+                                            input,
+                                            count: cnt,
+                                            decl: item,
+                                        }));
                                     }
                                     Ok(())
                                 });
@@ -200,7 +229,7 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Const(ast::Const { ident: id, ty, init: expr, span }).into_spanned(span))
     }
 
@@ -249,7 +278,7 @@ impl<'a> AstBuilder<'a> {
 
         let stmts = self.make_block()?;
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx(), self.file_id);
 
         Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
             .into_spanned(span))
@@ -308,7 +337,7 @@ impl<'a> AstBuilder<'a> {
             self.make_block()?
         };
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
 
         Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
             .into_spanned(span))
@@ -334,7 +363,7 @@ impl<'a> AstBuilder<'a> {
         };
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Impl(ast::Impl { path, type_arguments, method, span }).into_spanned(span))
     }
 
@@ -354,7 +383,7 @@ impl<'a> AstBuilder<'a> {
         let fields = self.make_fields()?;
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Adt(ast::Adt::Struct(ast::Struct { ident, fields, generics, span }))
             .into_spanned(span))
     }
@@ -375,7 +404,7 @@ impl<'a> AstBuilder<'a> {
         let variants = self.make_variants()?;
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Adt(ast::Adt::Enum(ast::Enum { ident, variants, generics, span }))
             .into_spanned(span))
     }
@@ -398,7 +427,7 @@ impl<'a> AstBuilder<'a> {
         let method = self.make_trait_fn(&generics)?;
 
         self.eat_if(&TokenMatch::CloseBrace);
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Trait(ast::Trait { path, generics, method, span }).into_spanned(span))
     }
 
@@ -413,7 +442,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_if(&TokenMatch::Semi);
 
-        let span = ast::to_rng(start..self.input_idx);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(ast::Decl::Import(path).into_spanned(span))
     }
 
@@ -458,7 +487,7 @@ impl<'a> AstBuilder<'a> {
         let default = self.eat_if(&TokenMatch::Semi);
         Ok(if default {
             let stmts = self.make_block()?;
-            let span = ast::to_rng(start..self.input_idx);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             ast::TraitMethod::Default(ast::Func {
                 ident,
                 ret,
@@ -469,7 +498,7 @@ impl<'a> AstBuilder<'a> {
             })
         } else {
             let stmts = ast::Block { stmts: vec![], span: self.curr_span() };
-            let span = ast::to_rng(start..self.input_idx);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             ast::TraitMethod::NoBody(ast::Func {
                 ident,
                 ret,
@@ -497,7 +526,7 @@ impl<'a> AstBuilder<'a> {
             let ident = self.make_ident()?;
             let types = self.make_types(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             variants.push(ast::Variant { ident, types, span });
 
             // TODO: report errors when missing commas if possible
@@ -531,7 +560,7 @@ impl<'a> AstBuilder<'a> {
 
             let ty = self.make_ty()?;
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             params.push(ast::Field { ident, ty, span });
 
             self.eat_whitespace();
@@ -565,7 +594,7 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::Colon);
                 self.eat_whitespace();
                 let init = self.make_expr()?;
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 exprs.push(ast::FieldInit { ident, init, span });
                 if self.eat_if(&TokenMatch::Comma) {
                     self.eat_whitespace();
@@ -578,7 +607,10 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             exprs
         } else {
-            vec![]
+            return Err(ParseError::Error(
+                "expected `{` for struct init expression",
+                self.curr_span(),
+            ));
         })
     }
 
@@ -623,7 +655,7 @@ impl<'a> AstBuilder<'a> {
     fn make_expr(&mut self) -> ParseResult<ast::Expression> {
         self.push_call_stack("make_expr");
         self.eat_whitespace();
-        let start = self.curr_span().start;
+        let start = self.input_idx;
 
         // array init
         if self.curr.kind == TokenMatch::OpenBracket {
@@ -646,13 +678,13 @@ impl<'a> AstBuilder<'a> {
                 } else {
                     return Err(ParseError::Error(
                         "array literal must must be of the forum`[expr; int]`",
-                        ast::to_rng(start..self.curr_span().start),
+                        ast::to_rng(start..self.input_idx, self.file_id),
                     ));
                 };
                 self.eat_whitespace();
                 self.eat_if(&TokenMatch::CloseBracket);
 
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 let lit_span = lit.span;
                 Ok(ast::Expr::ArrayInit {
                     items: std::iter::repeat(ast::Expr::Value(lit).into_spanned(lit_span))
@@ -663,12 +695,12 @@ impl<'a> AstBuilder<'a> {
             } else {
                 let items =
                     self.make_expr_list(&TokenMatch::OpenBracket, &TokenMatch::CloseBracket)?;
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 Ok(ast::Expr::ArrayInit { items }.into_spanned(span))
             }
         } else if self.curr.kind == TokenMatch::Lt {
             // trait method calls
-            let start = self.curr_span().start;
+            let start = self.input_idx;
 
             // Outer `<` token
             self.eat_if(&TokenMatch::Lt);
@@ -685,7 +717,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             self.eat_if(&TokenMatch::CloseParen);
 
-            let span = ast::to_rng(start..self.curr_span().start);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             Ok(ast::Expr::TraitMeth { trait_, type_args, args }.into_spanned(span))
         } else if matches!(
             self.curr.kind,
@@ -702,119 +734,127 @@ impl<'a> AstBuilder<'a> {
             let x: Result<kw::Keywords, _> = self.input_curr().try_into();
             if let Ok(key) = x {
                 match key {
-                    kw::Enum => self.make_enum_init(),
-                    kw::Struct => self.make_struct_init(),
+                    // kw::Enum => self.make_enum_init(),
+                    // kw::Struct => self.make_struct_init(),
                     kw::True => {
-                        Ok(ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span()))
+                        return Ok(
+                            ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span())
+                        );
                     }
                     kw::False => {
-                        Ok(ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span()))
+                        return Ok(
+                            ast::Expr::Value(self.make_literal()?).into_spanned(self.curr_span())
+                        );
                     }
-                    t => Err(ParseError::Error("unexpected keyword", self.curr_span())),
-                }
-            } else {
-                // TODO: Refactor out
-                // Shunting Yard algo http://en.wikipedia.org/wiki/Shunting_yard_algorithm
-                let mut output: Vec<ast::Expression> = vec![];
-                let mut opstack: Vec<AssocOp> = vec![];
-                while self.curr.kind != TokenMatch::Semi {
-                    self.eat_whitespace();
-                    let (ex, op) = self.advance_to_op()?;
-                    self.eat_whitespace();
-                    if let Some(next) = op {
-                        // if the previous operator is of a higher precedence than the incoming
-                        match opstack.pop() {
-                            Some(prev)
-                                if next.precedence() < prev.precedence()
-                                    || (next.precedence() == prev.precedence()
-                                        && matches!(prev.fixity(), Fixit::Left)) =>
-                            {
-                                let lhs = output.pop().unwrap();
-
-                                let span = ast::to_rng(lhs.span.start..ex.span.end);
-                                let mut finish = ast::Expr::Binary {
-                                    op: prev.to_ast_binop().unwrap(),
-                                    lhs: box lhs,
-                                    rhs: box ex,
-                                }
-                                .into_spanned(span);
-
-                                while let Some(lfix_op) = opstack.pop() {
-                                    if matches!(lfix_op.fixity(), Fixit::Left) {
-                                        let lhs = output.pop().unwrap();
-                                        let span = ast::to_rng(lhs.span.start..finish.span.end);
-                                        finish = ast::Expr::Binary {
-                                            op: lfix_op.to_ast_binop().unwrap(),
-                                            lhs: box lhs,
-                                            rhs: box finish,
-                                        }
-                                        .into_spanned(span);
-                                    } else {
-                                        opstack.push(lfix_op);
-                                        break;
-                                    }
-                                }
-
-                                output.push(finish);
-                                opstack.push(next);
-                            }
-                            Some(prev) => {
-                                output.push(ex);
-                                opstack.push(prev);
-                                opstack.push(next);
-                            }
-                            None => {
-                                output.push(ex);
-                                opstack.push(next);
-                            }
-                        }
-                    // TODO: cleanup
-                    // There is probably a better way to do this
-                    } else {
-                        output.push(ex);
-
-                        // We have to process the stack/output and the last (expr, binop) pair
-                        loop {
-                            match (output.pop(), opstack.pop()) {
-                                (Some(rhs), Some(bin)) => {
-                                    if let Some(first) = output.pop() {
-                                        let span = ast::to_rng(first.span.start..rhs.span.end);
-                                        let finish = ast::Expr::Binary {
-                                            op: bin.to_ast_binop().unwrap(),
-                                            lhs: box first,
-                                            rhs: box rhs,
-                                        }
-                                        .into_spanned(span);
-
-                                        output.push(finish);
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                (Some(expr), None) => {
-                                    return Ok(expr);
-                                }
-                                (None, Some(op)) => {
-                                    return Err(ParseError::Expected(
-                                        "a term",
-                                        format!("only the {} operand", op),
-                                        self.curr_span(),
-                                    ));
-                                }
-                                (None, None) => {
-                                    unreachable!("dont think this is possible")
-                                }
-                            }
-                        }
-                        break;
+                    t => {
+                        return Err(ParseError::Error("unexpected keyword", self.curr_span()));
                     }
                 }
-
-                output.pop().ok_or_else(|| {
-                    ParseError::Error("failed to generate expression", self.curr_span())
-                })
             }
+            // TODO: Refactor out
+            // Shunting Yard algo http://en.wikipedia.org/wiki/Shunting_yard_algorithm
+            let mut output: Vec<ast::Expression> = vec![];
+            let mut opstack: Vec<AssocOp> = vec![];
+            while self.curr.kind != TokenMatch::Semi {
+                self.eat_whitespace();
+                let (ex, op) = self.advance_to_op()?;
+                self.eat_whitespace();
+                if let Some(next) = op {
+                    // if the previous operator is of a higher precedence than the incoming
+                    match opstack.pop() {
+                        Some(prev)
+                            if next.precedence() < prev.precedence()
+                                || (next.precedence() == prev.precedence()
+                                    && matches!(prev.fixity(), Fixit::Left)) =>
+                        {
+                            let lhs = output.pop().unwrap();
+
+                            let span = ast::to_rng(lhs.span.start..ex.span.end, self.file_id);
+                            let mut finish = ast::Expr::Binary {
+                                op: prev.to_ast_binop().unwrap(),
+                                lhs: box lhs,
+                                rhs: box ex,
+                            }
+                            .into_spanned(span);
+
+                            while let Some(lfix_op) = opstack.pop() {
+                                if matches!(lfix_op.fixity(), Fixit::Left) {
+                                    let lhs = output.pop().unwrap();
+                                    let span =
+                                        ast::to_rng(lhs.span.start..finish.span.end, self.file_id);
+                                    finish = ast::Expr::Binary {
+                                        op: lfix_op.to_ast_binop().unwrap(),
+                                        lhs: box lhs,
+                                        rhs: box finish,
+                                    }
+                                    .into_spanned(span);
+                                } else {
+                                    opstack.push(lfix_op);
+                                    break;
+                                }
+                            }
+
+                            output.push(finish);
+                            opstack.push(next);
+                        }
+                        Some(prev) => {
+                            output.push(ex);
+                            opstack.push(prev);
+                            opstack.push(next);
+                        }
+                        None => {
+                            output.push(ex);
+                            opstack.push(next);
+                        }
+                    }
+                // TODO: cleanup
+                // There is probably a better way to do this
+                } else {
+                    output.push(ex);
+
+                    // We have to process the stack/output and the last (expr, binop) pair
+                    loop {
+                        match (output.pop(), opstack.pop()) {
+                            (Some(rhs), Some(bin)) => {
+                                if let Some(first) = output.pop() {
+                                    let span =
+                                        ast::to_rng(first.span.start..rhs.span.end, self.file_id);
+                                    let finish = ast::Expr::Binary {
+                                        op: bin.to_ast_binop().unwrap(),
+                                        lhs: box first,
+                                        rhs: box rhs,
+                                    }
+                                    .into_spanned(span);
+
+                                    output.push(finish);
+                                } else {
+                                    break;
+                                }
+                            }
+                            (Some(expr), None) => {
+                                return Ok(expr);
+                            }
+                            (None, Some(op)) => {
+                                return Err(ParseError::Expected(
+                                    "a term",
+                                    format!("only the {} operand", op),
+                                    self.curr_span(),
+                                ));
+                            }
+                            (None, None) => {
+                                unreachable!("dont think this is possible")
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            output
+                .pop()
+                .ok_or_else(|| ParseError::Error("failed to generate expression", self.curr_span()))
         } else {
+            panic!("{:?}", self.curr);
             // See the above 4 todos/fixes
             Err(ParseError::Error("no top level expression", self.curr_span()))
         }
@@ -837,9 +877,9 @@ impl<'a> AstBuilder<'a> {
             let op = self.make_op()?;
             (id, op)
         } else if self.curr.kind == TokenMatch::Literal {
-            let start = self.curr_span().start;
+            let start = self.input_idx;
             let ex = ast::Expr::Value(self.make_literal()?)
-                .into_spanned(ast::to_rng(start..self.curr_span().start));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
             self.eat_whitespace();
 
             let op = self.make_op()?;
@@ -851,7 +891,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Bang);
             let ex = self.make_expr()?;
             let expr = ast::Expr::Urnary { op: ast::UnOp::Not, expr: box ex }
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
@@ -866,7 +906,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Tilde);
             let ex = self.make_expr()?;
             let expr = ast::Expr::Urnary { op: ast::UnOp::OnesComp, expr: box ex }
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
@@ -885,7 +925,7 @@ impl<'a> AstBuilder<'a> {
             }
             let id = self.make_lh_expr()?;
             let expr = ast::Expr::Deref { indir, expr: box id }
-                .into_spanned(ast::to_rng(start..self.curr_span().end));
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
@@ -896,23 +936,23 @@ impl<'a> AstBuilder<'a> {
 
             self.eat_if(&TokenMatch::And);
             let ex = self.make_expr()?;
-            let expr =
-                ast::Expr::AddrOf(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
+            let expr = ast::Expr::AddrOf(box ex)
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
 
             self.eat_whitespace();
 
             let op = self.make_op()?;
             (expr, op)
         } else if self.curr.kind == TokenMatch::OpenParen {
-            let start = self.curr_span().start;
+            let start = self.input_idx;
             // N.B.
             // We know we are in the middle of some kind of binop
             self.eat_if(&TokenMatch::OpenParen);
 
             let ex = self.make_expr()?;
 
-            let expr =
-                ast::Expr::Parens(box ex).into_spanned(ast::to_rng(start..self.curr_span().end));
+            let expr = ast::Expr::Parens(box ex)
+                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
             self.eat_whitespace();
 
             self.eat_if(&TokenMatch::CloseParen);
@@ -934,19 +974,19 @@ impl<'a> AstBuilder<'a> {
     fn make_lh_expr(&mut self) -> ParseResult<ast::Expression> {
         self.push_call_stack("make_lh_expr");
         Ok(if self.curr.kind == TokenMatch::Ident {
-            let start = self.curr_span().start;
+            let start = self.input_idx;
 
             if self.check_next(&TokenMatch::Dot) {
                 // We are in a field access
                 let lhs = ast::Expr::Ident(self.make_ident()?)
-                    .into_spanned(ast::to_rng(start..self.curr_span().end));
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
                 self.eat_if(&TokenMatch::Dot);
 
                 ast::Expr::FieldAccess { lhs: box lhs, rhs: box self.make_lh_expr()? }
-                    .into_spanned(ast::to_rng(start..self.curr_span().end))
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
             } else if self.check_next(&TokenMatch::OpenBracket) {
                 // We are in an array index expr
-                let start = self.curr_span().start;
+                let start = self.input_idx;
 
                 let ident = self.make_ident()?;
 
@@ -968,10 +1008,10 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::CloseBracket);
 
                 ast::Expr::Array { ident, exprs }
-                    .into_spanned(ast::to_rng(start..self.curr_span().end))
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
             } else {
                 self.eat_whitespace();
-                let start = self.curr_span().start;
+                let start = self.input_idx;
 
                 let mut path = self.make_path()?;
                 let is_func_call = (self.cmp_seq_ignore_ws(&[
@@ -980,34 +1020,57 @@ impl<'a> AstBuilder<'a> {
                     TokenMatch::Lt,
                 ]) || self.curr.kind == TokenMatch::OpenParen);
 
-                if path.segs.len() == 1 && !is_func_call {
-                    ast::Expr::Ident(path.segs.remove(0))
-                        .into_spanned(ast::to_rng(start..self.curr_span().start))
+                // TODO: there has GOT to be a clearer way of writing this...
+                let is_struct_in_match = if self.in_match_stmt {
+                    // FIXME: this would NOT catch `match struct_foo {} {}` where `struct_foo` is
+                    // empty
+                    self.cmp_seq_ignore_ws(&[
+                        TokenMatch::Ident,
+                        TokenMatch::Colon,
+                        TokenMatch::Ident,
+                        TokenMatch::Comma,
+                    ])
                 } else {
+                    false
+                };
+                let is_struct = !path.segs.is_empty()
+                    && ((self.curr.kind == TokenMatch::OpenBrace && !self.in_match_stmt)
+                        || is_struct_in_match);
+
+                let is_itemless_enum = path.segs.len() > 1 && self.curr.kind == TokenMatch::Semi;
+
+                if path.segs.len() == 1 && !is_func_call && !is_struct && !is_itemless_enum {
+                    ast::Expr::Ident(path.segs.remove(0))
+                        .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
+                } else if is_func_call {
                     // We are most likely in a function call
-                    if is_func_call {
-                        let type_args = self.make_type_args()?;
+                    let type_args = self.make_type_args()?;
 
-                        self.eat_whitespace();
-                        self.eat_if(&TokenMatch::OpenParen);
+                    self.eat_whitespace();
+                    self.eat_if(&TokenMatch::OpenParen);
 
-                        let mut args = self.make_arg_list()?;
-                        // This is duplicated iff we have a no arg call
-                        self.eat_whitespace();
-                        self.eat_if(&TokenMatch::CloseParen);
+                    let mut args = self.make_arg_list()?;
+                    // This is duplicated iff we have a no arg call
+                    self.eat_whitespace();
+                    self.eat_if(&TokenMatch::CloseParen);
 
-                        ast::Expr::Call { path, type_args, args }
-                            .into_spanned(ast::to_rng(start..self.curr_span().end))
-                    } else {
-                        // TODO: better errors here (this is common bottom out)
-                        // TODO: enums will end up here, well they could also be functions ewww hmmm
-                        // TODO: enums will end up here, well they could also be functions ewww hmmm
-                        // TODO: enums will end up here, well they could also be functions ewww hmmm
-                        return Err(ParseError::Error(
-                            "ident, field access, array index or fn call",
-                            self.curr_span(),
-                        ));
-                    }
+                    // TODO an enum that is just a path
+                    // This can be an enum also
+                    ast::Expr::Call { path, type_args: RawVec::from_vec(type_args), args }
+                        .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
+                } else if is_struct {
+                    let fields = self.make_field_list()?;
+                    let span = ast::to_rng(start..self.input_idx(), self.file_id);
+                    ast::Expr::StructInit { path, fields }.into_spanned(span)
+                } else if is_itemless_enum {
+                    let variant = path.segs.pop().unwrap();
+                    let span = ast::to_rng(start..self.input_idx(), self.file_id);
+                    ast::Expr::EnumInit { path, variant, items: vec![] }.into_spanned(span)
+                } else {
+                    return Err(ParseError::Error(
+                        "ident, field access, array index or fn call",
+                        self.curr_span(),
+                    ));
                 }
             }
         } else {
@@ -1133,32 +1196,6 @@ impl<'a> AstBuilder<'a> {
         })
     }
 
-    fn make_enum_init(&mut self) -> ParseResult<ast::Expression> {
-        self.push_call_stack("make_enum_init");
-        let start = self.input_idx;
-
-        self.eat_if_kw(kw::Enum);
-        let mut path = self.make_path()?;
-        let variant = path.segs.pop().unwrap();
-        let items = self.make_expr_list(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
-
-        let span = ast::to_rng(start..self.curr_span().end);
-        Ok(ast::Expr::EnumInit { path, variant, items }.into_spanned(span))
-    }
-
-    fn make_struct_init(&mut self) -> ParseResult<ast::Expression> {
-        self.push_call_stack("make_struct_init");
-        let start = self.input_idx;
-
-        self.eat_if_kw(kw::Struct);
-        let path = self.make_path()?;
-
-        let fields = self.make_field_list()?;
-
-        let span = ast::to_rng(start..self.curr_span().end);
-        Ok(ast::Expr::StructInit { path, fields }.into_spanned(span))
-    }
-
     fn make_block(&mut self) -> ParseResult<ast::Block> {
         self.push_call_stack("make_block");
         let start = self.input_idx;
@@ -1167,7 +1204,7 @@ impl<'a> AstBuilder<'a> {
         // If the function body is empty
         if self.cmp_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]) {
             self.eat_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]);
-            let span = ast::to_rng(start..self.curr_span().start);
+            let span = ast::to_rng(start..self.input_idx, self.file_id);
             return Ok(ast::Block { stmts: vec![ast::Stmt::Exit.into_spanned(span)], span });
         }
 
@@ -1188,13 +1225,13 @@ impl<'a> AstBuilder<'a> {
                 }
             }
         }
-        let span = ast::to_rng(start..self.curr_span().end);
+        let span = ast::to_rng(start..self.input_idx(), self.file_id);
         Ok(ast::Block { stmts, span })
     }
 
     fn make_stmt(&mut self) -> ParseResult<ast::Statement> {
         self.push_call_stack("make_stmt");
-        let start = self.curr_span().start;
+        let start = self.input_idx;
         let stmt = if self.eat_if_kw(kw::Let) {
             self.make_assignment()?
         } else if self.eat_if_kw(kw::If) {
@@ -1202,7 +1239,10 @@ impl<'a> AstBuilder<'a> {
         } else if self.eat_if_kw(kw::While) {
             self.make_while_stmt()?
         } else if self.eat_if_kw(kw::Match) {
-            self.make_match_stmt()?
+            self.in_match_stmt = true;
+            let stmt = self.make_match_stmt()?;
+            self.in_match_stmt = false;
+            stmt
         } else if self.eat_if_kw(kw::Return) {
             self.make_return_stmt()?
         } else if self.eat_if_kw(kw::Exit) {
@@ -1214,7 +1254,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
-        let span = ast::to_rng(start..self.curr_span().end);
+        let span = ast::to_rng(start..self.input_idx(), self.file_id);
         Ok(stmt.into_spanned(span))
     }
 
@@ -1285,7 +1325,7 @@ impl<'a> AstBuilder<'a> {
         let arms = self.make_arms()?;
 
         self.eat_whitespace();
-        self.eat_if(&TokenMatch::OpenBrace);
+        self.eat_if(&TokenMatch::CloseBrace);
         self.eat_whitespace();
 
         Ok(ast::Stmt::Match { expr, arms })
@@ -1315,119 +1355,82 @@ impl<'a> AstBuilder<'a> {
                 // TODO: assingment is also valid here
                 //
                 // `x[0] = 6; x = call; v.v.f = yo;
-                ast::Expr::Ident(_) => {
-                    // @copypaste
-                    // +=
-                    if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
-                    // -=
-                    } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
-                    // *=
-                    } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
-                    // /=
-                    } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
-                    // |=
-                    } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
-                    // &=
-                    } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
-                    // =
-                    } else if self.curr.kind == TokenMatch::Eq {
-                        self.eat_if(&TokenMatch::Eq);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
-                    } else {
-                        todo!("{}", &self.input[self.input_idx..])
-                    }
-                }
-                ast::Expr::Deref { indir, expr } => {
-                    return Err(ParseError::Error("expression statement", self.curr_span()))
-                }
-                ast::Expr::AddrOf(_) => todo!(),
-                ast::Expr::Array { .. } => {
-                    // +=
-                    if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
-                    // -=
-                    } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
-                    // *=
-                    } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
-                    // /=
-                    } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
-                    // |=
-                    } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
-                    // &=
-                    } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
-                        self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
-                    } else if self.curr.kind == TokenMatch::Eq {
-                        self.eat_if(&TokenMatch::Eq);
-                        self.eat_whitespace();
-                        let rval = self.make_expr()?;
-                        ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
-                    } else {
-                        todo!("{}", &self.input[self.input_idx..])
-                    }
-                }
-                ast::Expr::Urnary { op, expr } => todo!(),
-                ast::Expr::Binary { op, lhs, rhs } => todo!(),
-                ast::Expr::Parens(_) => todo!(),
+                ast::Expr::Ident(_) => self.make_assign_stmt_expr(expr)?,
                 ast::Expr::Call { .. } => ast::Stmt::Call(expr),
-                ast::Expr::TraitMeth { trait_, args, type_args } => todo!(),
-                ast::Expr::FieldAccess { lhs, rhs } => todo!(),
-                ast::Expr::StructInit { path, fields } => todo!(),
-                ast::Expr::EnumInit { path, variant, items } => todo!(),
-                ast::Expr::ArrayInit { items } => todo!(),
-                ast::Expr::Value(_) => todo!(),
+                ast::Expr::Deref { .. } => self.make_assign_stmt_expr(expr)?,
+                ast::Expr::Array { .. } => self.make_assign_stmt_expr(expr)?,
+                ast::Expr::FieldAccess { .. } => self.make_assign_stmt_expr(expr)?,
+                // Maybe this is ok??
+                ast::Expr::Parens(_) => todo!(),
+
+                ast::Expr::AddrOf(_)
+                | ast::Expr::Urnary { .. }
+                | ast::Expr::Binary { .. }
+                | ast::Expr::TraitMeth { .. }
+                | ast::Expr::StructInit { .. }
+                | ast::Expr::EnumInit { .. }
+                | ast::Expr::ArrayInit { .. }
+                | ast::Expr::Value(_) => {
+                    return Err(ParseError::Error(
+                        "invalid left hand side of statement",
+                        self.curr_span(),
+                    ));
+                }
             }
         } else if self.curr.kind == TokenMatch::Lt {
             todo!("Trait method calls {}", self.call_stack.join("\n"))
+        } else if self.curr.kind == TokenMatch::OpenBrace {
+            let blk = self.make_block()?;
+            ast::Stmt::Block(blk)
         } else {
             return Err(ParseError::Error("make statement bottom out", self.curr_span()));
+        })
+    }
+
+    fn make_assign_stmt_expr(&mut self, expr: ast::Expression) -> ParseResult<ast::Stmt> {
+        // +=
+        Ok(if self.cmp_seq(&[TokenMatch::Plus, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Plus, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Add }
+        // -=
+        } else if self.cmp_seq(&[TokenMatch::Minus, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Minus, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Sub }
+        // *=
+        } else if self.cmp_seq(&[TokenMatch::Star, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Star, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Mul }
+        // /=
+        } else if self.cmp_seq(&[TokenMatch::Slash, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Slash, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::Div }
+        // |=
+        } else if self.cmp_seq(&[TokenMatch::Or, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::Or, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitOr }
+        // &=
+        } else if self.cmp_seq(&[TokenMatch::And, TokenMatch::Eq]) {
+            self.eat_seq(&[TokenMatch::And, TokenMatch::Eq]);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::AssignOp { lval: expr, rval, op: ast::BinOp::BitAnd }
+        } else if self.curr.kind == TokenMatch::Eq {
+            self.eat_if(&TokenMatch::Eq);
+            self.eat_whitespace();
+            let rval = self.make_expr()?;
+            ast::Stmt::Assign { lval: expr, rval, ty: None, is_let: false }
+        } else {
+            todo!("{}", &self.input[self.input_idx..])
         })
     }
 
@@ -1453,7 +1456,7 @@ impl<'a> AstBuilder<'a> {
             let blk = self.make_block()?;
             self.eat_if(&TokenMatch::Comma);
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             arms.push(ast::MatchArm { pat, blk, span })
         }
         Ok(arms)
@@ -1487,11 +1490,11 @@ impl<'a> AstBuilder<'a> {
                     vec![]
                 };
 
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 ast::Pat::Enum { path, variant, items }.into_spanned(span)
             } else {
                 // TODO: binding needs span
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 ast::Pat::Bind(ast::Binding::Wild(path.segs.remove(0))).into_spanned(span)
             }
         } else if self.eat_if(&TokenMatch::OpenBracket) {
@@ -1500,11 +1503,11 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
             self.eat_if(&TokenMatch::CloseBracket);
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             ast::Pat::Array { size: pats.len(), items: pats }.into_spanned(span)
         } else if self.curr.kind == TokenMatch::Literal {
             // Literal
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
             ast::Pat::Bind(ast::Binding::Value(self.make_literal()?)).into_spanned(span)
         } else {
             todo!("{:?}", self.curr)
@@ -1557,7 +1560,7 @@ impl<'a> AstBuilder<'a> {
                 }
             }
 
-            let span = ast::to_rng(start..self.curr_span().end);
+            let span = ast::to_rng(start..self.input_idx(), self.file_id);
 
             params.push(ast::Param { ident, ty, span });
 
@@ -1588,7 +1591,7 @@ impl<'a> AstBuilder<'a> {
                 } else {
                     None
                 };
-                let span = ast::to_rng(start..self.curr_span().end);
+                let span = ast::to_rng(start..self.input_idx(), self.file_id);
                 gens.push(ast::Generic { ident, bound, span });
 
                 self.eat_whitespace();
@@ -1766,34 +1769,17 @@ impl<'a> AstBuilder<'a> {
                 if let Ok(key) = key {
                     todo!()
                 } else {
+                    let span = self.curr_span();
                     let ty = match text {
-                        "void" => {
-                            let span = self.curr_span();
-                            ast::Ty::Void.into_spanned(span)
-                        }
-                        "bool" => {
-                            let span = self.curr_span();
-                            ast::Ty::Bool.into_spanned(span)
-                        }
-                        "char" => {
-                            let span = self.curr_span();
-                            ast::Ty::Char.into_spanned(span)
-                        }
-                        "int" => {
-                            let span = self.curr_span();
-                            ast::Ty::Int.into_spanned(span)
-                        }
-                        "float" => {
-                            let span = self.curr_span();
-                            ast::Ty::Float.into_spanned(span)
-                        }
-                        "string" => {
-                            let span = self.curr_span();
-                            ast::Ty::String.into_spanned(span)
-                        }
+                        "void" => ast::Ty::Void.into_spanned(span),
+                        "bool" => ast::Ty::Bool.into_spanned(span),
+                        "char" => ast::Ty::Char.into_spanned(span),
+                        "int" => ast::Ty::Int.into_spanned(span),
+                        "float" => ast::Ty::Float.into_spanned(span),
+                        "string" => ast::Ty::String.into_spanned(span),
                         _ => {
                             let path = self.make_path()?;
-                            let span = ast::to_rng(start..self.curr_span().end);
+                            let span = ast::to_rng(start..self.input_idx(), self.file_id);
                             ast::Ty::Path(path).into_spanned(span)
                         }
                     };
@@ -1805,7 +1791,7 @@ impl<'a> AstBuilder<'a> {
                 panic!("{}", self.call_stack.join("\n"))
             }
             TokenKind::OpenBracket => {
-                let start = self.curr_span().start;
+                let start = self.input_idx;
                 self.eat_if(&TokenMatch::OpenBracket);
                 self.eat_whitespace();
                 self.make_array_type(start)?
@@ -1845,7 +1831,8 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
 
         let ty = self.make_ty()?;
-        let x = Ok(ast::Ty::Array { size, ty: box ty }.into_spanned(start..self.curr_span().end));
+        let x = Ok(ast::Ty::Array { size, ty: box ty }
+            .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id)));
         self.eat_if(&TokenMatch::CloseBracket);
         x
     }
@@ -1854,7 +1841,7 @@ impl<'a> AstBuilder<'a> {
     fn make_path(&mut self) -> ParseResult<Path> {
         let start = self.input_idx;
         let segs = self.make_seg()?;
-        Ok(Path { segs, span: ast::to_rng(start..self.curr_span().end) })
+        Ok(Path { segs, span: ast::to_rng(start..self.input_idx(), self.file_id) })
     }
 
     /// Parse `ident[ws]::ident[ws]...`.
@@ -2090,8 +2077,13 @@ impl<'a> AstBuilder<'a> {
         } else {
             self.curr.len
         };
-        let stop = self.input_idx + self.curr.len;
-        (self.input_idx..stop).into()
+        let stop = self.input_idx + current_len;
+        ast::to_rng(self.input_idx..stop, self.file_id)
+    }
+
+    /// The end count of the current cursor index.
+    fn input_idx(&self) -> usize {
+        self.input_idx + self.curr.len
     }
 }
 
@@ -2102,7 +2094,7 @@ const foo: [3; int] = 1;
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2112,7 +2104,7 @@ fn add(x: int, y: int): int {  }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2126,7 +2118,7 @@ struct foo {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2139,7 +2131,7 @@ struct foo<T, U> {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2151,7 +2143,7 @@ enum foo {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2163,7 +2155,7 @@ enum foo<T, X, U> {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2177,7 +2169,7 @@ impl add<string> {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2188,7 +2180,7 @@ import ::bar::baz;
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 2);
 }
 
 #[test]
@@ -2201,7 +2193,7 @@ fn add(x: int, y: int): int {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2214,7 +2206,7 @@ fn add(x: int, y: int): int {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2227,7 +2219,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2240,7 +2232,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2253,7 +2245,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2265,31 +2257,31 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
 fn parse_assign_struct() {
     let input = r#"
 fn add() {
-    let x = struct foo { x: 1, y: "string" };
+    let x = foo { x: 1, y: "string" };
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
 fn parse_assign_enum() {
     let input = r#"
 fn add() {
-    let x = enum foo::bar(a, 1+0, 1.6);
+    let x = foo::bar(a, 1+0, 1.6);
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2305,7 +2297,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2327,7 +2319,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2342,7 +2334,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2354,7 +2346,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2368,7 +2360,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2384,7 +2376,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2397,7 +2389,7 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2413,7 +2405,7 @@ fn add() {
         .parse()
         .map_err(|e| crate::ast::parse::error::PrettyError::from_parse("test", input, e))
         .unwrap_or_else(|e| panic!("{}", e));
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }
 
 #[test]
@@ -2461,7 +2453,7 @@ fn add() {
         let mut x = input.split("let");
         let start = x.next().unwrap().chars().count();
         let end = x.next().unwrap().chars().count() + start;
-        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end + 1))
+        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end + 1, hash_file("test.file")))
     } else {
         panic!("assert failed for function call with import path")
     }
@@ -2477,5 +2469,5 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items());
+    assert_eq!(parser.items().len(), 1);
 }

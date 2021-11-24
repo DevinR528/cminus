@@ -1,0 +1,13 @@
+linked fn write(_: int);
+
+fn main () {
+
+    let i=1; let j=0; let k=0; let l=1;
+
+    write(i || j);
+    write(i || i);
+    write(l || k);
+    write(k || j);
+
+    exit;
+}

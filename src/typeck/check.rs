@@ -73,8 +73,12 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
 
         coercion(lval_ty.as_ref(), rval_ty.as_mut());
 
+        if self.tcxt.errors.is_poisoned() {
+            return;
+        }
+
         if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
-            self.tcxt.errors.push(Error::error_with_span(
+            self.tcxt.errors.push_error(Error::error_with_span(
                 self.tcxt,
                 span,
                 &format!(
@@ -114,14 +118,12 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                 // TODO: type coercions :( REMOVE
                 if !is_truthy(cond_ty.as_ref()) {
-                    panic!(
-                        "{}",
-                        Error::error_with_span(
-                            self.tcxt,
-                            stmt.span,
-                            "[E0tc] condition of if must be of type bool",
-                        )
-                    );
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        "[E0tc] condition of if must be of type bool",
+                    ));
+                    self.tcxt.errors.poisoned(true);
                 }
 
                 for stmt in stmts {
@@ -140,17 +142,15 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                 // TODO: type coercions :( REMOVE
                 if !is_truthy(cond_ty.as_ref()) {
-                    panic!(
-                        "{}",
-                        Error::error_with_span(
-                            self.tcxt,
-                            stmt.span,
-                            &format!(
-                                "condition of while must be of truthy, got `{}`",
-                                cond_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
-                            ),
-                        )
-                    );
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        stmt.span,
+                        &format!(
+                            "condition of while must be of truthy, got `{}`",
+                            cond_ty.map_or("<unknown>".to_owned(), |t| t.to_string())
+                        ),
+                    ));
+                    self.tcxt.errors.poisoned(true);
                 }
                 for stmt in &blk.stmts {
                     self.visit_stmt(stmt);
@@ -301,7 +301,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 );
 
                 if !ret_ty.as_ref().is_ty_eq(&func_ret_ty.as_ref()) {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
                         &format!(
@@ -318,7 +318,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                         self.tcxt.var_func.name_func.get(&fname).map(|f| &f.ret.val)
                     });
                 if !func_ret_ty.is_ty_eq(&Some(&Ty::Void)) {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
                         &format!(
@@ -498,27 +498,27 @@ fn check_pattern_type(
     let matcher_ty = if let Some(t) = ty {
         t
     } else {
-        tcxt.errors.push(Error::error_with_span(
+        tcxt.errors.push_error(Error::error_with_span(
             tcxt,
             span,
             &format!("[E0tc] unknown pattern ident found `{}`", pat),
         ));
-        tcxt.error_in_current_expr_tree = true;
+        tcxt.errors.poisoned(true);
         return;
     };
     match matcher_ty {
         Ty::Array { size, ty: t } => match pat {
-            Pat::Enum { path, variant, .. } => panic!(
-                "{}",
-                Error::error_with_span(
+            Pat::Enum { path, variant, .. } => {
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     span,
                     &format!("[E0tc] expected array found `{}::{}`", path, variant),
-                )
-            ),
+                ));
+                tcxt.errors.poisoned(true);
+            }
             Pat::Array { size: p_size, items } => {
                 if size != p_size {
-                    tcxt.errors.push(Error::error_with_span(
+                    tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
                         span,
                         &format!(
@@ -526,6 +526,7 @@ fn check_pattern_type(
                             size, p_size
                         ),
                     ));
+                    tcxt.errors.poisoned(true);
                 }
                 for item in items {
                     check_pattern_type(tcxt, &item.val, Some(&t.val), span, bound_vars);
@@ -536,21 +537,22 @@ fn check_pattern_type(
                     bound_vars.insert(*id, ty.cloned().unwrap());
                 }
                 Binding::Value(val) => {
-                    tcxt.errors.push(Error::error_with_span(
+                    tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
                         span,
                         &format!("[E0tc] expected array found `{}`", val),
                     ));
+                    tcxt.errors.poisoned(true);
                 }
             },
         },
         Ty::Struct { ident: _, gen: _ } => todo!(),
         Ty::Enum { ident, gen } => {
-            let enm = tcxt.name_enum.get(&ident).expect("matched undefined enum");
+            let enm = tcxt.name_enum.get(ident).expect("matched undefined enum");
             match pat {
                 Pat::Enum { path, variant, items, .. } => {
                     if !(path.segs.len() == 1 && (*ident) == path.segs[0]) {
-                        tcxt.errors.push(Error::error_with_span(
+                        tcxt.errors.push_error(Error::error_with_span(
                             tcxt,
                             span,
                             &format!(
@@ -558,7 +560,7 @@ fn check_pattern_type(
                                 path, variant, ident
                             ),
                         ));
-                        tcxt.error_in_current_expr_tree = true;
+                        tcxt.errors.poisoned(true);
                         return;
                     }
 
@@ -566,7 +568,7 @@ fn check_pattern_type(
                         if let Some(var) = enm.variants.iter().find(|v| v.ident == *variant) {
                             var
                         } else {
-                            tcxt.errors.push(Error::error_with_span(
+                            tcxt.errors.push_error(Error::error_with_span(
                                 tcxt,
                                 span,
                                 &format!(
@@ -574,7 +576,7 @@ fn check_pattern_type(
                                     path, variant, ident
                                 ),
                             ));
-                            tcxt.error_in_current_expr_tree = true;
+                            tcxt.errors.poisoned(true);
                             return;
                         };
 
@@ -596,13 +598,12 @@ fn check_pattern_type(
                         bound_vars.insert(*id, ty.cloned().unwrap());
                     }
                     Binding::Value(val) => {
-                        tcxt.errors.push(Error::error_with_span(
+                        tcxt.errors.push_error(Error::error_with_span(
                             tcxt,
                             span,
                             &format!("[E0tc] expected enum found `{}`", val),
                         ));
-                        tcxt.error_in_current_expr_tree = true;
-                        return;
+                        tcxt.errors.poisoned(true);
                     }
                 },
             }
@@ -612,17 +613,17 @@ fn check_pattern_type(
         Ty::Int => check_val_pat(tcxt, pat, ty, "int", span, bound_vars),
         Ty::Char => check_val_pat(tcxt, pat, ty, "char", span, bound_vars),
         Ty::Bool => check_val_pat(tcxt, pat, ty, "bool", span, bound_vars),
-        _ => panic!(
-            "{}",
-            Error::error_with_span(
+        _ => {
+            tcxt.errors.push_error(Error::error_with_span(
                 tcxt,
                 span,
                 &format!(
                     "[E0tc] must match a valid enum found: `{}`",
                     ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                 ),
-            )
-        ),
+            ));
+            tcxt.errors.poisoned(true);
+        }
     }
 }
 
@@ -636,33 +637,35 @@ fn check_val_pat(
     bound_vars: &mut HashMap<Ident, Ty>,
 ) {
     match pat {
-        Pat::Enum { path, variant, .. } => panic!(
-            "{}",
-            Error::error_with_span(
+        Pat::Enum { path, variant, .. } => {
+            tcxt.errors.push_error(Error::error_with_span(
                 tcxt,
                 span,
-                &format!("[E0tc] expected `{}` found `{}::{}`", expected, path, variant)
-            )
-        ),
-        Pat::Array { .. } => panic!(
-            "{}",
-            Error::error_with_span(tcxt, span, &format!("expected `{}` found `{}`", expected, pat))
-        ),
+                &format!("[E0tc] expected `{}` found `{}::{}`", expected, path, variant),
+            ));
+            tcxt.errors.poisoned(true);
+        }
+        Pat::Array { .. } => {
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                span,
+                &format!("expected `{}` found `{}`", expected, pat),
+            ));
+            tcxt.errors.poisoned(true);
+        }
         Pat::Bind(bind) => match bind {
             Binding::Wild(id) => {
                 bound_vars.insert(*id, ty.cloned().unwrap());
             }
             Binding::Value(val) => {
-                assert_eq!(
-                    Some(&lit_to_type(&val.val)),
-                    ty,
-                    "{}",
-                    Error::error_with_span(
+                if Some(&lit_to_type(&val.val)) != ty {
+                    tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
                         span,
-                        &format!("[E0tc] expected `{}` found `{}`", expected, val)
-                    )
-                );
+                        &format!("[E0tc] expected `{}` found `{}`", expected, val),
+                    ));
+                    tcxt.errors.poisoned(true);
+                };
             }
         },
     }
@@ -698,11 +701,12 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
             if let Some(ty @ Ty::Array { .. }) = &tcxt.type_of_ident(*ident, stmt_span) {
                 let dim = ty.array_dim();
                 if exprs.len() != dim {
-                    tcxt.errors.push(Error::error_with_span(
+                    tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
                         stmt_span,
                         &format!("[E0tc] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
+                    tcxt.errors.poisoned(true);
                     None
                 } else {
                     ty.index_dim(tcxt, exprs, stmt_span)
@@ -719,7 +723,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
 
                 walk_field_access(tcxt, &fields, rhs)
             } else {
-                tcxt.errors.push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     stmt_span,
                     &format!(
@@ -728,6 +732,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                             .map_or("<unknown>".to_owned(), |t| t.to_string()),
                     ),
                 ));
+                tcxt.errors.poisoned(true);
                 None
             }
         },
@@ -772,21 +777,23 @@ fn walk_field_access(
             {
                 let dim = ty.array_dim();
                 if exprs.len() != dim {
-                    tcxt.errors.push(Error::error_with_span(
+                    tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
                         expr.span,
                         &format!("[E0tc] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
+                    tcxt.errors.poisoned(true);
                     None
                 } else {
                     arr.cloned()
                 }
             } else {
-                tcxt.errors.push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
                     &format!("[E0tc] ident `{}` not array", ident),
                 ));
+                tcxt.errors.poisoned(true);
                 // TODO: specific error here?
                 None
             }
@@ -799,11 +806,12 @@ fn walk_field_access(
                 let fields = tcxt.name_struct.get(&name).map(|s| s.fields.clone()).unwrap_or_default();
                 walk_field_access(tcxt, &fields, rhs)
             } else {
-                tcxt.errors.push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
                     &format!("[E0tc] no struct `{}` found", id),
                 ));
+                tcxt.errors.poisoned(true);
                 None
             }
         },
@@ -818,10 +826,11 @@ fn walk_field_access(
         | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
         | Expr::Value(_) => {
-            panic!(
-                "{}",
+            tcxt.errors.push_error(
                 Error::error_with_span(tcxt, expr.span, "[E0tc] invalid lValue")
-            )
+            );
+            tcxt.errors.poisoned(true);
+            None
         }
     }
 }
@@ -843,18 +852,22 @@ crate fn fold_ty(
         (Ty::Char, Ty::Char) => match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
             BinOp::AddAssign | BinOp::SubAssign => {
-                panic!(
-                    "{}",
-                    Error::error_with_span(tcxt, span, "[E0tc] cannot assign operation to a char")
-                )
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] cannot assign operation to a char",
+                ));
+                None
             }
             // HACK: TODO: this is special case for array checking, make this work correctly
             BinOp::Add => Some(Ty::Char),
             _ => {
-                panic!(
-                    "{}",
-                    Error::error_with_span(tcxt, span, "[E0tc] not a legal operation for `char`")
-                )
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] not a legal operation for `char`",
+                ));
+                None
             }
         },
         (Ty::String, Ty::String) => todo!(),
@@ -869,7 +882,14 @@ crate fn fold_ty(
             | BinOp::BitAnd
             | BinOp::BitXor
             | BinOp::BitOr => Some(Ty::Ptr(t.clone())),
-            _ => panic!("illegal operation"),
+            _ => {
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] illegal pointer operation",
+                ));
+                None
+            }
         },
         // swap left and write so the above arm catches
         (l @ Ty::Int, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
@@ -882,7 +902,14 @@ crate fn fold_ty(
         (Ty::Void, Ty::Void) => Some(Ty::Void),
         (Ty::Bool, Ty::Bool) => match op {
             BinOp::And | BinOp::Or => Some(Ty::Bool),
-            _ => panic!("illegal boolean operation"),
+            _ => {
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    span,
+                    "[E0tc] illegal boolean operation",
+                ));
+                None
+            }
         },
         // TODO: deal with structs/enums
         (Ty::Struct { .. }, _) => todo!(""),
@@ -920,14 +947,12 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
         // TODO: Carr's rules remove
         BinOp::And | BinOp::Or => Some(Ty::Bool),
         BinOp::AddAssign | BinOp::SubAssign => {
-            panic!(
-                "{}",
-                Error::error_with_span(
-                    tcxt,
-                    span,
-                    "[E0tc] cannot assign to a statement, this isn't Rust ;)"
-                )
-            )
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                span,
+                "[E0tc] cannot assign to a statement, this isn't Rust ;)",
+            ));
+            None
         }
     }
 }

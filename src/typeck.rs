@@ -2,21 +2,23 @@ use std::{
     cell::{Cell, RefCell},
     fmt,
     hash::{Hash, Hasher},
+    iter::FromIterator,
     sync::mpsc::Receiver,
 };
 
+use parking_lot::RwLock;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
 
 use crate::{
     ast::{
-        parse::{symbol::Ident, ParseResult},
+        parse::{symbol::Ident, ParseResult, ParsedBlob},
         types::{
             to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
             Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany,
             Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
         },
     },
-    error::Error,
+    error::{Error, ErrorReport},
     typeck::{
         check::{coercion, is_truthy, resolve_ty, StmtCheck},
         generic::TyRegion,
@@ -28,41 +30,16 @@ use crate::{
 crate mod check;
 crate mod generic;
 crate mod infer;
+crate mod rawvec;
+crate mod scope;
 crate mod trait_solver;
 
+use check::fold_ty;
 use generic::{GenericResolver, Node};
+use scope::{hash_file, ScopeContents, ScopeWalker, ScopedName};
 use trait_solver::TraitSolve;
 
-use self::check::fold_ty;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-crate enum Scope {
-    File(u64),
-    // TODO: this really needs to be Func(FileScope, Ident) or Func(Path)?
-    Func(Ident),
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-crate struct ScopedIdent {
-    scope: Scope,
-    ident: Ident,
-}
-
-impl ScopedIdent {
-    crate fn func_scope(func: Ident, name: Ident) -> Self {
-        Self { scope: Scope::Func(func), ident: name }
-    }
-
-    crate fn global(file: &str, name: Ident) -> Self {
-        let mut hasher = FxHasher::default();
-        hasher.write(file.as_bytes());
-        let file = hasher.finish();
-        Self { scope: Scope::File(file), ident: name }
-    }
-
-    crate fn ident(&self) -> Ident {
-        self.ident
-    }
-}
+use self::scope::{ItemIn, Scope};
 
 #[derive(Debug, Default)]
 crate struct VarInFunction<'ast> {
@@ -74,8 +51,9 @@ crate struct VarInFunction<'ast> {
     crate name_func: HashMap<Ident, &'ast Func>,
     /// Does this function have any return statements.
     func_return: HashSet<Ident>,
-    /// All of the variables in a scope that are used.
-    unsed_vars: HashMap<ScopedIdent, (Range, Cell<bool>)>,
+    /// All of the variables in a scope that are declared. We track them to determine if they are
+    /// used.
+    unsed_vars: HashMap<ScopedName, (Range, Cell<bool>)>,
 }
 
 impl VarInFunction<'_> {
@@ -94,26 +72,30 @@ impl VarInFunction<'_> {
     }
 }
 
-pub type AstReceiver = Receiver<ParseResult<(String, usize, Declaration)>>;
+pub type AstReceiver = Receiver<ParseResult<ParsedBlob>>;
 
-#[derive(Default)]
+#[derive(Default, derive_help::Debug)]
 crate struct TyCheckRes<'ast, 'input> {
     /// The name of the file being checked.
-    crate name: &'input str,
+    crate file_names: HashMap<u64, &'input str>,
     /// The content of the file as a string.
-    crate input: &'input str,
+    crate inputs: HashMap<u64, &'input str>,
 
     /// The name of the function currently in or `None` if global.
+    #[dbg_ignore]
     curr_fn: Option<Ident>,
     /// Global variables declared outside of functions.
+    #[dbg_ignore]
     global: HashMap<Ident, Ty>,
 
     /// All the info about variables local to a specific function.
     ///
     /// Parameters are included in the locals.
+    #[dbg_ignore]
     crate var_func: VarInFunction<'ast>,
 
     /// A mapping of expression -> type, this is the main inference table.
+    // #[dbg_ignore]
     crate expr_ty: HashMap<&'ast Expression, Ty>,
 
     /// An `Expression` -> `Ty` mapping made after monomorphization.
@@ -121,9 +103,11 @@ crate struct TyCheckRes<'ast, 'input> {
     /// Types reflect specializations that happens to the expressions. This
     /// only effects expressions where parameters are used (as far as I can tell) since
     /// `GenSubstitution` removes all the typed statements and expressions.
+    #[dbg_ignore]
     crate mono_expr_ty: RefCell<HashMap<Expression, Ty>>,
 
     /// A mapping of identities -> val, this is how const folding keeps track of `Expr::Ident`s.
+    #[dbg_ignore]
     crate consts: HashMap<Ident, &'ast Val>,
 
     // /// A mapping of struct name to the fields of that struct.
@@ -131,57 +115,57 @@ crate struct TyCheckRes<'ast, 'input> {
     // /// A mapping of enum name to the variants of that enum.
     // enum_fields: HashMap<Path, (Vec<Type>, Vec<Variant>)>,
     /// A mapping of struct name to struct def.
+    #[dbg_ignore]
     crate name_struct: HashMap<Ident, &'ast Struct>,
     /// A mapping of enum name to enum def.
+    #[dbg_ignore]
     crate name_enum: HashMap<Ident, &'ast Enum>,
 
     /// Resolve generic types at the end of type checking.
+    #[dbg_ignore]
     crate generic_res: GenericResolver<'ast>,
     /// Trait resolver for checking the bounds on generic types.
+    #[dbg_ignore]
     crate trait_solve: TraitSolve<'ast>,
+    /// Name resolution and scope tracking.
+    crate name_res: ScopeWalker,
 
     // TODO: this isn't ideal since you can forget to set/unset...
     /// Do we record uses of this variable during the following expr tree walk.
+    #[dbg_ignore]
     record_used: bool,
 
+    #[dbg_ignore]
     uniq_generic_instance_id: Cell<usize>,
 
-    /// Errors collected during parsing and type checking.
-    errors: Vec<Error<'input>>,
-    error_in_current_expr_tree: bool,
+    #[dbg_ignore]
+    crate errors: ErrorReport<'input>,
 
+    #[dbg_ignore]
     rcv: Option<AstReceiver>,
+    #[dbg_ignore]
     crate imported_items: Vec<&'static Declaration>,
-}
-
-impl fmt::Debug for TyCheckRes<'_, '_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TyCheckResult")
-            // .field("global", &self.global)
-            // .field("curr_fn", &self.curr_fn)
-            // .field("func_refs", &self.var_func.func_refs)
-            // .field("func_params", &self.func_params)
-            // .field("expr_ty", &self.expr_ty)
-            // .field("struct_fields", &self.struct_fields)
-            // .field("enum_fields", &self.enum_fields)
-            .field("generic_res", &self.generic_res)
-            .field("trait_solve", &self.trait_solve)
-            .finish()
-    }
 }
 
 impl<'input> TyCheckRes<'_, 'input> {
     crate fn new(input: &'input str, name: &'input str, rcv: AstReceiver) -> Self {
-        Self { name, input, rcv: Some(rcv), record_used: true, ..Self::default() }
+        let file_id = hash_file(name);
+        Self {
+            file_names: HashMap::from_iter([(file_id, name)]),
+            inputs: HashMap::from_iter([(file_id, input)]),
+            rcv: Some(rcv),
+            record_used: true,
+            ..Self::default()
+        }
     }
 
-    crate fn report_errors(&self) -> Result<(), &'static str> {
+    crate fn report_errors(&self) -> Result<(), usize> {
         if !self.errors.is_empty() {
-            for e in &self.errors {
+            for e in self.errors.errors().iter() {
                 eprintln!("{}", e)
             }
-            // println!("{:?}", self);
-            return Err("errors");
+            // TODO: see ./src/main.rs for comment
+            return Err(self.errors.errors().len());
         }
         Ok(())
     }
@@ -204,16 +188,24 @@ impl<'input> TyCheckRes<'_, 'input> {
             .get_fn_by_span(span)
             .and_then(|f| {
                 if self.record_used {
-                    // TODO: unused leaks into other scope
                     if let Some((_, b)) =
-                        self.var_func.unsed_vars.get(&ScopedIdent::func_scope(f, id))
+                        self.var_func.unsed_vars.get(&ScopedName::func_scope(f, id, span.file_id))
                     {
                         b.set(true);
                     }
                 }
                 self.var_func.func_refs.get(&f).and_then(|s| s.get(&id))
             })
-            .or_else(|| self.global.get(&id))
+            .or_else(|| {
+                self.global.get(&id).map(|ty| {
+                    if let Some((_, b)) =
+                        self.var_func.unsed_vars.get(&ScopedName::global(span.file_id, id))
+                    {
+                        b.set(true);
+                    }
+                    ty
+                })
+            })
             .cloned()
     }
 
@@ -239,15 +231,15 @@ impl<'input> TyCheckRes<'_, 'input> {
     }
 }
 
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
-// @cleanup: my guess is this will mostly go away, stmt and smaller will be handled by TypeInferer
+// @cleanup: my guess is this will somewhat go away, stmt and smaller will be handled by TypeInferer
 impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     /// We first walk declarations and save function headers then once all the declarations have
     /// been collected we start type checking expressions.
     fn visit_prog(&mut self, items: &'ast [crate::ast::types::Declaration]) {
+        // We just add all files we know about at this point
+        // we will do the same thing when we see an import too
+        self.name_res.add_file_scopes(&self.file_names);
+
         let mut funcs = vec![];
         let mut impls = vec![];
         for item in items {
@@ -257,7 +249,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     funcs.push(func);
                 }
                 Decl::Const(var) => {
-                    self.visit_var(var);
+                    self.visit_const(var);
                 }
                 Decl::Trait(trait_) => self.visit_trait(trait_),
                 Decl::Impl(imp) => {
@@ -269,17 +261,27 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 Decl::Const(co) => {}
                 Decl::Import(_) => {
                     let mut items = vec![];
-                    while let Ok(Ok((file, count, item))) = self.rcv.as_ref().unwrap().recv() {
-                        items.push(item);
-                        if count == 0 {
+                    let mut added_file = false;
+                    // TODO: handle errors
+                    while let Ok(Ok(blob)) = self.rcv.as_ref().unwrap().recv() {
+                        if !added_file {
+                            let file_id = hash_file(blob.file);
+
+                            self.name_res.add_file_scope(file_id);
+                            self.file_names.insert(file_id, blob.file);
+                            self.inputs.insert(file_id, blob.input);
+                        }
+
+                        items.push(blob.decl);
+
+                        if blob.count == 0 {
                             break;
                         }
                     }
                     let imports: &'static [Declaration] = items.leak();
+
                     self.visit_prog(imports);
-                    for import in imports {
-                        self.imported_items.push(import);
-                    }
+                    self.imported_items.extend(imports);
                 }
             }
         }
@@ -287,28 +289,37 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for func in funcs {
             self.curr_fn = Some(func.ident);
+            self.name_res
+                .add_to_scope_stack(Scope::Func { file: func.span.file_id, func: func.ident });
 
             crate::visit::walk_func(self, func);
 
             if !matches!(func.ret.val, Ty::Void) && !self.var_func.func_return.contains(&func.ident)
             {
-                self.errors.push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     &format!(
                         "function `{}` has return type `{}` but no return statement",
                         func.ident, func.ret.val
                     ),
-                ))
+                ));
             }
+
+            self.name_res.pop_scope_stack();
             self.curr_fn.take();
         }
 
         // stabilize order
         impls.sort_by(|a, b| a.span.start.cmp(&b.span.start));
-        for trait_ in impls {
-            self.curr_fn = Some(trait_.method.ident);
-            crate::visit::walk_func(self, &trait_.method);
+        for imp in impls {
+            self.name_res
+                .add_to_scope_stack(Scope::Impl { file: imp.span.file_id, imp: imp.method.ident });
+
+            self.curr_fn = Some(imp.method.ident);
+            crate::visit::walk_func(self, &imp.method);
+
+            self.name_res.pop_scope_stack();
             // TODO: check return just like above
             self.curr_fn.take();
         }
@@ -317,8 +328,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .var_func
             .unsed_vars
             .iter()
-            .filter(|(id, (_, used))| !used.get() && !id.ident().name().starts_with('_'))
-            .map(|(id, (sp, _))| (id.ident(), *sp))
+            .filter(|(id, (_, used))| {
+                !used.get() && !id.ident().map_or(false, |n| n.name().starts_with('_'))
+            })
+            .map(|(id, (sp, _))| (id.ident().unwrap(), *sp))
             .collect::<Vec<_>>();
 
         unused.sort_by(|a, b| a.1.cmp(&b.1));
@@ -326,7 +339,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // TODO: see about unused declarations
         // After all checking then we can check for unused vars
         for (unused, span) in unused {
-            self.errors.push(Error::error_with_span(
+            self.errors.push_error(Error::error_with_span(
                 self,
                 span,
                 &format!("unused variable `{}`, remove or reference", unused),
@@ -336,42 +349,58 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_trait(&mut self, t: &'ast Trait) {
         if self.trait_solve.add_trait(t).is_some() {
-            self.errors.push(Error::error_with_span(
+            self.errors.push_error(Error::error_with_span(
                 self,
                 t.span,
                 &format!("duplicate trait `{}` found", t.path),
             ));
+        } else {
+            self.name_res.add_decl(
+                t.span.file_id,
+                Scope::Trait { file: t.span.file_id, trait_: *t.path.segs.last().unwrap() },
+            );
         }
     }
 
     fn visit_impl(&mut self, imp: &'ast Impl) {
         if let Err(e) = self.trait_solve.add_impl(imp) {
-            self.errors.push(Error::error_with_span(
+            self.errors.push_error(Error::error_with_span(
                 self,
                 imp.span,
                 &format!("no trait `{}` found for this implementation", imp.path),
             ));
+        } else {
+            self.name_res.add_decl(
+                imp.span.file_id,
+                Scope::Impl { file: imp.span.file_id, imp: *imp.path.segs.last().unwrap() },
+            );
         }
     }
 
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
+            self.name_res.add_decl(
+                func.span.file_id,
+                Scope::Func { file: func.span.file_id, func: func.ident },
+            );
             // Current function scope (also the name)
             self.curr_fn = Some(func.ident);
 
             if self.var_func.insert(func.span, func.ident).is_some() {
-                self.errors.push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     "function takes up same span as other function",
                 ));
             }
 
-            assert!(
-                !(func.generics.is_empty() && func.ret.val.has_generics()),
-                "{}",
-                Error::error_with_span(self, func.span, "generic type used without being declared",)
-            );
+            if func.generics.is_empty() && func.ret.val.has_generics() {
+                self.errors.push_error(Error::error_with_span(
+                    self,
+                    func.span,
+                    "generic type used without being declared",
+                ));
+            }
 
             if !func.generics.is_empty() {
                 self.generic_res.collect_generic_params(
@@ -403,7 +432,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 let matching_gen = func.generics.iter().any(|g| g.ident == *ty.val.generics()[0]);
                 if !matching_gen {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         func.span,
                         &format!(
@@ -415,17 +444,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             };
 
             if self.var_func.name_func.insert(func.ident.to_owned(), func).is_some() {
-                self.errors.push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     &format!("multiple function declaration `{}`", func.ident),
                 ));
             }
         } else {
-            panic!(
-                "{}",
-                Error::error_with_span(self, func.span, "function defined within function")
-            )
+            self.errors.push_error(Error::error_with_span(
+                self,
+                func.span,
+                "function defined within function",
+            ));
         }
         // We have left this functions scope
         self.curr_fn.take();
@@ -434,8 +464,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_adt(&mut self, adt: &'ast Adt) {
         match adt {
             Adt::Struct(struc) => {
+                for field in &struc.fields {
+                    self.name_res.add_item(
+                        struc.span.file_id,
+                        Scope::Struct { file: struc.span.file_id, adt: struc.ident },
+                        ItemIn::Field(field.ident),
+                    );
+                }
+
                 if self.name_struct.insert(struc.ident, struc).is_some() {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         struc.span,
                         "duplicate struct names",
@@ -457,8 +495,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Adt::Enum(en) => {
+                for variant in &en.variants {
+                    self.name_res.add_item(
+                        en.span.file_id,
+                        Scope::Enum { file: en.span.file_id, adt: en.ident },
+                        ItemIn::Variant(variant.ident),
+                    );
+                }
+
                 if self.name_enum.insert(en.ident, en).is_some() {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         en.span,
                         "duplicate struct names",
@@ -483,8 +529,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 
     // TODO: this is not what it used to be
-    fn visit_var(&mut self, var: &'ast Const) {
-        #[allow(clippy::if-then-panic)]
+    fn visit_const(&mut self, var: &'ast Const) {
         if let Some(fn_id) = self.curr_fn {
             let node = Node::Func(fn_id);
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
@@ -504,36 +549,65 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 .insert(var.ident, var.ty.val.clone())
                 .is_some()
             {
-                self.errors.push(Error::error_with_span(
+                self.errors.push_error(Error::error_with_span(
                     self,
                     var.span,
                     &format!("[E0w] duplicate variable name `{}`", var.ident),
                 ));
             }
-            self.var_func
-                .unsed_vars
-                .insert(ScopedIdent::func_scope(fn_id, var.ident), (var.span, Cell::new(false)));
+            self.var_func.unsed_vars.insert(
+                ScopedName::func_scope(fn_id, var.ident, var.span.file_id),
+                (var.span, Cell::new(false)),
+            );
+
+            // This const is declared inside of a function
+            self.name_res.add_item(
+                var.span.file_id,
+                Scope::Func { file: var.span.file_id, func: fn_id },
+                ItemIn::Var(var.ident),
+            );
+
             // bail out before we set the scope as global
             return;
-        } else if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
-            self.errors.push(Error::error_with_span(
-                self,
-                var.span,
-                &format!("global variable `{}` is already declared", var.ident),
-            ));
+        } else {
+            if self.global.insert(var.ident, var.ty.val.clone()).is_some() {
+                self.errors.push_error(Error::error_with_span(
+                    self,
+                    var.span,
+                    &format!("global variable `{}` is already declared", var.ident),
+                ));
+            }
+            self.expr_ty.insert(&var.init, var.init.val.type_of().unwrap());
         }
+
+        // This const is declared in the file scope
+        self.name_res.add_item(
+            var.span.file_id,
+            Scope::Global { file: var.span.file_id, name: var.ident },
+            ItemIn::Var(var.ident),
+        );
         self.var_func
             .unsed_vars
-            .insert(ScopedIdent::global(self.name, var.ident), (var.span, Cell::new(false)));
+            .insert(ScopedName::global(var.span.file_id, var.ident), (var.span, Cell::new(false)));
     }
 
     fn visit_params(&mut self, params: &[Param]) {
         if let Some(fn_id) = self.curr_fn {
             for Param { ident, ty, span } in params {
+                // This param is declared inside of a function
+                self.name_res.add_item(
+                    span.file_id,
+                    Scope::Func { file: span.file_id, func: fn_id },
+                    ItemIn::Var(*ident),
+                );
+
+                let ty =
+                    self.name_res.resolve_name(&ty.val, self).unwrap_or_else(|| ty.val.clone());
+
                 // TODO: Do this for returns and any place we match for Ty::Generic {..}
-                if ty.val.has_generics() {
+                if ty.has_generics() {
                     self.generic_res.collect_generic_usage(
-                        &ty.val,
+                        &ty,
                         self.unique_id(),
                         0,
                         &[],
@@ -547,17 +621,17 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .and_then(|f| {
                             // TODO: this doesn't work for something like `enum result<T, E>`
                             // only checks `T` now
-                            f.generics.iter().find(|g| g.ident == *ty.val.generics()[0])
+                            f.generics.iter().find(|g| g.ident == *ty.generics()[0])
                         })
                         .is_some();
 
                     if !matching_gen {
-                        self.errors.push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             *span,
                             &format!(
                                 "found parameter `{}` which is not a declared generic type",
-                                ty.val
+                                ty
                             ),
                         ));
                     }
@@ -567,21 +641,22 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .func_refs
                     .entry(fn_id)
                     .or_default()
-                    .insert(*ident, ty.val.clone())
+                    .insert(*ident, ty.clone())
                     .is_some()
                 {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         *span,
                         &format!("duplicate param name `{}`", ident),
                     ));
                 }
-                self.var_func
-                    .unsed_vars
-                    .insert(ScopedIdent::func_scope(fn_id, *ident), (*span, Cell::new(false)));
+                self.var_func.unsed_vars.insert(
+                    ScopedName::func_scope(fn_id, *ident, span.file_id),
+                    (*span, Cell::new(false)),
+                );
             }
         } else {
-            panic!("{}", Error::error_with_span(self, DUMMY, &format!("{:?}", params)))
+            self.errors.push_error(Error::error_with_span(self, DUMMY, &format!("{:?}", params)));
         }
     }
 
@@ -592,11 +667,15 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_match_arm(&mut self, _arms: &'ast [MatchArm]) {}
 
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
-        self.error_in_current_expr_tree = false;
+        self.errors.poisoned(false);
+
+        self.name_res.visit_stmt(stmt);
+
         let mut infer = TypeInfer { tcxt: self };
         infer.visit_stmt(stmt);
 
         crate::visit::walk_stmt(self, stmt);
+
         self.set_record_used_vars(true);
 
         // check the statement after walking incase there were var declarations
@@ -605,7 +684,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     }
 
     fn visit_expr(&mut self, expr: &'ast Expression) {
-        if self.error_in_current_expr_tree {
+        if self.errors.is_poisoned() {
             return;
         }
 
@@ -615,23 +694,23 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // self.expr_ty.insert(expr, ty);
                     // Ok because of `x += 1;` turns into `x = x + 1;`
                 } else {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for ident expr",
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Array { ident, exprs } => {
-                for expr in exprs {
-                    self.visit_expr(expr);
+                for ex in exprs {
+                    self.visit_expr(ex);
                 }
 
                 for e in exprs {
                     let ty = self.expr_ty.get(e);
                     if !matches!(ty, Some(Ty::Int)) {
-                        self.errors.push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             expr.span,
                             &format!(
@@ -639,7 +718,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                             ),
                         ));
-                        self.error_in_current_expr_tree = true;
+                        self.errors.poisoned(true);
                     }
                 }
                 if let Some(ty) = self.type_of_ident(*ident, expr.span) {
@@ -647,12 +726,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
                     // }
                 } else {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for array expr",
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Urnary { op, expr: inner_expr } => {
@@ -663,12 +742,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         if is_truthy(ty) {
                             self.expr_ty.insert(expr, Ty::Bool);
                         } else {
-                            self.errors.push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "cannot negate non bool type",
                             ));
-                            self.error_in_current_expr_tree = true;
+                            self.errors.poisoned(true);
                         }
                     }
                     UnOp::OnesComp => {
@@ -676,12 +755,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         if let Some(Ty::Int | Ty::Ptr(_)) = ty {
                             self.expr_ty.insert(expr, Ty::Int);
                         } else {
-                            self.errors.push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "cannot negate non bool type",
                             ));
-                            self.error_in_current_expr_tree = true;
+                            self.errors.poisoned(true);
                         }
                     }
                 }
@@ -719,21 +798,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 ) {
                     if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
                         if !ty.is_ty_eq(&t2) {
-                            self.errors.push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "ICE: something went wrong in the compiler",
                             ));
-                            self.error_in_current_expr_tree = true;
+                            self.errors.poisoned(true);
                         }
                     }
                 } else {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         &format!("no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Parens(inner_expr) => {
@@ -741,33 +820,25 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 if let Some(ty) = self.expr_ty.get(&**inner_expr).cloned() {
                     if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
                         if !ty.is_ty_eq(&t2) {
-                            self.errors.push(Error::error_with_span(
+                            self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
                                 "ICE: something went wrong in the compiler",
                             ));
-                            self.error_in_current_expr_tree = true;
+                            self.errors.poisoned(true);
                         }
                     }
                 } else {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for paren expr",
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Call { path, args, type_args } => {
                 let ident = path.segs.last().unwrap();
-                if self.var_func.name_func.get(ident).is_none() {
-                    self.errors.push(Error::error_with_span(
-                        self,
-                        expr.span,
-                        &format!("no function named `{}`", path),
-                    ));
-                    self.error_in_current_expr_tree = true;
-                }
 
                 for arg in args {
                     self.visit_expr(arg);
@@ -778,6 +849,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::default();
+                let func = if let Some(f) = self.var_func.name_func.get(ident) {
+                    f
+                } else {
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        expr.span,
+                        &format!("[E0tc] no function named `{}` defined", path),
+                    ));
+                    return;
+                };
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     // TODO: name resolution
@@ -785,17 +866,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Don't use the same stack for each iteration
                     let mut stack = stack.clone();
 
-                    let func =
-                        self.var_func.name_func.get(ident).expect("all functions are collected");
                     let gen = &func.generics[gen_arg_idx];
                     // Find the param that is the "generic" and check against type argument
-                    let arguments = func
-                        .params
-                        .iter()
-                        .enumerate()
-                        .filter(|(_i, p)| gen.is_ty_eq(&p.ty.val))
-                        .map(|(i, _)| TyRegion::Expr(&args[i].val))
-                        .collect::<Vec<_>>();
+                    let mut arguments = vec![];
+                    for (i, p) in func.params.iter().enumerate() {
+                        if gen.is_ty_eq(&p.ty.val) {
+                            arguments.push(TyRegion::Expr(&args[i].val));
+                        }
+                    }
 
                     self.generic_res.collect_generic_usage(
                         &ty_arg,
@@ -818,17 +896,31 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     .expect("function is known with params");
 
                 if args.len() != func_params.len() {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "wrong number of arguments",
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
 
                 for (idx, arg) in args.iter().enumerate() {
                     let mut param_ty = func_params.get(idx).map(|p| p.ty.val.clone());
                     let mut arg_ty = self.expr_ty.get(arg).cloned();
+
+                    match &param_ty {
+                        Some(Ty::Generic { ident, .. }) => {
+                            if let Some(ty_arg) = gen_arg_map.get(ident).cloned() {
+                                param_ty = Some(ty_arg);
+                            }
+                        }
+                        Some(t @ Ty::Path(..)) => {
+                            if let Some(ty_arg) = self.name_res.resolve_name(t, self) {
+                                param_ty = Some(ty_arg);
+                            }
+                        }
+                        _ => {}
+                    }
 
                     if let Some(Ty::Generic { ident, .. }) = &param_ty {
                         if let Some(ty_arg) = gen_arg_map.get(ident).cloned() {
@@ -840,16 +932,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     coercion(param_ty.as_ref(), arg_ty.as_mut());
 
                     if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
-                        self.errors.push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             arg.span,
                             &format!(
-                                "call with wrong argument type\nfound `{}` expected `{}`",
+                                "[E0tc] call with wrong argument type\nfound `{}` expected `{}`",
                                 arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
                         ));
-                        self.error_in_current_expr_tree = true;
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -868,12 +960,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::TraitMeth { trait_, args, type_args } => {
                 let ident = *trait_.segs.last().unwrap();
                 if self.trait_solve.traits.get(trait_).is_none() {
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         &format!("no trait named `{}`", trait_),
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
                 for expr in args {
                     self.visit_expr(expr);
@@ -926,7 +1018,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
 
                     if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
-                        self.errors.push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             arg.span,
                             &format!(
@@ -935,7 +1027,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
                         ));
-                        self.error_in_current_expr_tree = true;
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -971,7 +1063,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     let field_ty = struc
                         .fields
                         .iter()
-                        .find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None })
+                        .find_map(|f| {
+                            if f.ident == *ident {
+                                self.name_res.resolve_name(&f.ty.val, self)
+                            } else {
+                                None
+                            }
+                        })
                         .expect("no field with that name found");
 
                     let exprty = self.expr_ty.get(&*init).cloned();
@@ -996,7 +1094,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 &mut stack,
                             );
 
-                            gen_args.insert(gen, exprty.clone().unwrap().into_spanned(DUMMY));
+                            gen_args.insert(*gen, exprty.clone().unwrap().into_spanned(DUMMY));
                         } else {
                             panic!("undefined generic type used")
                         }
@@ -1007,8 +1105,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         continue;
                     }
 
-                    if !exprty.as_ref().is_ty_eq(&Some(field_ty)) {
-                        self.errors.push(Error::error_with_span(
+                    if !exprty.as_ref().is_ty_eq(&Some(&field_ty)) {
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             init.span,
                             &format!(
@@ -1017,7 +1115,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 field_ty,
                             ),
                         ));
-                        self.error_in_current_expr_tree = true;
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -1036,7 +1134,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     )
                     .is_some()
                 {
-                    unimplemented!("No duplicates")
+                    // unimplemented!("No duplicates")
                 }
             }
             Expr::EnumInit { path, variant, items } => {
@@ -1048,12 +1146,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     if let Some(vars) = enm.variants.iter().find(|v| v.ident == *variant) {
                         vars
                     } else {
-                        self.errors.push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             expr.span,
                             &format!("enum `{}` has no variant `{}`", path, variant),
                         ));
-                        self.error_in_current_expr_tree = true;
+                        self.errors.poisoned(true);
                         return;
                     };
 
@@ -1095,7 +1193,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
 
                     if !exprty.as_ref().is_ty_eq(&Some(&variant_ty.val)) {
-                        self.errors.push(Error::error_with_span(
+                        self.errors.push_error(Error::error_with_span(
                             self,
                             item.span,
                             &format!(
@@ -1104,7 +1202,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 variant_ty.val,
                             ),
                         ));
-                        self.error_in_current_expr_tree = true;
+                        self.errors.poisoned(true);
                     }
                 }
 
@@ -1144,7 +1242,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self.expr_ty.get(a),
                             self.expr_ty.get(b),
                             &BinOp::Add,
-                            (a.span.start..b.span.end).into(),
+                            to_rng(a.span.start..b.span.end, {
+                                debug_assert!(a.span.file_id == b.span.file_id);
+                                a.span.file_id
+                            }),
                         ),
                         [a, b] => fold_ty(
                             self,
@@ -1174,12 +1275,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // no is_some check: because of `x.y += 1;` being lowered to `x.y = w.y + 1;`
                 } else {
                     // TODO: this error is crappy
-                    self.errors.push(Error::error_with_span(
+                    self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
                         "no type found for field access",
                     ));
-                    self.error_in_current_expr_tree = true;
+                    self.errors.poisoned(true);
                 }
             }
         }
@@ -1221,7 +1322,7 @@ fn build_stack(tcxt: &TyCheckRes<'_, '_>, kind: Node) -> Vec<Node> {
 /// The left hand side of field access has been collected calling this collects the right side.
 ///
 /// The is used in the collection of expressions.
-fn check_field_access<'ast>(
+crate fn check_field_access<'ast>(
     tcxt: &mut TyCheckRes<'ast, '_>,
     lhs: &'ast Expression,
     rhs: &'ast Expression,
@@ -1283,7 +1384,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                 // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
                 // panic!("{:?}", expr);
-                tcxt.errors.push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
                     &format!(
@@ -1306,7 +1407,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
             if let Some(_ty) = ty {
                 // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
             } else {
-                tcxt.errors.push(Error::error_with_span(
+                tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
                     &format!(
@@ -1314,7 +1415,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                         ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                     ),
                 ));
-                tcxt.error_in_current_expr_tree = true;
+                tcxt.errors.poisoned(true);
             }
         }
 

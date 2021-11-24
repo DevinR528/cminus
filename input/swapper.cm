@@ -1,0 +1,23 @@
+/* Pseudo-code for the swap routine */
+linked fn write(_: int);
+linked fn read(_: int);
+
+const i: int = 0;
+const j: int = 0;
+
+fn swap(x: int, y: int) {
+    let temp = 0;
+    temp=x;
+    x=y;
+    y=temp;
+    write(y);
+    write(x);
+}
+
+fn main() {
+    let a = 0;
+    read(i);
+    read(j);
+    a = swap(i,j);
+    write(i);
+}

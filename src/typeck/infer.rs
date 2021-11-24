@@ -19,7 +19,8 @@ use crate::{
     typeck::{
         check::{fold_ty, resolve_ty},
         generic::{Node, TyRegion},
-        ScopedIdent, TyCheckRes,
+        scope::ScopedName,
+        TyCheckRes,
     },
     visit::Visit,
 };
@@ -120,6 +121,142 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
             (None, None) => None,
         }
     }
+
+    fn infer_rhs_field(&mut self, lhs_ty: &Ty, rhs: &'ast Expression, parent: &'ast Expression) {
+        fn fetch_fields<'a>(
+            lhs_ty: &Ty,
+            span: Range,
+            tcxt: &mut TyCheckRes<'a, '_>,
+        ) -> Option<&'a Struct> {
+            match lhs_ty {
+                Ty::Struct { ident, gen } => tcxt.name_struct.get(ident).copied(),
+                Ty::Path(path) => tcxt.name_struct.get(&path.local_ident()).copied(),
+                Ty::Ptr(_) => todo!(),
+                Ty::Ref(_) => todo!(),
+                Ty::Generic { ident, bound } => None,
+                Ty::Array { size, ty } => todo!(),
+                _ => {
+                    tcxt.errors.push_error(Error::error_with_span(
+                        tcxt,
+                        span,
+                        &format!("[E0tc] invalid field accesor target"),
+                    ));
+                    tcxt.errors.poisoned(true);
+                    None
+                }
+            }
+        }
+        let fields = if let Some(s) = fetch_fields(lhs_ty, parent.span, self.tcxt) {
+            &s.fields
+        } else {
+            return;
+        };
+        match &rhs.val {
+            Expr::Ident(id) => {
+                if let Some(field_ty) = fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.val.clone()) } else { None }) {
+                    self.tcxt.expr_ty.insert(rhs, field_ty.clone());
+                    // We are at the end of the field access expression so, the whole expr resolves to this
+                    self.tcxt.expr_ty.insert(parent, field_ty);
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        parent.span,
+                        &format!("[E0i] could not infer type of deref expression"),
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                }
+            },
+            Expr::Deref { indir, expr } => {
+                self.infer_rhs_field(lhs_ty, &**expr, parent);
+
+                if let Some(refed_ty) = self.tcxt.expr_ty.get(&**expr) {
+                    let mut res_ty = refed_ty.clone();
+                    for _ in 0..*indir {
+                        res_ty = Ty::Ref(box res_ty.into_spanned(DUMMY));
+                    }
+
+                    self.tcxt.expr_ty.insert(expr, res_ty.clone());
+                    // We are at the end of the field access expression so, the whole expr resolves to this
+                    self.tcxt.expr_ty.insert(parent, res_ty);
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        parent.span,
+                        &format!("[E0i] could not infer type of deref expression"),
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                }
+            }
+            Expr::Array { ident, exprs } => {
+                if let arr @ Some(ty @ Ty::Array { .. }) = fields
+                    .iter()
+                    .find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None })
+                {
+                    let dim = ty.array_dim();
+                    if exprs.len() != dim {
+                        self.tcxt.errors.push_error(Error::error_with_span(
+                            self.tcxt,
+                            parent.span,
+                            &format!("[E0i] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
+                        ));
+                        self.tcxt.errors.poisoned(true);
+
+                    } else {
+                        self.tcxt.expr_ty.insert(rhs, ty.clone());
+                    // We are at the end of the field access expression so, the whole expr resolves to this
+                        self.tcxt.expr_ty.insert(parent, ty.clone());
+                    }
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        parent.span,
+                        &format!("[E0i] ident `{}` not array", ident),
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                }
+            },
+            Expr::FieldAccess { lhs, rhs: inner } => {
+                let id = lhs.val.as_ident();
+                if let Some(t @ Ty::Struct { ident, .. }) = &self.tcxt.type_of_ident(id, inner.span).and_then(|t| t.resolve()) {
+                    self.infer_rhs_field(&t, &**inner, parent);
+
+                    if let Some(accty) = self.tcxt.expr_ty.get(&**inner).cloned() {
+                        self.tcxt.expr_ty.insert(&**inner, accty);
+                    } else {
+                        self.tcxt.errors.push_error(Error::error_with_span(
+                            self.tcxt,
+                            parent.span,
+                            &format!("[E0tc] ident `{}` not struct", ident),
+                        ));
+                        self.tcxt.errors .poisoned(true);
+                    }
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        inner.span,
+                        &format!("[E0i] tried to access field of non struct"),
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                }
+            },
+            Expr::AddrOf(_)
+            // invalid lval
+            | Expr::Urnary { .. }
+            | Expr::Binary { .. }
+            | Expr::Parens(_)
+            | Expr::Call { .. }
+            | Expr::TraitMeth { .. }
+            | Expr::StructInit { .. }
+            | Expr::EnumInit { .. }
+            | Expr::ArrayInit { .. }
+            | Expr::Value(_) => {
+                self.tcxt.errors.push_error(
+                    Error::error_with_span(self.tcxt, parent.span, "[E0i] invalid lValue")
+                );
+                self.tcxt.errors.poisoned(true);
+            }
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
@@ -129,13 +266,20 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             // TODO: deal with user explicitly provided types
             Stmt::Assign { lval, rval, ty: given_ty, is_let } => {
                 self.visit_expr(rval);
-                let ty = self
-                    .tcxt
-                    .expr_ty
-                    .get(rval)
-                    .or_else(|| given_ty.as_ref().map(|t| &t.val))
-                    .unwrap_or_else(|| panic!("{:?}", rval))
-                    .clone();
+                // TODO: check given type and inferred type match
+                let ty = if let Some(t) =
+                    self.tcxt.expr_ty.get(rval).or_else(|| given_ty.as_ref().map(|t| &t.val))
+                {
+                    t.clone()
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        lval.span,
+                        &format!("[E0i] variable not found `{}`", lval.val.as_ident()),
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                    return;
+                };
 
                 // Set after walking the right side trees
                 self.tcxt.set_record_used_vars(!is_let);
@@ -143,25 +287,11 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 // @cleanup: this is duplicated in `TypeCheck::visit_var`
                 if let Some(fn_id) = self.tcxt.curr_fn {
                     if *is_let {
-                        // let node = Node::Func(fn_id);
-                        // let mut stack = if self.tcxt.generic_res.has_generics(&node) {
-                        //     vec![node]
-                        // } else {
-                        //     vec![]
-                        // };
-                        // self.tcxt.generic_res.collect_generic_usage(
-                        //     &ty,
-                        //     self.tcxt.unique_id(),
-                        //     0,
-                        //     &[TyRegion::Expr(&lval.val)],
-                        //     &mut stack,
-                        // );
-
                         // TODO: match this out so we know its an lval or just wait for later
                         // when that's checked by `StmtCheck`
                         let ident = lval.val.as_ident();
                         self.tcxt.var_func.unsed_vars.insert(
-                            ScopedIdent::func_scope(fn_id, ident),
+                            ScopedName::func_scope(fn_id, ident, lval.span.file_id),
                             (lval.span, Cell::new(false)),
                         );
 
@@ -174,30 +304,18 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             .insert(ident, ty)
                             .is_some()
                         {
-                            self.tcxt.errors.push(Error::error_with_span(
+                            self.tcxt.errors.push_error(Error::error_with_span(
                                 self.tcxt,
                                 ident.span(),
                                 &format!("[E0i] duplicate variable name `{}`", ident),
                             ));
-                            self.tcxt.error_in_current_expr_tree = true;
-                        }
-                    } else if let Some(lhs) = self
-                        .tcxt
-                        .type_of_ident(lval.val.as_ident(), lval.span)
-                        .and_then(|t| resolve_ty(self.tcxt, lval, Some(&t)))
-                    {
-                        if !ty.is_ty_eq(&lhs) {
-                            self.tcxt.errors.push(Error::error_with_span(
-                                self.tcxt,
-                                rval.span,
-                                &format!(
-                                    "[E0i] assigned to wrong type\nfound `{}` expected `{}`",
-                                    ty, lhs,
-                                ),
-                            ));
-                            self.tcxt.error_in_current_expr_tree = true;
+                            self.tcxt.errors.poisoned(true);
                         }
                     }
+                    // Mark the ident if that's what it is
+                    self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
+                    // WE DO NOT DO TYPE CHECKING IN INFERENCE
+
                     // For any assignment we need to know the type of the lvalue, this is because
                     // each node is unique in the expr -> type map
                     self.visit_expr(lval);
@@ -210,12 +328,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 // We must know the type of `lvar` now
                 let lty = self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
                 if lty.is_none() {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         lval.span,
                         &format!("[E0i] undeclared variable name `{}`", lval.val.as_ident()),
                     ));
-                    self.tcxt.error_in_current_expr_tree = true;
+                    self.tcxt.errors.poisoned(true);
                 }
 
                 if let Some(unified) = fold_ty(
@@ -223,7 +341,10 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     lty.as_ref(),
                     rty,
                     op,
-                    to_rng(lval.span.start..rval.span.end),
+                    to_rng(lval.span.start..rval.span.end, {
+                        debug_assert!(lval.span.file_id == rval.span.file_id);
+                        lval.span.file_id
+                    }),
                 ) {
                     self.tcxt.expr_ty.insert(rval, unified);
                 }
@@ -263,12 +384,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
                     self.tcxt.expr_ty.insert(expr, ty);
                 } else {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         expr.span,
                         &format!("[E0i] no type infered for `{}`", ident),
                     ));
-                    self.tcxt.error_in_current_expr_tree = true;
+                    self.tcxt.errors.poisoned(true);
                 }
             }
             Expr::Deref { indir, expr } => todo!(),
@@ -289,12 +410,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         self.tcxt.expr_ty.insert(expr, t);
                     }
                 } else {
-                    self.tcxt.errors.push(Error::error_with_span(
+                    self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         expr.span,
                         &format!("[E0i] no type infered for `{}`", ident),
                     ));
-                    self.tcxt.error_in_current_expr_tree = true;
+                    self.tcxt.errors.poisoned(true);
                 }
             }
             Expr::Urnary { op, expr: ex } => {
@@ -327,11 +448,53 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Call { path, args, type_args } => {
+                let mut infered_ty_args = vec![];
                 for (idx, arg) in args.iter().enumerate() {
                     self.visit_expr(arg);
                 }
+
                 let func = self.tcxt.var_func.name_func.get(&path.segs[0]);
                 if let Some(func) = func {
+                    if type_args.is_empty() && !func.generics.is_empty() {
+                        for (arg, param) in args.iter().zip(&func.params) {
+                            if let Some(expr_ty) = self.tcxt.expr_ty.get(&arg) {
+                                if param.ty.val.has_generics() {
+                                    if let Some(ty_gen_pair) =
+                                        peel_out_ty(Some(expr_ty), &param.ty.val)
+                                    {
+                                        infered_ty_args.push(ty_gen_pair);
+                                    }
+                                }
+                            } else {
+                                self.tcxt.errors.push_error(Error::error_with_span(
+                                    self.tcxt,
+                                    expr.span,
+                                    &format!(
+                                        "[E0i] no type infered for argument `{}`",
+                                        param.ident
+                                    ),
+                                ));
+                                self.tcxt.errors.poisoned(true);
+                            }
+                        }
+
+                        let last = infered_ty_args.len() - 1;
+                        for gen in &func.generics {
+                            let idx =
+                                infered_ty_args.iter().position(|(_, g)| gen.ident == *g).unwrap();
+                            // move idx to the head of the list
+                            infered_ty_args.swap(last, idx);
+                        }
+
+                        for (ty, _) in infered_ty_args {
+                            // SAFETY maybe:
+                            //
+                            // This will only ever be done on one thread at a time and nothing else
+                            // can mutate it, we are the only ones handling `type_args`.
+                            unsafe { type_args.push_shared(ty.into_spanned(DUMMY)) };
+                        }
+                    }
+
                     let ret_val = self.tcxt.patch_generic_from_path(&func.ret, expr.span).val;
                     // If the function is generic do complicated stuff
                     if ret_val.has_generics() {
@@ -367,8 +530,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                 }
                             });
                             for (idx, gen) in idx_gen {
-                                let ty_arg =
-                                    self.tcxt.patch_generic_from_path(&type_args[idx], expr.span);
+                                let ty_arg = self
+                                    .tcxt
+                                    .patch_generic_from_path(&type_args.slice()[idx], expr.span);
                                 subed_ty.subst_generic(gen, &ty_arg.val);
                             }
                         }
@@ -395,8 +559,35 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.expr_ty.insert(expr, imp.method.ret.val.clone());
                 }
             }
-            Expr::FieldAccess { lhs, rhs } => todo!(),
-            Expr::StructInit { path, fields } => todo!(),
+            Expr::FieldAccess { lhs, rhs } => {
+                self.visit_expr(lhs);
+                if let Some(lhs_ty) = self.tcxt.expr_ty.get(&**lhs).cloned() {
+                    // `infer_rhs_field` adds the expressions type to type context
+                    self.infer_rhs_field(&lhs_ty, rhs, expr);
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        expr.span,
+                        &format!("[E0i] no type infered for argument `{}`", lhs.val.as_ident()),
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                }
+            }
+            Expr::StructInit { path, fields } => {
+                let struc = self.tcxt.name_struct.get(&path.segs[0]);
+                if let Some(struc) = struc {
+                    let gen =
+                        struc.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
+                    let ident = struc.ident;
+
+                    // TODO remove??
+                    for field in fields.iter() {
+                        self.visit_expr(&field.init);
+                    }
+
+                    self.tcxt.expr_ty.insert(expr, Ty::Struct { ident, gen });
+                }
+            }
             Expr::EnumInit { path, variant, items } => {
                 let enm = self.tcxt.name_enum.get(&path.segs[0]);
 
@@ -404,9 +595,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     let gen =
                         enm.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
                     let ident = enm.ident;
+
+                    // TODO remove??
                     for arg in items.iter() {
                         self.visit_expr(arg);
                     }
+
                     self.tcxt.expr_ty.insert(expr, Ty::Enum { ident, gen });
                 }
             }
@@ -429,6 +623,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
     }
 }
 
+/// Return the concrete type and the matching generic.
 crate fn peel_out_ty(exty: Option<&Ty>, has_gen: &Ty) -> Option<(Ty, Ident)> {
     match (exty?, has_gen) {
         (t, Ty::Generic { ident, .. }) => Some((t.clone(), *ident)),

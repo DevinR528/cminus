@@ -1,0 +1,13 @@
+linked fn read(_: int);
+
+const a: int = 0;
+const b: int = 0;
+const c: int = 0;
+const d: int = 0;
+
+const d: char = 0;
+const e: char = 0;
+
+fn main() {
+    read(a);
+}

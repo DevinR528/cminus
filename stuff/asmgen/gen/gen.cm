@@ -4,12 +4,23 @@ fn out<T>(a: T): T {
     return a;
 }
 
+// TODO: `fn test<A, B>(_: A, _: B) { }` does NOT work because of two `_` param names, fix this
+fn test<A, B>(a: A, b: B) {
+    write::<A>(a);
+    write::<B>(b);
+}
+
 fn main() {
     let x = 10;
-    // let a = out(x); // TODO: make this work using inference
-    let a = out::<int>(x);
-    write::<int>(a);
 
-    let b = out::<string>("stringy");
-    write::<string>(b);
+    let a = out(x);
+    write(a);
+
+    // test(10, 'c'); // TODO this makes monomorphization freak out
+    // it still produces testint0char and teststring0int but they have the same body??
+
+    let b = out("stringy");
+    write(b);
+
+    test("string", x);
 }

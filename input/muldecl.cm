@@ -1,0 +1,17 @@
+linked fn write(_: int);
+
+const a: int = 0;
+const a: char = ' ';
+
+fn X()
+{
+    let a = 0;
+    write(1);
+}
+
+fn main()
+{
+   X();
+
+  exit;
+}

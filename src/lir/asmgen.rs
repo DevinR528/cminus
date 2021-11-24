@@ -8,11 +8,12 @@ use std::{
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::{
-    ast::parse::symbol::Ident,
+    ast::{parse::symbol::Ident, types as ty},
     lir::{
         asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
         lower::{
-            BinOp, Binding, CallExpr, Const, Expr, Func, LValue, MatchArm, Pat, Stmt, Ty, UnOp, Val,
+            BinOp, Binding, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat, Stmt,
+            Struct, Ty, UnOp, Val,
         },
         visit::Visit,
     },
@@ -155,14 +156,17 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::Alloca { amount, reg } => {
                 format!("    sub{:a$},{:b$}", format!("${}", amount), reg, a = FIRST, b = SECOND)
             }
-            Instruction::Math { src, dst, op } => {
+            Instruction::Math { src, dst, op, cmt } => {
                 format!(
-                    "    {}{:a$},{:b$}",
+                    "    {}{:a$},{:b$}{:c$}# {}",
                     op.as_instruction(),
                     src,
                     dst,
+                    "",
+                    cmt,
                     a = FIRST + 1,
-                    b = SECOND
+                    b = SECOND,
+                    c = SHORT
                 )
             }
             Instruction::FloatMath { src, dst, op } => {
@@ -379,6 +383,7 @@ impl<'ctx> CodeGen<'ctx> {
                         src: Location::Const { val: Val::Int(ele_size as isize) },
                         dst: Location::Register(tmpidx),
                         op: BinOp::Mul,
+                        cmt: "array index * ele size",
                     },
                     Instruction::Load {
                         src: arr,
@@ -389,6 +394,7 @@ impl<'ctx> CodeGen<'ctx> {
                         src: Location::Register(tmpidx),
                         dst: Location::Register(array_reg),
                         op: BinOp::Add,
+                        cmt: "array index + idx * ele size",
                     },
                     Instruction::SizedMov {
                         src: if by_value {
@@ -423,8 +429,19 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let mut pushed = false;
-        if self.total_stack % 16 != 0 {
-            self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
+        if self.total_stack % 16 != 0 || self.total_stack == 0 {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const {
+                    val: Val::Int(if (self.total_stack + 8) % 16 != 0 { 16 } else { 8 }),
+                },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Sub,
+                cmt: "sub to align scanf stack",
+            });
+
+            if self.total_stack == 0 {
+                self.total_stack += 16;
+            }
             pushed = true;
         }
 
@@ -446,11 +463,12 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::Call(Location::Label("scanf".to_owned())),
         ]);
 
-        if pushed {
+        if pushed && self.total_stack > 16 {
             self.asm_buf.push(Instruction::Math {
                 src: Location::Const { val: Val::Int(8) },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Add,
+                cmt: "put the stack back",
             });
         }
     }
@@ -463,7 +481,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Ty::Char => ".char_wformat",
                 Ty::Float => ".float_wformat",
                 Ty::Array { ty, .. } => format_str(ty),
-                _ => unreachable!("not valid print strings"),
+                _ => unreachable!("not valid print string"),
             }
         }
 
@@ -471,7 +489,7 @@ impl<'ctx> CodeGen<'ctx> {
         let fmt_str = format_str(&expr_type).to_string();
         let size = expr_type.size();
 
-        let mut val = self.build_value(expr, None, CanClearRegs::No).unwrap();
+        let mut val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
 
         if [
             Location::Register(Register::RSI),
@@ -495,11 +513,25 @@ impl<'ctx> CodeGen<'ctx> {
             val = Location::Register(free);
         }
 
+        let mut pushed = false;
+        if self.total_stack % 16 != 0 || self.total_stack == 0 {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const {
+                    val: Val::Int(if (self.total_stack + 8) % 16 != 0 { 16 } else { 8 }),
+                },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Sub,
+                cmt: "printf stack misaligned",
+            });
+
+            if self.total_stack == 0 {
+                self.total_stack += 16;
+            }
+            pushed = true;
+        }
+
         if matches!(expr_type, Ty::Float) {
             if matches!(val, Location::Const { .. }) {
-                if ((self.total_stack + 8) % 16) != 0 {
-                    self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
-                }
                 self.used_float_regs.insert(FloatRegister::XMM0);
                 let register = self.free_float_reg();
                 self.clear_float_regs_except(None);
@@ -531,28 +563,15 @@ impl<'ctx> CodeGen<'ctx> {
                         dst: Location::Register(Register::RDI),
                         size,
                     },
-                    Instruction::Call(Location::Label("printf".to_owned())),
                     Instruction::Math {
                         src: Location::Const { val: Val::Int(8) },
                         dst: Location::Register(Register::RSP),
                         op: BinOp::Add,
+                        cmt: "fix above push",
                     },
+                    Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
-                if ((self.total_stack + 8) % 16) != 0 {
-                    self.asm_buf.push(Instruction::Math {
-                        src: Location::Const { val: Val::Int(8) },
-                        dst: Location::Register(Register::RSP),
-                        op: BinOp::Add,
-                    });
-                }
             } else if let Location::Register(reg) = &val {
-                if self.total_stack % 16 != 0 {
-                    self.asm_buf.push(Instruction::Push {
-                        loc: ZERO,
-                        size: 8,
-                        comment: "stack isn't 16 byte aligned",
-                    });
-                }
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Push {
                         loc: val.clone(),
@@ -576,21 +595,7 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
-                if (self.total_stack % 16) != 0 {
-                    self.asm_buf.push(Instruction::Math {
-                        src: Location::Const { val: Val::Int(8) },
-                        dst: Location::Register(Register::RSP),
-                        op: BinOp::Add,
-                    });
-                }
             } else {
-                if self.total_stack % 16 != 0 {
-                    self.asm_buf.push(Instruction::Push {
-                        loc: ZERO,
-                        size: 8,
-                        comment: "stack isn't 16 byte aligned catchall",
-                    });
-                }
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Cvt { src: val, dst: Location::FloatReg(FloatRegister::XMM0) },
                     Instruction::Mov {
@@ -605,15 +610,6 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
-                if self.total_stack % 16 != 0 {
-                    self.asm_buf.push(Instruction::Math {
-                        //
-                        // - 8 because we push only once if the stack is misaligned
-                        src: Location::Const { val: Val::Int(8) },
-                        dst: Location::Register(Register::RSP),
-                        op: BinOp::Add,
-                    });
-                }
             }
         } else if matches!(expr_type, Ty::Bool) {
             // FERK! this took me hours to figure out, don't clobber registers
@@ -713,6 +709,15 @@ impl<'ctx> CodeGen<'ctx> {
                 Instruction::Call(Location::Label("printf".to_owned())),
             ]);
         }
+
+        if pushed && self.total_stack > 16 {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const { val: Val::Int(8) },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Add,
+                cmt: "stack was larger than 16bits and misaligned",
+            });
+        }
     }
 
     fn push_stack(&mut self, ty: &Ty) {
@@ -722,6 +727,7 @@ impl<'ctx> CodeGen<'ctx> {
                     src: Location::Const { val: Val::Int((size * ty.size()) as isize) },
                     dst: Location::Register(Register::RSP),
                     op: BinOp::Sub,
+                    cmt: "make stack for array",
                 });
             }
             Ty::Struct { ident: _, gen: _, def } => {
@@ -743,6 +749,7 @@ impl<'ctx> CodeGen<'ctx> {
                     src: Location::Const { val: Val::Int(largest_variant as isize) },
                     dst: Location::Register(Register::RSP),
                     op: BinOp::Sub,
+                    cmt: "stack for enum",
                 });
             }
             Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float | Ty::Char => {
@@ -814,6 +821,50 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
+    fn gen_call_expr(
+        &mut self,
+        path: &ty::Path,
+        args: &'ctx [Expr],
+        type_args: &[Ty],
+        can_clear: CanClearRegs,
+    ) -> Location {
+        for (idx, arg) in args.iter().enumerate() {
+            let val = self.build_value(arg, None, can_clear).unwrap();
+            let ty = arg.type_of();
+            if let Ty::Array { size: _, ty } = ty {
+                self.asm_buf.push(Instruction::Load {
+                    src: val,
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: ty.size(),
+                });
+            } else if let Ty::String = ty {
+                self.asm_buf.push(Instruction::Load {
+                    src: val,
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: ty.size(),
+                });
+            } else {
+                self.asm_buf.push(Instruction::SizedMov {
+                    src: val,
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: arg.type_of().size(),
+                });
+            }
+        }
+
+        let ident = if type_args.is_empty() {
+            path.to_string()
+        } else {
+            format!(
+                "{}{}",
+                path,
+                type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+            )
+        };
+        self.asm_buf.push(Instruction::Call(Location::Label(ident)));
+        Location::Register(Register::RAX)
+    }
+
     fn build_value(
         &mut self,
         expr: &'ctx Expr,
@@ -822,7 +873,10 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Option<Location> {
         self.can_clear = can_clear;
         let val = Some(match expr {
-            Expr::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
+            Expr::Ident { ident, ty: _ } => {
+                // panic!("{} {:?}", ident, self.vars);
+                self.vars.get(ident)?.clone()
+            }
             Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
             Expr::AddrOf(_) => todo!(),
             Expr::Array { ident, exprs, ty } => {
@@ -939,6 +993,7 @@ impl<'ctx> CodeGen<'ctx> {
                             src: Location::Const { val: Val::Int(8) },
                             dst: Location::Register(Register::RSP),
                             op: BinOp::Add,
+                            cmt: "bin op stack align this is probably wrong",
                         });
                     }
 
@@ -1104,77 +1159,61 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
             Expr::Call { path, args, type_args, def: _ } => {
-                for (idx, arg) in args.iter().enumerate() {
-                    let val = self.build_value(arg, None, can_clear).unwrap();
-                    let ty = arg.type_of();
-                    if let Ty::Array { size: _, ty } = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else if let Ty::String = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else {
-                        self.asm_buf.push(Instruction::SizedMov {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: arg.type_of().size(),
-                        });
-                    }
-                }
-
-                let ident = if type_args.is_empty() {
-                    path.to_string()
-                } else {
-                    format!(
-                        "{}{}",
-                        path,
-                        type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                    )
-                };
-                self.asm_buf.push(Instruction::Call(Location::Label(ident)));
-                Location::Register(Register::RAX)
+                self.gen_call_expr(path, args, type_args, can_clear)
             }
             Expr::TraitMeth { trait_, args, type_args, def: _ } => {
-                for (idx, arg) in args.iter().enumerate() {
-                    let val = self.build_value(arg, None, can_clear).unwrap();
-                    let ty = arg.type_of();
-                    if let Ty::Array { size: _, ty } = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else if let Ty::String = ty {
-                        self.asm_buf.push(Instruction::Load {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: ty.size(),
-                        });
-                    } else {
-                        self.asm_buf.push(Instruction::SizedMov {
-                            src: val,
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: arg.type_of().size(),
-                        });
+                self.gen_call_expr(trait_, args, type_args, can_clear)
+            }
+            Expr::FieldAccess { lhs, rhs, def } => {
+                let lval = self.vars.get(&lhs.as_ident()).cloned();
+                if let Some(Location::NumberedOffset { offset, reg }) = &lval {
+                    construct_field_offset(self, rhs, *offset, *reg, def)?
+                } else {
+                    panic!("have not resolved field access")
+                }
+            }
+            Expr::StructInit { path: _, fields, .. } => {
+                fn flatten_struct_init(f: &FieldInit) -> Vec<&Expr> {
+                    match &f.init {
+                        Expr::StructInit { path, fields, def } => {
+                            fields.iter().flat_map(flatten_struct_init).collect::<Vec<_>>()
+                        }
+                        Expr::EnumInit { path, variant, items, def } => {
+                            items.iter().collect::<Vec<_>>()
+                        }
+                        Expr::ArrayInit { items, ty } => items.iter().collect::<Vec<_>>(),
+                        _ => vec![&f.init],
                     }
                 }
-                let ident = format!(
-                    "{}{}",
-                    trait_,
-                    type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                );
-                self.asm_buf.push(Instruction::Call(Location::Label(ident)));
-                Location::Register(Register::RAX)
-            }
-            Expr::FieldAccess { .. } => todo!(),
-            Expr::StructInit { .. } => {
-                todo!()
+                let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
+                if let Some(Location::NumberedOffset { offset, reg }) = &lval {
+                    let mut running_offset = *offset;
+                    for expr in fields.iter().flat_map(flatten_struct_init) {
+                        let rval = self.build_value(expr, assigned, can_clear).unwrap();
+
+                        let ele_size = expr.type_of().size();
+
+                        running_offset -= ele_size;
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rval,
+                            // to the left hand side of `here =`
+                            // The start offset - the current item size + the tag bits which are
+                            // first
+                            dst: Location::NumberedOffset { offset: running_offset, reg: *reg },
+                            size: ele_size,
+                        }]);
+                    }
+
+                    if let Some(lval @ Location::NumberedOffset { .. }) = lval {
+                        lval
+                    } else {
+                        Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP }
+                    }
+                } else {
+                    // See enum init below
+                    todo!("{:?} {:?}", expr, assigned)
+                }
             }
             Expr::EnumInit { path: _, variant, items, def } => {
                 let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
@@ -1203,7 +1242,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let (mut running_offset, reg) =
                     if let Some(Location::NumberedOffset { offset, reg }) = lval {
-                        (offset, reg.clone())
+                        (offset, reg)
                     } else {
                         todo!("not sure")
                     };
@@ -1219,7 +1258,7 @@ impl<'ctx> CodeGen<'ctx> {
                         // to the left hand side of `here =`
                         // The start offset - the current item size + the tag bits which are
                         // first
-                        dst: Location::NumberedOffset { offset: running_offset, reg: reg.clone() },
+                        dst: Location::NumberedOffset { offset: running_offset, reg },
                         size: ele_size,
                     }]);
                 }
@@ -1293,239 +1332,189 @@ impl<'ctx> CodeGen<'ctx> {
                 self.alloc_stack(var.ident, &var.ty);
             }
             Stmt::Assign { lval, rval, is_let } => {
-                if let Some(global) = self.globals.get_mut(&lval.as_ident().unwrap()) {
-                    match rval {
-                        Expr::Ident { ident: _, ty: _ } => todo!(),
-                        Expr::StructInit { .. } => todo!(),
-                        Expr::EnumInit { .. } => todo!(),
-                        Expr::ArrayInit { .. } => todo!(),
-                        Expr::Value(val) => match val {
-                            Val::Float(_) => todo!(),
-                            Val::Int(num) => match global {
-                                Global::Int { name: _, content } => {
-                                    *content = *num as i64;
-                                }
-                                _ => todo!(),
-                            },
-                            Val::Bool(boo) => match global {
-                                Global::Int { name: _, content } => {
-                                    *content = *boo as i64;
-                                }
-                                _ => todo!(),
-                            },
-                            Val::Char(c) => match global {
-                                Global::Char { name: _, content } => {
-                                    *content = *c as u8;
-                                }
-                                hmm => todo!("{:?}", hmm),
-                            },
-                            Val::Str(s) => match global {
-                                Global::Text { name: _, content } => {
-                                    *content = s.name().to_string();
-                                }
-                                _ => todo!(),
-                            },
-                        },
-                        _ => {}
-                    }
+                let lloc = if *is_let {
+                    let ident = lval.as_ident().unwrap();
+                    self.alloc_stack(ident, lval.type_of())
                 } else {
-                    let lloc = if *is_let {
-                        let ident = lval.as_ident().unwrap();
-                        self.alloc_stack(ident, lval.type_of())
-                    } else {
-                        self.get_pointer(lval).unwrap()
-                    };
+                    self.get_pointer(lval).unwrap()
+                };
 
-                    let mut rloc =
-                        self.build_value(rval, lval.as_ident(), CanClearRegs::Yes).unwrap();
+                let mut rloc = self.build_value(rval, lval.as_ident(), CanClearRegs::Yes).unwrap();
 
-                    if let Location::Const { .. } = lloc {
-                        unreachable!("ICE: assign to a constant {:?}", lloc);
-                    }
+                if let Location::Const { .. } = lloc {
+                    unreachable!("ICE: assign to a constant {:?}", lloc);
+                }
 
-                    if lloc == rloc {
-                        return;
-                    }
+                if lloc == rloc {
+                    return;
+                }
 
-                    let ty = lval.type_of();
-                    let size = match ty {
-                        Ty::Array { ty, .. } => ty.size(),
-                        t => t.size(),
-                    };
+                let ty = lval.type_of();
+                let size = match ty {
+                    Ty::Array { ty, .. } => ty.size(),
+                    t => t.size(),
+                };
 
-                    if matches!(ty, Ty::Float) {
-                        if rloc.is_float_reg() {
-                            self.clear_float_regs_except(Some(&lloc));
-                            self.asm_buf.extend_from_slice(&[Instruction::FloatMov {
-                                src: rloc,
-                                dst: lloc,
-                            }]);
-                        } else if matches!(rloc, Location::Const { .. }) {
-                            let register = self.free_float_reg();
+                if matches!(ty, Ty::Float) {
+                    if rloc.is_float_reg() {
+                        self.clear_float_regs_except(Some(&lloc));
+                        self.asm_buf
+                            .extend_from_slice(&[Instruction::FloatMov { src: rloc, dst: lloc }]);
+                    } else if matches!(rloc, Location::Const { .. }) {
+                        let register = self.free_float_reg();
 
-                            self.clear_float_regs_except(Some(&lloc));
-
-                            self.asm_buf.extend_from_slice(&[
-                                // From stack pointer
-                                Instruction::Push { loc: rloc, size: 8, comment: "" },
-                                // To xmm? to store as float
-                                Instruction::FloatMov {
-                                    src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                                    dst: Location::FloatReg(register),
-                                },
-                                // Move xmm? value to where it is supposed to be
-                                Instruction::FloatMov {
-                                    src: Location::FloatReg(register),
-                                    dst: lloc,
-                                },
-                                // Ugh stupid printf needs to be 16 bit aligned so we have to do
-                                // our book keeping
-                                Instruction::Math {
-                                    src: Location::Const { val: Val::Int(8) },
-                                    dst: Location::Register(Register::RSP),
-                                    op: BinOp::Sub,
-                                },
-                            ]);
-                        // Promote any non float register to float
-                        // TODO: REMOVE
-                        } else if matches!(
-                            (&lloc, &rloc),
-                            (Location::NumberedOffset { .. }, Location::Register(_))
-                        ) {
-                            let register = self.free_float_reg();
-                            self.clear_float_regs_except(Some(&lloc));
-                            self.asm_buf.extend_from_slice(&[
-                                Instruction::Push {
-                                    loc: rloc,
-                                    size: 8,
-                                    comment: "we are promoting an int to float",
-                                },
-                                Instruction::FloatMov {
-                                    src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                                    dst: Location::FloatReg(register),
-                                },
-                                Instruction::FloatMov {
-                                    src: Location::FloatReg(register),
-                                    dst: lloc,
-                                },
-                                // Ugh stupid printf needs to be 16 bit aligned so we have to do
-                                // our book keeping
-                                Instruction::Math {
-                                    src: Location::Const { val: Val::Int(8) },
-                                    dst: Location::Register(Register::RSP),
-                                    op: BinOp::Sub,
-                                },
-                            ]);
-                        } else {
-                            let register = self.free_float_reg();
-                            self.clear_float_regs_except(Some(&lloc));
-                            self.asm_buf.extend_from_slice(&[
-                                Instruction::FloatMov {
-                                    src: rloc,
-                                    dst: Location::FloatReg(register),
-                                },
-                                Instruction::FloatMov {
-                                    src: Location::FloatReg(register),
-                                    dst: lloc,
-                                },
-                            ]);
-                        }
-                    } else if matches!(ty, Ty::String) {
-                        // assert!(
-                        //     matches!(rloc, Location::NamedOffset(_)),
-                        //     "ICE: right hand term must be string const"
-                        // );
-
-                        self.clear_regs_except(Some(&lloc));
-                        if lloc.is_stack_offset() {
-                            let reg = if let Location::Register(reg) = &rloc {
-                                *reg
-                            } else {
-                                let reg = self.free_reg();
-                                self.asm_buf.push(Instruction::Load {
-                                    src: rloc,
-                                    dst: Location::Register(reg),
-                                    size: 8,
-                                });
-                                reg
-                            };
-                            self.asm_buf.push(Instruction::Mov {
-                                // Move the value on the right hand side of the `= here`
-                                src: Location::Register(reg),
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                comment: "move string addr",
-                            });
-                        } else if matches!(rloc, Location::Register(_)) {
-                            self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                size,
-                            }]);
-                        } else {
-                            self.asm_buf.extend_from_slice(&[Instruction::Load {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                size,
-                            }]);
-                        }
-                    } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
-                        self.clear_regs_except(Some(&lloc));
-
-                        if rloc.is_stack_offset() {
-                            let new = self.free_reg();
-                            self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: Location::Register(new),
-                                size,
-                            }]);
-                            rloc = Location::Register(new);
-                        }
-
-                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
-                            // Move the value on the right hand side of the `= here`
-                            src: rloc,
-                            // to the left hand side of `here =`
-                            dst: Location::NumberedOffset { offset: 0, reg: *reg },
-                            size,
-                        }]);
-                    } else if lloc.is_stack_offset() && rloc.is_stack_offset() {
-                        let register = self.free_reg();
-                        self.clear_regs_except(None);
+                        self.clear_float_regs_except(Some(&lloc));
 
                         self.asm_buf.extend_from_slice(&[
-                            Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: rloc,
-                                // to the left hand side of `here =`
-                                dst: Location::Register(register),
-                                size,
+                            // From stack pointer
+                            Instruction::Push { loc: rloc, size: 8, comment: "" },
+                            // To xmm? to store as float
+                            Instruction::FloatMov {
+                                src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                dst: Location::FloatReg(register),
                             },
-                            Instruction::SizedMov {
-                                // Move the value on the right hand side of the `= here`
-                                src: Location::Register(register),
-                                // to the left hand side of `here =`
-                                dst: lloc,
-                                size,
+                            // Move xmm? value to where it is supposed to be
+                            Instruction::FloatMov { src: Location::FloatReg(register), dst: lloc },
+                            // Ugh stupid printf needs to be 16 bit aligned so we have to do
+                            // our book keeping
+                            Instruction::Math {
+                                src: Location::Const { val: Val::Int(8) },
+                                dst: Location::Register(Register::RSP),
+                                op: BinOp::Add,
+                                cmt: "even out after push",
+                            },
+                        ]);
+                    // Promote any non float register to float
+                    // TODO: REMOVE
+                    } else if matches!(
+                        (&lloc, &rloc),
+                        (Location::NumberedOffset { .. }, Location::Register(_))
+                    ) {
+                        let register = self.free_float_reg();
+                        self.clear_float_regs_except(Some(&lloc));
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::Push {
+                                loc: rloc,
+                                size: 8,
+                                comment: "we are promoting an int to float",
+                            },
+                            Instruction::FloatMov {
+                                src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                dst: Location::FloatReg(register),
+                            },
+                            Instruction::FloatMov { src: Location::FloatReg(register), dst: lloc },
+                            // Ugh stupid printf needs to be 16 bit aligned so we have to do
+                            // our book keeping
+                            Instruction::Math {
+                                src: Location::Const { val: Val::Int(8) },
+                                dst: Location::Register(Register::RSP),
+                                op: BinOp::Add,
+                                cmt: "even out after push",
                             },
                         ]);
                     } else {
-                        self.clear_regs_except(Some(&lloc));
+                        let register = self.free_float_reg();
+                        self.clear_float_regs_except(Some(&lloc));
+                        self.asm_buf.extend_from_slice(&[
+                            Instruction::FloatMov { src: rloc, dst: Location::FloatReg(register) },
+                            Instruction::FloatMov { src: Location::FloatReg(register), dst: lloc },
+                        ]);
+                    }
+                } else if matches!(ty, Ty::String) {
+                    // assert!(
+                    //     matches!(rloc, Location::NamedOffset(_)),
+                    //     "ICE: right hand term must be string const"
+                    // );
 
+                    self.clear_regs_except(Some(&lloc));
+                    if lloc.is_stack_offset() {
+                        let reg = if let Location::Register(reg) = &rloc {
+                            *reg
+                        } else {
+                            let reg = self.free_reg();
+                            self.asm_buf.push(Instruction::Load {
+                                src: rloc,
+                                dst: Location::Register(reg),
+                                size: 8,
+                            });
+                            reg
+                        };
+                        self.asm_buf.push(Instruction::Mov {
+                            // Move the value on the right hand side of the `= here`
+                            src: Location::Register(reg),
+                            // to the left hand side of `here =`
+                            dst: lloc,
+                            comment: "move string addr",
+                        });
+                    } else if matches!(rloc, Location::Register(_)) {
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
                             // Move the value on the right hand side of the `= here`
                             src: rloc,
                             // to the left hand side of `here =`
                             dst: lloc,
-                            size: 8,
+                            size,
+                        }]);
+                    } else {
+                        self.asm_buf.extend_from_slice(&[Instruction::Load {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: lloc,
+                            size,
                         }]);
                     }
+                } else if let (Ty::Array { .. }, Location::Register(reg)) = (ty, &lloc) {
+                    self.clear_regs_except(Some(&lloc));
+
+                    if rloc.is_stack_offset() {
+                        let new = self.free_reg();
+                        self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: Location::Register(new),
+                            size,
+                        }]);
+                        rloc = Location::Register(new);
+                    }
+
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        // Move the value on the right hand side of the `= here`
+                        src: rloc,
+                        // to the left hand side of `here =`
+                        dst: Location::NumberedOffset { offset: 0, reg: *reg },
+                        size,
+                    }]);
+                } else if lloc.is_stack_offset() && rloc.is_stack_offset() {
+                    let register = self.free_reg();
+                    self.clear_regs_except(None);
+
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: rloc,
+                            // to the left hand side of `here =`
+                            dst: Location::Register(register),
+                            size,
+                        },
+                        Instruction::SizedMov {
+                            // Move the value on the right hand side of the `= here`
+                            src: Location::Register(register),
+                            // to the left hand side of `here =`
+                            dst: lloc,
+                            size,
+                        },
+                    ]);
+                } else {
+                    self.clear_regs_except(Some(&lloc));
+
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        // Move the value on the right hand side of the `= here`
+                        src: rloc,
+                        // to the left hand side of `here =`
+                        dst: lloc,
+                        size: 8,
+                    }]);
                 }
             }
             Stmt::Call { expr: CallExpr { path, args, type_args }, def } => {
@@ -1534,35 +1523,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else if "read" == &path.segs[0] {
                     self.call_scanf(&args[0]);
                 } else {
-                    // @copypaste this is the same as `Expr::Call`
-                    for (idx, arg) in args.iter().enumerate() {
-                        let val = self.build_value(arg, None, CanClearRegs::Yes).unwrap();
-                        let ty = arg.type_of();
-                        if let Ty::Array { size: _, ty } = ty {
-                            self.asm_buf.push(Instruction::Load {
-                                src: val,
-                                dst: Location::Register(ARG_REGS[idx]),
-                                size: ty.size(),
-                            });
-                        } else {
-                            self.asm_buf.push(Instruction::SizedMov {
-                                src: val,
-                                dst: Location::Register(ARG_REGS[idx]),
-                                size: arg.type_of().size(),
-                            });
-                        }
-                    }
-
-                    let ident = if type_args.is_empty() {
-                        path.to_string()
-                    } else {
-                        format!(
-                            "{}{}",
-                            path,
-                            type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
-                        )
-                    };
-                    self.asm_buf.push(Instruction::Call(Location::Label(ident)));
+                    self.gen_call_expr(path, args, type_args, CanClearRegs::Yes);
                 }
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
@@ -1711,10 +1672,10 @@ impl<'ctx> CodeGen<'ctx> {
                                 // TODO: don't assume the type is a certain size (8 bytes)
                                 // We add 2 to make up for the tag and we assume the type is 8 bytes
                                 offset: offset - ((idx + 1) * 8),
-                                reg: reg.clone(),
+                                reg: *reg,
                             };
 
-                            self.vars.insert(*ident, ref_loc.clone());
+                            self.vars.insert(*ident, ref_loc);
                         }
                     }
                 }
@@ -1786,6 +1747,8 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                 comment: "",
             },
         ]);
+        // self.current_stack = 8;
+        // self.total_stack = 8;
 
         for (i, arg) in func.params.iter().enumerate() {
             let alloca = self.alloc_arg(i, arg.ident, &arg.ty);
@@ -1797,6 +1760,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         }
 
         self.current_stack = 0;
+        self.total_stack = 0;
         self.clear_regs_except(None);
         self.clear_float_regs_except(None);
 
@@ -1810,5 +1774,61 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         }
 
         self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
+    }
+}
+
+fn construct_field_offset<'a>(
+    gen: &mut CodeGen<'a>,
+    rhs: &'a Expr,
+    offset: usize,
+    reg: Register,
+    def: &Struct,
+) -> Option<Location> {
+    match rhs {
+        Expr::Ident { ident, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    return Some(Location::NumberedOffset { offset: offset - count, reg });
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        Expr::Deref { indir, expr, ty } => {
+            todo!("follow the pointer")
+        }
+        Expr::Array { ident, exprs, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    let arr = Location::NumberedOffset { offset: offset - count, reg };
+                    let ele_size =
+                        if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
+                    return gen.index_arr(arr, exprs, ele_size, true);
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        Expr::FieldAccess { lhs, rhs: inner, def: inner_def } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == lhs.as_ident() {
+                    return construct_field_offset(gen, inner, offset - count, reg, inner_def);
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        Expr::AddrOf(_) => todo!(),
+        Expr::Call { path, args, type_args, def } => todo!(),
+        _ => unreachable!("not a valid struct field accessor"),
     }
 }

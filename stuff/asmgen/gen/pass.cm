@@ -6,8 +6,7 @@ fn pass<T>(a: T) {
 
 fn main() {
     let x = 10;
-    // let a = pass(x); // TODO: make this work using inference
-    pass::<int>(x);
+    pass(x);
 
     pass::<string>("stringy");
 }

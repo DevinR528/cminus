@@ -1,0 +1,32 @@
+linked fn write<T>(_: T);
+linked fn read(_: int);
+
+const a: int = 0;
+const b: int = 0;
+
+fn decls(): int {
+  write(a);
+  if (a > 0) {
+    a = a - 1;
+    return decls();
+  }
+  else {
+    a = 0;
+    return a;
+  }
+}
+
+fn foo(): float {
+  write(a);
+  write(b);
+
+  return 7.3;
+}
+
+fn main() {
+  read(a);
+  write(decls());
+  b = 10;
+  write(foo());
+    exit;
+}

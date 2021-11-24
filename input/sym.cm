@@ -1,0 +1,18 @@
+linked fn write(_: int);
+linked fn read(_: int);
+
+const a: int = 0;
+
+fn decls(a: int) {
+  let x = 0;
+  a = 0;
+}
+
+fn foo(a: int, b: int) {
+  let y = 0;
+    a = y + b;
+}
+
+fn main() {
+   read(a);
+}

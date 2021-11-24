@@ -9,7 +9,7 @@ enum option {
 fn main() {
     let x = enum option::foo('c', 11);
     match x {
-        // TODO: if this is `x` weird stuff happens...
+        // TODO: if `ch` or `num` is bound to a var named `x` weird stuff happens...
         option::foo(ch, num) -> {
             write::<char>(ch);
             write::<int>(num);

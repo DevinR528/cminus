@@ -4,7 +4,11 @@ use std::{
     ops,
 };
 
-use crate::{ast::parse::symbol::Ident, error::Error, typeck::TyCheckRes};
+use crate::{
+    ast::parse::symbol::Ident,
+    error::Error,
+    typeck::{check::fold_ty, rawvec::RawVec, TyCheckRes},
+};
 
 crate trait TypeEquality<T = Self> {
     /// If the two types are considered equal.
@@ -13,8 +17,8 @@ crate trait TypeEquality<T = Self> {
 
 crate trait Spany: Sized {
     /// All enums implement `Spanned` to carry span info.
-    fn into_spanned<R: Into<Range>>(self, range: R) -> Spanned<Self> {
-        Spanned { val: self, span: range.into() }
+    fn into_spanned(self, span: Range) -> Spanned<Self> {
+        Spanned { val: self, span }
     }
 }
 
@@ -166,7 +170,7 @@ pub enum Expr {
     /// An expression wrapped in parantheses (expr).
     Parens(Box<Expression>),
     /// A function call with possible expression arguments `call(expr)`.
-    Call { path: Path, args: Vec<Expression>, type_args: Vec<Type> },
+    Call { path: Path, args: Vec<Expression>, type_args: RawVec<Type> },
     /// A call to a trait method with possible expression arguments `<<T>::trait>(expr)`.
     TraitMeth { trait_: Path, args: Vec<Expression>, type_args: Vec<Type> },
     /// Access the fields of a struct `expr.expr.expr;`.
@@ -212,6 +216,30 @@ impl Expr {
             | Expr::Value(..) => todo!(),
         }
     }
+
+    crate fn type_of(&self) -> Option<Ty> {
+        match self {
+            Expr::Array { ident, exprs } => exprs[0].val.type_of(),
+            Expr::Urnary { op, expr } => expr.val.type_of(),
+            Expr::Binary { op, lhs, rhs } => {
+                let lty = lhs.val.type_of();
+                let rty = rhs.val.type_of();
+                if lty.as_ref().is_ty_eq(&rty.as_ref()) {
+                    lty
+                } else {
+                    None
+                }
+            }
+            Expr::Parens(ex) => ex.val.type_of(),
+            Expr::FieldAccess { lhs, rhs } => rhs.val.type_of(),
+            Expr::ArrayInit { items } => Some(Ty::Array {
+                size: items.len(),
+                ty: box items[0].val.type_of().unwrap().into_spanned(DUMMY),
+            }),
+            Expr::Value(v) => Some(v.val.to_type()),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -224,6 +252,17 @@ impl Path {
     // This will use a `DUMMY` span. DO NOT USE until after type checking.
     crate fn single(seg: Ident) -> Self {
         Self { segs: vec![seg], span: DUMMY }
+    }
+
+    /// Return the file local identifier for this declaration.
+    ///
+    /// ## Panics
+    /// If the `Path` is empty.
+    ///
+    /// If we are in `lib.cm` and have `struct foo` our path is `lib::foo` and the local ident is
+    /// `foo`.
+    crate fn local_ident(&self) -> Ident {
+        self.segs.last().copied().unwrap()
     }
 }
 
@@ -316,7 +355,7 @@ impl Ty {
             Ty::Func { ret, params, .. } => {
                 params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
             }
-            Ty::Path(_) => todo!(),
+            Ty::Path(p) => todo!("{}", p),
             Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
                 vec![]
             }
@@ -430,16 +469,18 @@ impl Ty {
     ) -> Option<Self> {
         let mut new = self.clone();
         for expr in exprs {
-            if let Ty::Array { ty, size } = new {
+            if let Ty::Array { ty, ref size } = &new {
                 if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
-                    if i >= &(size as isize) {
-                        panic!(
-                            "{}",
-                            Error::error_with_span(tcxt, span, "out of bound of static array")
-                        )
+                    if i >= &(*size as isize) {
+                        tcxt.errors.push_error(Error::error_with_span(
+                            tcxt,
+                            span,
+                            "out of bound of static array",
+                        ));
+                        tcxt.errors.poisoned(true);
                     }
                 }
-                new = ty.val;
+                new = ty.val.clone();
             } else {
                 break;
             }
@@ -855,7 +896,8 @@ impl<T: TypeEquality> TypeEquality for Option<&T> {
 
 impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "${:#?}@{:?}", self.val, self.span)
+        // f.debug_struct("Spanned").field("span", &self.span).field("val", &self.val).finish()
+        f.debug_tuple("Spanned").field(&self.val).finish()
     }
 }
 
@@ -863,6 +905,7 @@ impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
 pub struct Range {
     pub start: usize,
     pub end: usize,
+    pub file_id: u64,
 }
 
 impl fmt::Debug for Range {
@@ -871,19 +914,12 @@ impl fmt::Debug for Range {
     }
 }
 
-impl From<ops::Range<usize>> for Range {
-    fn from(other: ops::Range<usize>) -> Self {
-        let (start, end) = (other.start, other.end);
-        Self { start, end }
-    }
-}
-
-crate const fn to_rng(other: ops::Range<usize>) -> Range {
+crate const fn to_rng(other: ops::Range<usize>, file_id: u64) -> Range {
     let (start, end) = (other.start, other.end);
-    Range { start, end }
+    Range { start, end, file_id }
 }
 
-pub const DUMMY: Range = to_rng(0..0);
+pub const DUMMY: Range = to_rng(0..0, 0);
 
 pub type Declaration = Spanned<Decl>;
 pub type Statement = Spanned<Stmt>;

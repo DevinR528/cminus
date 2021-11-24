@@ -1,0 +1,9 @@
+linked fn write(_: int);
+
+fn main () {
+    write(10-20);
+    let i=77;  let k=3; let l=4;
+    let j = i - k - l;
+    write(j);
+    exit;
+}

@@ -10,7 +10,11 @@
     path_file_prefix,
     io_error_more,
     const_fn_trait_bound,
-    hash_drain_filter
+    hash_drain_filter,
+    ptr_internals,
+    vec_into_raw_parts,
+    allocator_api,
+    result_flattening
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -74,7 +78,7 @@ fn process_file<'a>(
         println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
         println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
         if verbose {
-            println!("{:?}", items);
+            println!("items: {:?}", items);
         }
     }
 
@@ -82,7 +86,7 @@ fn process_file<'a>(
     let tyck_time = Instant::now();
     let mut tyck = typeck::TyCheckRes::new(&input, path, rcv);
     tyck.visit_prog(&items);
-    let _res = tyck.report_errors()?;
+    let _res = tyck.report_errors().map_err(|e| e.to_string())?;
 
     if need_stats {
         println!("    type checking:     {}s", tyck_time.elapsed().as_secs_f64());
@@ -218,8 +222,13 @@ fn main() {
         match process_file(f, &matches) {
             Ok(_) => {}
             Err(e) => {
-                errors += 1;
-                eprintln!("{}", e);
+                // TODO: this isn't great... find a better way to pass this along
+                errors = if let Ok(e_count) = e.to_string().parse() {
+                    e_count
+                } else {
+                    eprintln!("{}", e);
+                    1
+                };
             }
         }
     }
