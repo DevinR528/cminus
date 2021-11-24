@@ -1,9 +1,11 @@
 linked fn write(_: float);
 
 fn main () {
-    write(10.3-20.2);
+    let x = 10.3; // when I const fold this I get a number that is too big for pushq which is odd to me
+    write(x-20.2);
     let i = 77.3;  let k = 3.2; let l = 4.1;
     let j = i - k - l;
     write(j);
+    write(b);
     exit;
 }

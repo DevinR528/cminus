@@ -156,14 +156,17 @@ impl<'ctx> CodeGen<'ctx> {
             Instruction::Alloca { amount, reg } => {
                 format!("    sub{:a$},{:b$}", format!("${}", amount), reg, a = FIRST, b = SECOND)
             }
-            Instruction::Math { src, dst, op } => {
+            Instruction::Math { src, dst, op, cmt } => {
                 format!(
-                    "    {}{:a$},{:b$}",
+                    "    {}{:a$},{:b$}{:c$}# {}",
                     op.as_instruction(),
                     src,
                     dst,
+                    "",
+                    cmt,
                     a = FIRST + 1,
-                    b = SECOND
+                    b = SECOND,
+                    c = SHORT
                 )
             }
             Instruction::FloatMath { src, dst, op } => {
@@ -380,6 +383,7 @@ impl<'ctx> CodeGen<'ctx> {
                         src: Location::Const { val: Val::Int(ele_size as isize) },
                         dst: Location::Register(tmpidx),
                         op: BinOp::Mul,
+                        cmt: "array index * ele size",
                     },
                     Instruction::Load {
                         src: arr,
@@ -390,6 +394,7 @@ impl<'ctx> CodeGen<'ctx> {
                         src: Location::Register(tmpidx),
                         dst: Location::Register(array_reg),
                         op: BinOp::Add,
+                        cmt: "array index + idx * ele size",
                     },
                     Instruction::SizedMov {
                         src: if by_value {
@@ -431,6 +436,7 @@ impl<'ctx> CodeGen<'ctx> {
                 },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Sub,
+                cmt: "sub to align scanf stack",
             });
 
             if self.total_stack == 0 {
@@ -462,6 +468,7 @@ impl<'ctx> CodeGen<'ctx> {
                 src: Location::Const { val: Val::Int(8) },
                 dst: Location::Register(Register::RSP),
                 op: BinOp::Add,
+                cmt: "put the stack back",
             });
         }
     }
@@ -506,11 +513,25 @@ impl<'ctx> CodeGen<'ctx> {
             val = Location::Register(free);
         }
 
+        let mut pushed = false;
+        if self.total_stack % 16 != 0 || self.total_stack == 0 {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const {
+                    val: Val::Int(if (self.total_stack + 8) % 16 != 0 { 16 } else { 8 }),
+                },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Sub,
+                cmt: "printf stack misaligned",
+            });
+
+            if self.total_stack == 0 {
+                self.total_stack += 16;
+            }
+            pushed = true;
+        }
+
         if matches!(expr_type, Ty::Float) {
             if matches!(val, Location::Const { .. }) {
-                if ((self.total_stack + 8) % 16) != 0 {
-                    self.asm_buf.push(Instruction::Push { loc: ZERO, size: 8, comment: "" });
-                }
                 self.used_float_regs.insert(FloatRegister::XMM0);
                 let register = self.free_float_reg();
                 self.clear_float_regs_except(None);
@@ -542,28 +563,15 @@ impl<'ctx> CodeGen<'ctx> {
                         dst: Location::Register(Register::RDI),
                         size,
                     },
-                    Instruction::Call(Location::Label("printf".to_owned())),
                     Instruction::Math {
                         src: Location::Const { val: Val::Int(8) },
                         dst: Location::Register(Register::RSP),
                         op: BinOp::Add,
+                        cmt: "fix above push",
                     },
+                    Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
-                if ((self.total_stack + 8) % 16) != 0 {
-                    self.asm_buf.push(Instruction::Math {
-                        src: Location::Const { val: Val::Int(8) },
-                        dst: Location::Register(Register::RSP),
-                        op: BinOp::Add,
-                    });
-                }
             } else if let Location::Register(reg) = &val {
-                if self.total_stack % 16 != 0 {
-                    self.asm_buf.push(Instruction::Push {
-                        loc: ZERO,
-                        size: 8,
-                        comment: "stack isn't 16 byte aligned",
-                    });
-                }
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Push {
                         loc: val.clone(),
@@ -587,21 +595,7 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
-                if (self.total_stack % 16) != 0 {
-                    self.asm_buf.push(Instruction::Math {
-                        src: Location::Const { val: Val::Int(8) },
-                        dst: Location::Register(Register::RSP),
-                        op: BinOp::Add,
-                    });
-                }
             } else {
-                if self.total_stack % 16 != 0 {
-                    self.asm_buf.push(Instruction::Push {
-                        loc: ZERO,
-                        size: 8,
-                        comment: "stack isn't 16 byte aligned catchall",
-                    });
-                }
                 self.asm_buf.extend_from_slice(&[
                     Instruction::Cvt { src: val, dst: Location::FloatReg(FloatRegister::XMM0) },
                     Instruction::Mov {
@@ -616,15 +610,6 @@ impl<'ctx> CodeGen<'ctx> {
                     },
                     Instruction::Call(Location::Label("printf".to_owned())),
                 ]);
-                if self.total_stack % 16 != 0 {
-                    self.asm_buf.push(Instruction::Math {
-                        //
-                        // - 8 because we push only once if the stack is misaligned
-                        src: Location::Const { val: Val::Int(8) },
-                        dst: Location::Register(Register::RSP),
-                        op: BinOp::Add,
-                    });
-                }
             }
         } else if matches!(expr_type, Ty::Bool) {
             // FERK! this took me hours to figure out, don't clobber registers
@@ -724,6 +709,15 @@ impl<'ctx> CodeGen<'ctx> {
                 Instruction::Call(Location::Label("printf".to_owned())),
             ]);
         }
+
+        if pushed && self.total_stack > 16 {
+            self.asm_buf.push(Instruction::Math {
+                src: Location::Const { val: Val::Int(8) },
+                dst: Location::Register(Register::RSP),
+                op: BinOp::Add,
+                cmt: "stack was larger than 16bits and misaligned",
+            });
+        }
     }
 
     fn push_stack(&mut self, ty: &Ty) {
@@ -733,6 +727,7 @@ impl<'ctx> CodeGen<'ctx> {
                     src: Location::Const { val: Val::Int((size * ty.size()) as isize) },
                     dst: Location::Register(Register::RSP),
                     op: BinOp::Sub,
+                    cmt: "make stack for array",
                 });
             }
             Ty::Struct { ident: _, gen: _, def } => {
@@ -754,6 +749,7 @@ impl<'ctx> CodeGen<'ctx> {
                     src: Location::Const { val: Val::Int(largest_variant as isize) },
                     dst: Location::Register(Register::RSP),
                     op: BinOp::Sub,
+                    cmt: "stack for enum",
                 });
             }
             Ty::String | Ty::Ptr(_) | Ty::Int | Ty::Float | Ty::Char => {
@@ -997,6 +993,7 @@ impl<'ctx> CodeGen<'ctx> {
                             src: Location::Const { val: Val::Int(8) },
                             dst: Location::Register(Register::RSP),
                             op: BinOp::Add,
+                            cmt: "bin op stack align this is probably wrong",
                         });
                     }
 
@@ -1383,7 +1380,8 @@ impl<'ctx> CodeGen<'ctx> {
                             Instruction::Math {
                                 src: Location::Const { val: Val::Int(8) },
                                 dst: Location::Register(Register::RSP),
-                                op: BinOp::Sub,
+                                op: BinOp::Add,
+                                cmt: "even out after push",
                             },
                         ]);
                     // Promote any non float register to float
@@ -1410,7 +1408,8 @@ impl<'ctx> CodeGen<'ctx> {
                             Instruction::Math {
                                 src: Location::Const { val: Val::Int(8) },
                                 dst: Location::Register(Register::RSP),
-                                op: BinOp::Sub,
+                                op: BinOp::Add,
+                                cmt: "even out after push",
                             },
                         ]);
                     } else {
@@ -1748,6 +1747,8 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                 comment: "",
             },
         ]);
+        // self.current_stack = 8;
+        // self.total_stack = 8;
 
         for (i, arg) in func.params.iter().enumerate() {
             let alloca = self.alloc_arg(i, arg.ident, &arg.ty);

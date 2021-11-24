@@ -86,7 +86,7 @@ fn process_file<'a>(
     let tyck_time = Instant::now();
     let mut tyck = typeck::TyCheckRes::new(&input, path, rcv);
     tyck.visit_prog(&items);
-    let _res = tyck.report_errors()?;
+    let _res = tyck.report_errors().map_err(|e| e.to_string())?;
 
     if need_stats {
         println!("    type checking:     {}s", tyck_time.elapsed().as_secs_f64());
@@ -222,8 +222,13 @@ fn main() {
         match process_file(f, &matches) {
             Ok(_) => {}
             Err(e) => {
-                errors += 1;
-                eprintln!("{}", e);
+                // TODO: this isn't great... find a better way to pass this along
+                errors = if let Ok(e_count) = e.to_string().parse() {
+                    e_count
+                } else {
+                    eprintln!("{}", e);
+                    1
+                };
             }
         }
     }

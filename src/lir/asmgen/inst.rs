@@ -344,6 +344,7 @@ pub enum Instruction {
         dst: Location,
         /// The binary operation to apply, except division.
         op: BinOp,
+        cmt: &'static str,
     },
     /// Add source to destination.
     FloatMath {
@@ -374,7 +375,7 @@ impl Instruction {
     /// The `rhs` is where the value will end up for most operations.
     crate fn from_binop(lhs: Location, rhs: Location, op: &BinOp) -> Vec<Self> {
         assert!(!op.is_cmp());
-        vec![Instruction::Math { src: lhs, dst: rhs, op: op.clone() }]
+        vec![Instruction::Math { src: lhs, dst: rhs, op: op.clone(), cmt: "from binary op" }]
     }
 
     /// The `rhs` is where the value will end up for most operations.

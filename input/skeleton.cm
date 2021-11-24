@@ -1,10 +1,11 @@
-/* Pseudo-code for the swap routine*/ 
+/* Pseudo-code for the swap routine*/
 linked fn write(_: int);
 linked fn read(_: int);
 
-const x: int = 0;
+// const x: int = 0;
 
 fn main() {
+    let x = 0;
   read(x);
   write(x);
 }
