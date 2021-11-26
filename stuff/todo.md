@@ -28,3 +28,9 @@
 # The Whole Point
 
   - Add enum inheritance and variants as types to simulate subtyping
+
+
+## things I need to remember
+
+  - get & addrof working
+  - make sure there are no name_resolve or patch_path calls but pre type checking
