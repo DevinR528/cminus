@@ -24,13 +24,12 @@ use crate::{
         generic::TyRegion,
         infer::TypeInfer,
     },
-    visit::Visit,
+    visit::{Visit, VisitMut},
 };
 
 crate mod check;
 crate mod generic;
 crate mod infer;
-crate mod rawvec;
 crate mod scope;
 crate mod trait_solver;
 
@@ -209,25 +208,47 @@ impl<'input> TyCheckRes<'_, 'input> {
             .cloned()
     }
 
-    crate fn patch_generic_from_path(&self, ty: &Type, span: Range) -> Type {
-        // Hack: until import/name resolution is a thing
-        //
+    crate fn patch_generic_from_path(&self, ty: &Type, gens_in_scope: &[Generic]) -> Option<Type> {
         // Then have another struct that walks all types and can check if there
         // is a matching generic in the scope and convert Path(T) -> Generic {T}
-        if let Ty::Path(p) = &ty.val {
-            if let Some(gens_in_scope) = self
-                .var_func
-                .get_fn_by_span(span)
-                .and_then(|name| self.var_func.name_func.get(&name))
-                .map(|f| &f.generics)
-            {
+        Some(match &ty.val {
+            Ty::Array { size, ty: arrty } => Ty::Array {
+                size: *size,
+                ty: box self.patch_generic_from_path(arrty, gens_in_scope)?,
+            }
+            .into_spanned(ty.span),
+            Ty::Struct { ident, gen } => Ty::Struct {
+                ident: *ident,
+                gen: gen
+                    .iter()
+                    .map(|g| self.patch_generic_from_path(g, gens_in_scope))
+                    .collect::<Option<Vec<_>>>()?,
+            }
+            .into_spanned(ty.span),
+            Ty::Enum { ident, gen } => Ty::Enum {
+                ident: *ident,
+                gen: gen
+                    .iter()
+                    .map(|g| self.patch_generic_from_path(g, gens_in_scope))
+                    .collect::<Option<Vec<_>>>()?,
+            }
+            .into_spanned(ty.span),
+            Ty::Path(p) => {
                 if let Some(gen) = gens_in_scope.iter().find(|gty| gty.ident == p.segs[0]) {
-                    return Ty::Generic { ident: gen.ident, bound: gen.bound.clone() }
-                        .into_spanned(ty.span);
+                    Ty::Generic { ident: gen.ident, bound: gen.bound.clone() }.into_spanned(ty.span)
+                } else {
+                    return None;
                 }
             }
-        }
-        ty.clone()
+            Ty::Ptr(inner) => Ty::Ptr(box self.patch_generic_from_path(&**inner, gens_in_scope)?)
+                .into_spanned(ty.span),
+            Ty::Ref(inner) => Ty::Ref(box self.patch_generic_from_path(&**inner, gens_in_scope)?)
+                .into_spanned(ty.span),
+            Ty::Func { ident, ret, params } => todo!(),
+            _ => {
+                return None;
+            }
+        })
     }
 }
 
@@ -330,14 +351,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
             crate::visit::walk_func(self, func);
 
-            if !matches!(func.ret.val, Ty::Void) && !self.var_func.func_return.contains(&func.ident)
+            if !matches!(func.ret.get().val, Ty::Void)
+                && !self.var_func.func_return.contains(&func.ident)
             {
                 self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
                     &format!(
                         "function `{}` has return type `{}` but no return statement",
-                        func.ident, func.ret.val
+                        func.ident,
+                        func.ret.get().val
                     ),
                 ));
             }
@@ -383,18 +406,35 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         }
     }
 
-    fn visit_trait(&mut self, t: &'ast Trait) {
-        if self.trait_solve.add_trait(t).is_some() {
+    fn visit_trait(&mut self, tr: &'ast Trait) {
+        if self.trait_solve.add_trait(tr).is_some() {
             self.errors.push_error(Error::error_with_span(
                 self,
-                t.span,
-                &format!("duplicate trait `{}` found", t.path),
+                tr.span,
+                &format!("duplicate trait `{}` found", tr.path),
             ));
         } else {
             self.name_res.add_decl(
-                t.span.file_id,
-                Scope::Trait { file: t.span.file_id, trait_: *t.path.segs.last().unwrap() },
+                tr.span.file_id,
+                Scope::Trait { file: tr.span.file_id, trait_: *tr.path.segs.last().unwrap() },
             );
+
+            // If there are generics anytime they are referenced it's a `Ty::Path` so we
+            // need to convert them to `Ty::Generic {..}` if they match i.e.
+            // `Ty::Path(T) == Ty::Genereic {T, bound}`
+            if !tr.generics.is_empty() {
+                for ty in tr.method.function().params.iter().map(|p| &p.ty) {
+                    let patched = self.patch_generic_from_path(ty.get(), &tr.generics);
+                    if let Some(t) = patched {
+                        ty.set(t);
+                    }
+                }
+                let patched =
+                    self.patch_generic_from_path(tr.method.function().ret.get(), &tr.generics);
+                if let Some(t) = patched {
+                    tr.method.function().ret.set(t);
+                }
+            }
         }
     }
 
@@ -415,6 +455,22 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
     fn visit_func(&mut self, func: &'ast Func) {
         if self.curr_fn.is_none() {
+            // If there are generics anytime they are referenced it's a `Ty::Path` so we
+            // need to convert them to `Ty::Generic {..}` if they match i.e.
+            // `Ty::Path(T) == Ty::Genereic {T, bound}`
+            if !func.generics.is_empty() {
+                for ty in func.params.iter().map(|p| &p.ty) {
+                    let patched = self.patch_generic_from_path(ty.get(), &func.generics);
+                    if let Some(t) = patched {
+                        ty.set(t);
+                    }
+                }
+                let patched = self.patch_generic_from_path(func.ret.get(), &func.generics);
+                if let Some(t) = patched {
+                    func.ret.set(t);
+                }
+            }
+
             self.name_res.add_decl(
                 func.span.file_id,
                 Scope::Func { file: func.span.file_id, func: func.ident },
@@ -430,7 +486,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 ));
             }
 
-            if func.generics.is_empty() && func.ret.val.has_generics() {
+            if func.generics.is_empty() && func.ret.get().val.has_generics() {
                 self.errors.push_error(Error::error_with_span(
                     self,
                     func.span,
@@ -443,7 +499,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     &Node::Func(func.ident),
                     &Ty::Func {
                         ident: func.ident,
-                        ret: box func.ret.val.clone(),
+                        ret: box func.ret.get().val.clone(),
                         params: func
                             .generics
                             .iter()
@@ -456,8 +512,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             // Now we can check the return value incase it was generic we did that ^^
             //
             // We take from the `generics` to get bound info
-            let ty = &func.ret;
-            if func.ret.val.has_generics() {
+            let ty = &func.ret.get();
+            if ty.val.has_generics() {
                 self.generic_res.collect_generic_usage(
                     &ty.val,
                     self.unique_id(),
@@ -471,10 +527,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         func.span,
-                        &format!(
-                            "found return `{}` which is not a declared generic type",
-                            func.ret.val
-                        ),
+                        &format!("found return `{}` which is not a declared generic type", ty.val),
                     ));
                 }
             };
@@ -500,12 +553,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_adt(&mut self, adt: &'ast Adt) {
         match adt {
             Adt::Struct(struc) => {
-                for field in &struc.fields {
-                    self.name_res.add_item(
-                        struc.span.file_id,
-                        Scope::Struct { file: struc.span.file_id, adt: struc.ident },
-                        ItemIn::Field(field.ident),
-                    );
+                if !struc.generics.is_empty() {
+                    for ty in struc.fields.iter().map(|f| &f.ty) {
+                        let patched = self.patch_generic_from_path(ty.get(), &struc.generics);
+                        if let Some(t) = patched {
+                            ty.set(t);
+                        }
+                    }
                 }
 
                 if self.name_struct.insert(struc.ident, struc).is_some() {
@@ -514,6 +568,15 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         struc.span,
                         "duplicate struct names",
                     ));
+                }
+
+                // Add to namespace/scope
+                for field in &struc.fields {
+                    self.name_res.add_item(
+                        struc.span.file_id,
+                        Scope::Struct { file: struc.span.file_id, adt: struc.ident },
+                        ItemIn::Field(field.ident),
+                    );
                 }
 
                 if !struc.generics.is_empty() {
@@ -531,12 +594,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Adt::Enum(en) => {
-                for variant in &en.variants {
-                    self.name_res.add_item(
-                        en.span.file_id,
-                        Scope::Enum { file: en.span.file_id, adt: en.ident },
-                        ItemIn::Variant(variant.ident),
-                    );
+                if !en.generics.is_empty() {
+                    for ty in en.variants.iter().flat_map(|v| unsafe { v.types.iter_mut_shared() })
+                    {
+                        let patched = self.patch_generic_from_path(ty, &en.generics);
+                        if let Some(t) = patched {
+                            *ty = t;
+                        }
+                    }
                 }
 
                 if self.name_enum.insert(en.ident, en).is_some() {
@@ -545,6 +610,15 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         en.span,
                         "duplicate struct names",
                     ));
+                }
+
+                // Add to namespace/scope
+                for variant in &en.variants {
+                    self.name_res.add_item(
+                        en.span.file_id,
+                        Scope::Enum { file: en.span.file_id, adt: en.ident },
+                        ItemIn::Variant(variant.ident),
+                    );
                 }
 
                 if !en.generics.is_empty() {
@@ -637,8 +711,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     ItemIn::Var(*ident),
                 );
 
-                let ty =
-                    self.name_res.resolve_name(&ty.val, self).unwrap_or_else(|| ty.val.clone());
+                let ty = self
+                    .name_res
+                    .resolve_name(&ty.get().val, self)
+                    .unwrap_or_else(|| ty.get().val.clone());
 
                 // TODO: Do this for returns and any place we match for Ty::Generic {..}
                 if ty.has_generics() {
@@ -815,8 +891,36 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.visit_expr(inner_expr);
 
                 // TODO: if inner_expr isn't found likely that var isn't declared if ident
-                let ty = self.expr_ty.get(&**inner_expr).expect("type for address of").clone();
-                self.expr_ty.insert(expr, Ty::Ptr(box ty.into_spanned(DUMMY)));
+                let t = if let Some(ty) = self.expr_ty.get(&**inner_expr) {
+                    if matches!(
+                        inner_expr.val,
+                        Expr::Ident(..)
+                            | Expr::Array { .. }
+                            | Expr::AddrOf(..)
+                            | Expr::FieldAccess { .. }
+                    ) {
+                        Some(ty.clone())
+                    } else {
+                        self.errors.push_error(Error::error_with_span(
+                            self,
+                            inner_expr.span,
+                            "cannot take the address of an rvalue",
+                        ));
+                        self.errors.poisoned(true);
+                        None
+                    }
+                } else {
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        expr.span,
+                        &format!("identifier `{}` not found", inner_expr.val.as_ident()),
+                    ));
+                    self.errors.poisoned(true);
+                    None
+                };
+                if let Some(ty) = t {
+                    self.expr_ty.insert(expr, Ty::Ptr(box ty.into_spanned(DUMMY)));
+                }
             }
             Expr::Binary { op, lhs, rhs } => {
                 self.visit_expr(lhs);
@@ -897,8 +1001,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 };
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
-                    // TODO: name resolution
-                    let ty_arg = self.patch_generic_from_path(ty_arg, expr.span).val;
                     // Don't use the same stack for each iteration
                     let mut stack = stack.clone();
 
@@ -906,13 +1008,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // Find the param that is the "generic" and check against type argument
                     let mut arguments = vec![];
                     for (i, p) in func.params.iter().enumerate() {
-                        if gen.is_ty_eq(&p.ty.val) {
+                        if gen.is_ty_eq(&p.ty.get().val) {
                             arguments.push(TyRegion::Expr(&args[i].val));
                         }
                     }
 
                     self.generic_res.collect_generic_usage(
-                        &ty_arg,
+                        &ty_arg.val,
                         gen_arg_set_id,
                         gen_arg_idx,
                         &arguments,
@@ -921,7 +1023,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                     // println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
 
-                    gen_arg_map.insert(gen.ident, ty_arg.clone());
+                    gen_arg_map.insert(gen.ident, ty_arg.val.clone());
                 }
 
                 let func_params = self
@@ -941,27 +1043,64 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
 
                 for (idx, arg) in args.iter().enumerate() {
-                    let mut param_ty = func_params.get(idx).map(|p| p.ty.val.clone());
+                    let mut param_ty = func_params.get(idx).map(|p| p.ty.get().val.clone());
                     let mut arg_ty = self.expr_ty.get(arg).cloned();
 
-                    match &param_ty {
-                        Some(Ty::Generic { ident, .. }) => {
-                            if let Some(ty_arg) = gen_arg_map.get(ident).cloned() {
-                                param_ty = Some(ty_arg);
+                    fn replace_with_concret_ty(
+                        tcxt: &TyCheckRes<'_, '_>,
+                        param_ty: Option<&Ty>,
+                        gen_arg_map: &HashMap<Ident, Ty>,
+                    ) -> Option<Ty> {
+                        Some(match param_ty? {
+                            Ty::Generic { ident, .. } => gen_arg_map.get(ident)?.clone(),
+                            t @ Ty::Path(..) => tcxt.name_res.resolve_name(t, tcxt)?,
+                            Ty::Array { size, ty: arrty } => Ty::Array {
+                                size: *size,
+                                ty: box replace_with_concret_ty(
+                                    tcxt,
+                                    Some(&arrty.val),
+                                    gen_arg_map,
+                                )?
+                                .into_spanned(DUMMY),
+                            },
+                            Ty::Struct { ident, gen } => Ty::Struct {
+                                ident: *ident,
+                                gen: gen
+                                    .iter()
+                                    .map(|g| {
+                                        replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
+                                            .map(|t| t.into_spanned(DUMMY))
+                                    })
+                                    .collect::<Option<Vec<_>>>()?,
+                            },
+                            Ty::Enum { ident, gen } => Ty::Enum {
+                                ident: *ident,
+                                gen: gen
+                                    .iter()
+                                    .map(|g| {
+                                        replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
+                                            .map(|t| t.into_spanned(DUMMY))
+                                    })
+                                    .collect::<Option<Vec<_>>>()?,
+                            },
+                            Ty::Ptr(inner) => Ty::Ptr(
+                                box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
+                                    .into_spanned(DUMMY),
+                            ),
+                            Ty::Ref(inner) => Ty::Ref(
+                                box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
+                                    .into_spanned(DUMMY),
+                            ),
+                            _ => {
+                                return None;
                             }
-                        }
-                        Some(t @ Ty::Path(..)) => {
-                            if let Some(ty_arg) = self.name_res.resolve_name(t, self) {
-                                param_ty = Some(ty_arg);
-                            }
-                        }
-                        _ => {}
+                        })
                     }
 
-                    if let Some(Ty::Generic { ident, .. }) = &param_ty {
-                        if let Some(ty_arg) = gen_arg_map.get(ident).cloned() {
-                            param_ty = Some(ty_arg);
-                        }
+                    if let Some(ty_arg) =
+                        replace_with_concret_ty(self, param_ty.as_ref(), &gen_arg_map)
+                    {
+                        param_ty = Some(ty_arg);
                     }
 
                     // TODO: remove
@@ -1015,8 +1154,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let gen_arg_set_id = self.unique_id();
                 let mut gen_arg_map = HashMap::default();
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
-                    let ty_arg = self.patch_generic_from_path(ty_arg, expr.span);
-
                     let gen = &trait_def.generics[gen_arg_idx];
 
                     let arguments = trait_def
@@ -1025,7 +1162,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .params
                         .iter()
                         .enumerate()
-                        .filter(|(_i, p)| gen.is_ty_eq(&p.ty.val))
+                        .filter(|(_i, p)| gen.is_ty_eq(&p.ty.get().val))
                         .map(|(i, _)| TyRegion::Expr(&args[i].val))
                         .collect::<Vec<_>>();
 
@@ -1043,7 +1180,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let mut has_generic = false;
                 let func_params = &trait_def.method.function().params;
                 for (idx, arg) in args.iter().enumerate() {
-                    let mut param_ty = func_params.get(idx).map(|p| p.ty.val.clone());
+                    let mut param_ty = func_params.get(idx).map(|p| p.ty.get().val.clone());
                     let arg_ty = self.expr_ty.get(arg).cloned();
 
                     if let Some(Ty::Generic { ident, .. }) = &param_ty {
@@ -1101,7 +1238,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         .iter()
                         .find_map(|f| {
                             if f.ident == *ident {
-                                self.name_res.resolve_name(&f.ty.val, self)
+                                self.name_res.resolve_name(&f.ty.get().val, self)
                             } else {
                                 None
                             }
@@ -1192,7 +1329,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     };
 
                 let mut gen_args = HashMap::default();
-                for (_idx, (item, variant_ty)) in items.iter().zip(&found_variant.types).enumerate()
+                for (_idx, (item, variant_ty)) in
+                    items.iter().zip(found_variant.types.slice()).enumerate()
                 {
                     // Visit inner expressions
                     self.visit_expr(item);
@@ -1377,7 +1515,7 @@ crate fn check_field_access<'ast>(
             let rty = struc
                 .fields
                 .iter()
-                .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
+                .find_map(|f| if f.ident == *ident { Some(f.ty.get().val.clone()) } else { None })
                 .unwrap_or_else(|| panic!("no field `{}` found for struct `{}`", ident, name));
             tcxt.expr_ty.insert(rhs, rty.clone());
             Some(rty)
@@ -1390,7 +1528,7 @@ crate fn check_field_access<'ast>(
             let rty = struc
                 .fields
                 .iter()
-                .find_map(|f| if f.ident == *ident { Some(f.ty.val.clone()) } else { None })
+                .find_map(|f| if f.ident == *ident { Some(f.ty.get().val.clone()) } else { None })
                 .unwrap_or_else(|| panic!("no field `{}` found for struct `{}`", ident, name));
 
             tcxt.expr_ty.insert(rhs, rty.clone());
