@@ -14,7 +14,9 @@
     ptr_internals,
     vec_into_raw_parts,
     allocator_api,
-    result_flattening
+    result_flattening,
+    slice_ptr_get,
+    slice_ptr_len
 )]
 // TODO: remove
 // tell rust not to complain about unused anything
@@ -32,6 +34,7 @@ use clap::{App, Arg, ArgMatches};
 
 mod alloc;
 mod ast;
+mod data_struc;
 mod error;
 mod lir;
 mod typeck;
