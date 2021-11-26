@@ -17,7 +17,7 @@ macro_rules! rawptr {
 }
 
 pub struct RawPtr<T> {
-    pub(crate) ptr: UnsafeCell<T>,
+    ptr: UnsafeCell<T>,
     is_used: AtomicBool,
 }
 

@@ -3,6 +3,7 @@ use std::{
     cell::Cell,
     fmt,
     mem::{self, ManuallyDrop},
+    ops,
     ptr::{self, NonNull},
     slice::{self, Iter, IterMut},
     vec::IntoIter,
@@ -20,9 +21,9 @@ macro_rules! raw_vec {
 }
 
 pub struct RawVec<T> {
-    pub(crate) ptr: Cell<NonNull<T>>,
-    pub(crate) cap: Cell<usize>,
-    pub(crate) len: Cell<usize>,
+    ptr: Cell<NonNull<T>>,
+    cap: Cell<usize>,
+    len: Cell<usize>,
     alloc: Global,
 }
 
@@ -115,8 +116,31 @@ impl<T> RawVec<T> {
     }
 
     #[inline]
+    pub fn get(&self, idx: usize) -> Option<&T> {
+        if idx < self.len() {
+            Some(unsafe { &*self.ptr().add(idx) })
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut T> {
+        if idx < self.len() {
+            Some(unsafe { &mut *self.ptr().add(idx) })
+        } else {
+            None
+        }
+    }
+
+    #[inline]
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
         self.slice_mut().iter_mut()
+    }
+
+    #[inline]
+    pub unsafe fn iter_mut_shared(&self) -> IterMut<'_, T> {
+        unsafe { slice::from_raw_parts_mut(self.ptr(), self.len()) }.iter_mut()
     }
 
     #[inline]
@@ -262,6 +286,19 @@ impl<T: PartialEq> PartialEq for RawVec<T> {
 }
 
 impl<T: Eq> Eq for RawVec<T> {}
+
+impl<T> ops::Index<usize> for RawVec<T> {
+    type Output = T;
+    fn index(&self, idx: usize) -> &Self::Output {
+        self.get(idx).expect("index out of bounds")
+    }
+}
+
+impl<T> ops::IndexMut<usize> for RawVec<T> {
+    fn index_mut(&mut self, idx: usize) -> &mut Self::Output {
+        self.get_mut(idx).expect("index out of bounds")
+    }
+}
 
 impl<T> Drop for RawVec<T> {
     fn drop(&mut self) {
@@ -415,4 +452,30 @@ fn raw_vec_push_zst() {
 
     assert_eq!(raw.len(), 1000);
     assert_eq!(raw.cap(), usize::MAX);
+}
+
+#[test]
+fn raw_vec_index_lots() {
+    let list: Vec<usize> = vec![];
+    let mut raw = RawVec::from_vec(list);
+
+    for i in 0..1000 {
+        unsafe {
+            raw.push_shared(i);
+        }
+
+        assert_eq!(raw[i], i)
+    }
+    assert_eq!(raw.len(), 1000);
+    assert_eq!(raw.cap(), 1024);
+}
+
+#[test]
+fn raw_vec_index_mut() {
+    let mut list = crate::raw_vec![1, 2, 3, 4, 5, 6, 7];
+
+    list[3] = 7;
+    assert_eq!(list[3], 7);
+    assert_eq!(list[2], 3);
+    assert_eq!(list[4], 5);
 }
