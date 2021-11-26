@@ -135,7 +135,7 @@ impl ScopeWalker {
                     inner.get_mut().items.push(item);
                 }
                 Entry::Vacant(v) => {
-                    v.insert(Items { parent: in_scope, items: vec![] });
+                    v.insert(Items { parent: in_scope, items: vec![item] });
                 }
             };
         }
@@ -166,49 +166,48 @@ impl ScopeWalker {
                     .map(|t| Some(self.resolve_name(&t.val, tctx)?.into_spanned(DUMMY)))
                     .collect::<Option<Vec<_>>>()?,
             },
-            Ty::Path(path) => {
-                let mut p = path.clone();
-                let item = p.segs.pop()?;
-                self.global_scope.get(&path.span.file_id)?.contents.get(&item).and_then(
-                    |scope| match scope.parent {
-                        Scope::Trait { file, trait_ } => todo!(),
-                        Scope::Impl { file, imp } => todo!(),
-                        Scope::Func { file, func } => todo!(),
-                        Scope::Struct { file, adt } => {
-                            tctx.name_struct.get(&adt).map(|it| Ty::Struct {
-                                ident: it.ident,
-                                gen: it
-                                    .generics
-                                    .iter()
-                                    .map(|g| {
-                                        Ty::Generic { ident: g.ident, bound: g.bound.clone() }
-                                            .into_spanned(DUMMY)
-                                    })
-                                    .collect(),
-                            })
-                        }
-                        Scope::Enum { file, adt } => {
-                            tctx.name_enum.get(&adt).map(|it| Ty::Struct {
-                                ident: it.ident,
-                                gen: it
-                                    .generics
-                                    .iter()
-                                    .map(|g| {
-                                        Ty::Generic { ident: g.ident, bound: g.bound.clone() }
-                                            .into_spanned(DUMMY)
-                                    })
-                                    .collect(),
-                            })
-                        }
-                        Scope::Global { file, name } => tctx.consts.get(&name).map(|v| v.to_type()),
-                        Scope::Block(_) => todo!(),
-                    },
-                )?
-            }
+            Ty::Path(path) => self.type_from_path(path, tctx)?,
             Ty::Ptr(t) => Ty::Ptr(box self.resolve_name(&t.val, tctx)?.into_spanned(DUMMY)),
             Ty::Ref(t) => Ty::Ref(box self.resolve_name(&t.val, tctx)?.into_spanned(DUMMY)),
             Ty::Func { ident, ret, params } => todo!(),
             _ => ty.clone(),
+        })
+    }
+
+    crate fn type_from_path(&self, path: &Path, tctx: &TyCheckRes<'_, '_>) -> Option<Ty> {
+        let mut p = path.clone();
+        let item = p.segs.first()?;
+        self.global_scope.get(&path.span.file_id)?.contents.get(item).and_then(|scope| {
+            match scope.parent {
+                Scope::Trait { file, trait_ } => todo!(),
+                Scope::Impl { file, imp } => todo!(),
+                // TODO: just make fn a type already
+                Scope::Func { file, func } => None,
+                Scope::Struct { file, adt } => tctx.name_struct.get(&adt).map(|it| Ty::Struct {
+                    ident: it.ident,
+                    gen: it
+                        .generics
+                        .iter()
+                        .map(|g| {
+                            Ty::Generic { ident: g.ident, bound: g.bound.clone() }
+                                .into_spanned(DUMMY)
+                        })
+                        .collect(),
+                }),
+                Scope::Enum { file, adt } => tctx.name_enum.get(&adt).map(|it| Ty::Enum {
+                    ident: it.ident,
+                    gen: it
+                        .generics
+                        .iter()
+                        .map(|g| {
+                            Ty::Generic { ident: g.ident, bound: g.bound.clone() }
+                                .into_spanned(DUMMY)
+                        })
+                        .collect(),
+                }),
+                Scope::Global { file, name } => tctx.consts.get(&name).map(|v| v.to_type()),
+                Scope::Block(_) => todo!(),
+            }
         })
     }
 

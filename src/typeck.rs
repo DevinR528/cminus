@@ -292,6 +292,42 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             self.name_res
                 .add_to_scope_stack(Scope::Func { file: func.span.file_id, func: func.ident });
 
+            // If the parameters are struct or enum names resolve them (eventually type aliases??)
+            for param in &func.params {
+                let resolved = self.name_res.resolve_name(&param.ty.get().val, self);
+                if let Some(res) = resolved {
+                    param.ty.set(res.into_spanned(param.ty.get().span));
+                }
+            }
+            // Resolve the return value (if struct or enum or type)
+            let resolved = self.name_res.resolve_name(&func.ret.get().val, self);
+            if let Some(res) = resolved {
+                func.ret.set(res.into_spanned(func.ret.get().span));
+            }
+
+            struct NameResUserTypes<'ast, 'b> {
+                res: &'ast ScopeWalker,
+                tcxt: &'ast TyCheckRes<'ast, 'b>,
+            }
+            impl<'ast, 'b> VisitMut<'ast> for NameResUserTypes<'ast, 'b> {
+                fn visit_expr(&mut self, expr: &'ast mut Expression) {
+                    if let Expr::Call { path, args, type_args } = &expr.val {
+                        if let Some(Ty::Enum { ident, .. }) =
+                            self.res.type_from_path(path, self.tcxt)
+                        {
+                            let mut path = path.clone();
+                            let variant = path.segs.pop().unwrap();
+                            expr.val = Expr::EnumInit { path, variant, items: args.clone() };
+                        }
+                    }
+                }
+            }
+
+            // Fix enum inits parsed as call expressions
+            for stmt in unsafe { func.stmts.stmts.iter_mut_shared() } {
+                NameResUserTypes { res: &self.name_res, tcxt: self }.visit_stmt(stmt);
+            }
+
             crate::visit::walk_func(self, func);
 
             if !matches!(func.ret.val, Ty::Void) && !self.var_func.func_return.contains(&func.ident)
