@@ -1,7 +1,24 @@
-error: Parser encountered incorrect token
-  --> ./stuff/parse_ui/enum/enum_err.cm:1:1
-0 |// Fail
-1 |
-  |enum option<T> {
+Error: [E0tc] enum `option::some` found with wrong items 
+found `enum option<int>` expected `enum option<<T>>`
+  --> ./stuff/parse_ui/enum/enum_err.cm:8:15
+7 |fn main() {
+8 |    let num = option::some(10);
+  |              ^^^^^^^^^^^^^^^^^
 
-compilation stopped found 1 error
+Error: [E0tc] must match a valid enum found: `<T>`
+  --> ./stuff/parse_ui/enum/enum_err.cm:11:9
+10 |    match num {
+11 |        option::none -> {option::some(a) -> {
+   |            a = "true"; // error: match wrong type bound from enum
+12 |        },
+13 |        
+14 |            exit;
+
+Error: [E0i] no type infered for `a`
+  --> ./stuff/parse_ui/enum/enum_err.cm:12:13
+11 |        option::some(a) -> {
+12 |            a = "true"; // error: match wrong type bound from enum
+   |            ^^
+13 |        },
+
+compilation stopped found 3 errors

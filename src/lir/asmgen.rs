@@ -482,7 +482,6 @@ impl<'ctx> CodeGen<'ctx> {
         type_args: &[Ty],
         can_clear: CanClearRegs,
     ) -> Location {
-        println!("{:?}", args);
         let mut pushed_to_align_float_stack = false;
         if (self.total_stack % 16 != 0 || self.total_stack == 0) {
             self.asm_buf.push(Instruction::Math {
@@ -926,17 +925,10 @@ impl<'ctx> CodeGen<'ctx> {
                     cmt: "stack for enum",
                 });
             }
-            Ty::ConstStr(..) | Ty::Ptr(_) | Ty::Int | Ty::Float | Ty::Char => {
+            Ty::ConstStr(..) | Ty::Ptr(_) | Ty::Int | Ty::Float | Ty::Char | Ty::Bool => {
                 self.asm_buf.push(Instruction::Push {
                     loc: Location::Const { val: ty.null_val() },
                     size: 8,
-                    comment: "",
-                });
-            }
-            Ty::Bool => {
-                self.asm_buf.push(Instruction::Push {
-                    loc: Location::Const { val: ty.null_val() },
-                    size: 4,
                     comment: "",
                 });
             }

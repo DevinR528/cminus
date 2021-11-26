@@ -205,7 +205,7 @@ impl ScopeWalker {
                         })
                         .collect(),
                 }),
-                Scope::Global { file, name } => tctx.consts.get(&name).map(|v| v.to_type()),
+                Scope::Global { file, name } => tctx.global.get(&name).cloned(),
                 Scope::Block(_) => todo!(),
             }
         })

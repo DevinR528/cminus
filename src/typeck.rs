@@ -1,3 +1,42 @@
+//! The type checking pass of the compiler.
+//!
+//! ## The Steps
+//!
+//! - we visit a slice of declarations [Declaration]s
+//!   - walking each [Decl] collecting names but not walking statements/expressions
+//!   - if we encounter an import we apply this process from start to finish before moving on from
+//!     here
+//!   - we collect generics in functions/enums/structs
+//!   - we collect paths for name resolution
+//! - At this point all names are known we start resolving
+//!   - we resolve any parameter types and return types (turn [Ty::Path] into the appropriate type,
+//!     enums or structs)
+//!   - resolve enum init expressions (convert [Expr::Call] into [Expr::EnumInit] if appropriate)
+//!     - eventually any usage of types `let x: path::to::type = ...` will also be resolved
+//!       otherwise parsing can tell the difference??
+//! - Walking statements inside functions and impls (see [TyCheckRes::visit_stmt])
+//!   - reset the poisoned flag (each statement can have it's own error)
+//!   - infer the types if possible
+//!     - for each expression (lvalues and rvalues) we try to collect the type of the expression
+//!     - trait and function calls are a bit more involved (they can error during inference, not
+//!       enough args for example)
+//!       - calls are mutated so all arguments are concrete types and the results of name res are
+//!         applied also
+//!     - inference needs to collect expression -> type mappings for further up the tree inference,
+//!       a leaf needs info so the branch can infer, DON'T DELETE the `tcxt.expr_ty.insert(expr,
+//!       ty)` calls
+//!     - structs and enums are similar to calls but not as picky
+//!     - done with inference
+//!   - walk the statement, we recursively repeat the above for any statement within a statement
+//!     (while, if, blocks, etc)
+//!   - actual type checking [StmtCheck]
+//!     - checks declarations and assignments are valid
+//!     - checks the conditions of if, while and match statements
+//!       - checks matches have arm patterns that match the expression
+//!       - collects the bound variables for new identifiers live in each arm's block
+//!
+//! Without further ado type checking 🖖
+
 use std::{
     cell::{Cell, RefCell},
     fmt,
@@ -105,9 +144,11 @@ crate struct TyCheckRes<'ast, 'input> {
     #[dbg_ignore]
     crate mono_expr_ty: RefCell<HashMap<Expression, Ty>>,
 
+    // TODO: const folding could fold "const" idents but it would have to track between stmts which
+    // we do not
     /// A mapping of identities -> val, this is how const folding keeps track of `Expr::Ident`s.
-    #[dbg_ignore]
-    crate consts: HashMap<Ident, &'ast Val>,
+    // #[dbg_ignore]
+    // crate consts: HashMap<Ident, &'ast Val>,
 
     // /// A mapping of struct name to the fields of that struct.
     // struct_fields: HashMap<Path, (Vec<Type>, Vec<Field>)>,
@@ -306,6 +347,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
         }
+
         // Stabilize order which I'm not sure how it gets unordered
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for func in funcs {
@@ -550,6 +592,77 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         self.curr_fn.take();
     }
 
+    fn visit_params(&mut self, params: &[Param]) {
+        if let Some(fn_id) = self.curr_fn {
+            for Param { ident, ty, span } in params {
+                // This param is declared inside of a function
+                self.name_res.add_item(
+                    span.file_id,
+                    Scope::Func { file: span.file_id, func: fn_id },
+                    ItemIn::Var(*ident),
+                );
+
+                let ty = self
+                    .name_res
+                    .resolve_name(&ty.get().val, self)
+                    .unwrap_or_else(|| ty.get().val.clone());
+
+                // TODO: Do this for returns and any place we match for Ty::Generic {..}
+                if ty.has_generics() {
+                    self.generic_res.collect_generic_usage(
+                        &ty,
+                        self.unique_id(),
+                        0,
+                        &[],
+                        &mut vec![Node::Func(fn_id)],
+                    );
+
+                    let matching_gen = self
+                        .var_func
+                        .name_func
+                        .get(&fn_id)
+                        .and_then(|f| {
+                            // TODO: this doesn't work for something like `enum result<T, E>`
+                            // only checks `T` now
+                            f.generics.iter().find(|g| g.ident == *ty.generics()[0])
+                        })
+                        .is_some();
+
+                    if !matching_gen {
+                        self.errors.push_error(Error::error_with_span(
+                            self,
+                            *span,
+                            &format!(
+                                "found parameter `{}` which is not a declared generic type",
+                                ty
+                            ),
+                        ));
+                    }
+                };
+                if self
+                    .var_func
+                    .func_refs
+                    .entry(fn_id)
+                    .or_default()
+                    .insert(*ident, ty.clone())
+                    .is_some()
+                {
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        *span,
+                        &format!("duplicate param name `{}`", ident),
+                    ));
+                }
+                self.var_func.unsed_vars.insert(
+                    ScopedName::func_scope(fn_id, *ident, span.file_id),
+                    (*span, Cell::new(false)),
+                );
+            }
+        } else {
+            self.errors.push_error(Error::error_with_span(self, DUMMY, &format!("{:?}", params)));
+        }
+    }
+
     fn visit_adt(&mut self, adt: &'ast Adt) {
         match adt {
             Adt::Struct(struc) => {
@@ -701,77 +814,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             .insert(ScopedName::global(var.span.file_id, var.ident), (var.span, Cell::new(false)));
     }
 
-    fn visit_params(&mut self, params: &[Param]) {
-        if let Some(fn_id) = self.curr_fn {
-            for Param { ident, ty, span } in params {
-                // This param is declared inside of a function
-                self.name_res.add_item(
-                    span.file_id,
-                    Scope::Func { file: span.file_id, func: fn_id },
-                    ItemIn::Var(*ident),
-                );
-
-                let ty = self
-                    .name_res
-                    .resolve_name(&ty.get().val, self)
-                    .unwrap_or_else(|| ty.get().val.clone());
-
-                // TODO: Do this for returns and any place we match for Ty::Generic {..}
-                if ty.has_generics() {
-                    self.generic_res.collect_generic_usage(
-                        &ty,
-                        self.unique_id(),
-                        0,
-                        &[],
-                        &mut vec![Node::Func(fn_id)],
-                    );
-
-                    let matching_gen = self
-                        .var_func
-                        .name_func
-                        .get(&fn_id)
-                        .and_then(|f| {
-                            // TODO: this doesn't work for something like `enum result<T, E>`
-                            // only checks `T` now
-                            f.generics.iter().find(|g| g.ident == *ty.generics()[0])
-                        })
-                        .is_some();
-
-                    if !matching_gen {
-                        self.errors.push_error(Error::error_with_span(
-                            self,
-                            *span,
-                            &format!(
-                                "found parameter `{}` which is not a declared generic type",
-                                ty
-                            ),
-                        ));
-                    }
-                };
-                if self
-                    .var_func
-                    .func_refs
-                    .entry(fn_id)
-                    .or_default()
-                    .insert(*ident, ty.clone())
-                    .is_some()
-                {
-                    self.errors.push_error(Error::error_with_span(
-                        self,
-                        *span,
-                        &format!("duplicate param name `{}`", ident),
-                    ));
-                }
-                self.var_func.unsed_vars.insert(
-                    ScopedName::func_scope(fn_id, *ident, span.file_id),
-                    (*span, Cell::new(false)),
-                );
-            }
-        } else {
-            self.errors.push_error(Error::error_with_span(self, DUMMY, &format!("{:?}", params)));
-        }
-    }
-
     /// We overwrite this so that no type checking of the arm statements happens until we
     /// gather the nested scope from binding in match arms.
     ///
@@ -890,7 +932,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::AddrOf(inner_expr) => {
                 self.visit_expr(inner_expr);
 
-                // TODO: if inner_expr isn't found likely that var isn't declared if ident
                 let t = if let Some(ty) = self.expr_ty.get(&**inner_expr) {
                     if matches!(
                         inner_expr.val,
@@ -936,6 +977,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     op,
                     expr.span,
                 ) {
+                    // TODO: is this needed?? we are just overwriting the result of inference and
+                    // checking that it was equal
                     if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
                         if !ty.is_ty_eq(&t2) {
                             self.errors.push_error(Error::error_with_span(
@@ -1021,8 +1064,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         &mut stack,
                     );
 
-                    // println!("CALL IN CALL {:?} == {:?} {:?}", ty, gen, stack);
-
                     gen_arg_map.insert(gen.ident, ty_arg.val.clone());
                 }
 
@@ -1046,61 +1087,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     let mut param_ty = func_params.get(idx).map(|p| p.ty.get().val.clone());
                     let mut arg_ty = self.expr_ty.get(arg).cloned();
 
-                    fn replace_with_concret_ty(
-                        tcxt: &TyCheckRes<'_, '_>,
-                        param_ty: Option<&Ty>,
-                        gen_arg_map: &HashMap<Ident, Ty>,
-                    ) -> Option<Ty> {
-                        Some(match param_ty? {
-                            Ty::Generic { ident, .. } => gen_arg_map.get(ident)?.clone(),
-                            t @ Ty::Path(..) => tcxt.name_res.resolve_name(t, tcxt)?,
-                            Ty::Array { size, ty: arrty } => Ty::Array {
-                                size: *size,
-                                ty: box replace_with_concret_ty(
-                                    tcxt,
-                                    Some(&arrty.val),
-                                    gen_arg_map,
-                                )?
-                                .into_spanned(DUMMY),
-                            },
-                            Ty::Struct { ident, gen } => Ty::Struct {
-                                ident: *ident,
-                                gen: gen
-                                    .iter()
-                                    .map(|g| {
-                                        replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
-                                            .map(|t| t.into_spanned(DUMMY))
-                                    })
-                                    .collect::<Option<Vec<_>>>()?,
-                            },
-                            Ty::Enum { ident, gen } => Ty::Enum {
-                                ident: *ident,
-                                gen: gen
-                                    .iter()
-                                    .map(|g| {
-                                        replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
-                                            .map(|t| t.into_spanned(DUMMY))
-                                    })
-                                    .collect::<Option<Vec<_>>>()?,
-                            },
-                            Ty::Ptr(inner) => Ty::Ptr(
-                                box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
-                                    .into_spanned(DUMMY),
-                            ),
-                            Ty::Ref(inner) => Ty::Ref(
-                                box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
-                                    .into_spanned(DUMMY),
-                            ),
-                            _ => {
-                                return None;
-                            }
-                        })
-                    }
-
-                    if let Some(ty_arg) =
-                        replace_with_concret_ty(self, param_ty.as_ref(), &gen_arg_map)
-                    {
-                        param_ty = Some(ty_arg);
+                    // TODO: I removed `replace_with_concret_ty`(at bottom of file) on 11/26/21
+                    // if this breaks that's why
+                    if let Some(Ty::Generic { ident, .. }) = &param_ty {
+                        if let Some(ty_arg) = gen_arg_map.get(ident) {
+                            param_ty = Some(ty_arg.clone());
+                        }
                     }
 
                     // TODO: remove
@@ -1119,18 +1111,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         self.errors.poisoned(true);
                     }
                 }
-
-                // This is commented out because of inference
-                // TODO: do more of this
-
-                // let t = &f.ret.val;
-                // let ret_ty = if t.has_generics() {
-                //     subs_type_args(t, type_args, &f.generics)
-                // } else {
-                //     t.clone()
-                // };
-                // self.expr_ty.insert(expr, ret_ty);
-                // because of x += 1;
             }
             Expr::TraitMeth { trait_, args, type_args } => {
                 let ident = *trait_.segs.last().unwrap();
@@ -1211,6 +1191,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     generic_dependence,
                 );
 
+                // TODO: remove once we make trait calls like function calls in inference 11/26/21
                 let def_fn = self.trait_solve.traits.get(trait_).expect("trait is defined");
                 let t = &def_fn.method.return_ty().val;
                 let ret_ty = if t.has_generics() {
@@ -1273,6 +1254,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         }
                     }
 
+                    // TODO: make sure this happens in StmtCheck?
                     // Skip checking type equivalence
                     if field_ty.has_generics() {
                         continue;
@@ -1604,3 +1586,55 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
         | Expr::Value(_) => todo!(),
     }
 }
+
+// THIS WAS REMOVED FROM call expression checking 11/26/21
+// fn replace_with_concret_ty(
+//     tcxt: &TyCheckRes<'_, '_>,
+//     param_ty: Option<&Ty>,
+//     gen_arg_map: &HashMap<Ident, Ty>,
+// ) -> Option<Ty> {
+//     Some(match param_ty? {
+//         Ty::Generic { ident, .. } => gen_arg_map.get(ident)?.clone(),
+//         t @ Ty::Path(..) => tcxt.name_res.resolve_name(t, tcxt)?,
+//         Ty::Array { size, ty: arrty } => Ty::Array {
+//             size: *size,
+//             ty: box replace_with_concret_ty(
+//                 tcxt,
+//                 Some(&arrty.val),
+//                 gen_arg_map,
+//             )?
+//             .into_spanned(DUMMY),
+//         },
+//         Ty::Struct { ident, gen } => Ty::Struct {
+//             ident: *ident,
+//             gen: gen
+//                 .iter()
+//                 .map(|g| {
+//                     replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
+//                         .map(|t| t.into_spanned(DUMMY))
+//                 })
+//                 .collect::<Option<Vec<_>>>()?,
+//         },
+//         Ty::Enum { ident, gen } => Ty::Enum {
+//             ident: *ident,
+//             gen: gen
+//                 .iter()
+//                 .map(|g| {
+//                     replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
+//                         .map(|t| t.into_spanned(DUMMY))
+//                 })
+//                 .collect::<Option<Vec<_>>>()?,
+//         },
+//         Ty::Ptr(inner) => Ty::Ptr(
+//             box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
+//                 .into_spanned(DUMMY),
+//         ),
+//         Ty::Ref(inner) => Ty::Ref(
+//             box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
+//                 .into_spanned(DUMMY),
+//         ),
+//         _ => {
+//             return None;
+//         }
+//     })
+// }

@@ -89,8 +89,9 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
             ));
         } else if let Expr::Ident(id) = &lval.val {
             if let Expr::Value(val) = &rval.val {
-                // TODO: I don't remember what consts does in const folding???
-                self.tcxt.consts.insert(*id, &val.val);
+                // TODO: const folding could fold un-mutated idents but it gets tricky llvm will do
+                // this for us
+                //self.tcxt.consts.insert(*id, &val.val);
             }
         }
     }
@@ -430,8 +431,7 @@ fn check_used_enum_generics(
                 {
                     *rgen = gen.clone();
                 } else {
-                    panic!(
-                        "{}",
+                    tcxt.errors.push_error(
                         Error::error_with_span(
                             tcxt,
                             span,
@@ -444,6 +444,7 @@ fn check_used_enum_generics(
                             ),
                         )
                     );
+                    tcxt.errors.poisoned(true);
                 }
             } else {
                 return;
@@ -790,7 +791,6 @@ fn walk_field_access(
                     &format!("[E0tc] ident `{}` not array", ident),
                 ));
                 tcxt.errors.poisoned(true);
-                // TODO: specific error here?
                 None
             }
         },
@@ -853,6 +853,7 @@ crate fn fold_ty(
                     span,
                     "[E0tc] cannot assign operation to a char",
                 ));
+                tcxt.errors.poisoned(true);
                 None
             }
             // HACK: TODO: this is special case for array checking, make this work correctly
@@ -863,6 +864,7 @@ crate fn fold_ty(
                     span,
                     "[E0tc] not a legal operation for `char`",
                 ));
+                tcxt.errors.poisoned(true);
                 None
             }
         },
@@ -884,6 +886,7 @@ crate fn fold_ty(
                     span,
                     "[E0tc] illegal pointer operation",
                 ));
+                tcxt.errors.poisoned(true);
                 None
             }
         },
@@ -904,6 +907,7 @@ crate fn fold_ty(
                     span,
                     "[E0tc] illegal boolean operation",
                 ));
+                tcxt.errors.poisoned(true);
                 None
             }
         },
@@ -948,6 +952,7 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
                 span,
                 "[E0tc] cannot assign to a statement, this isn't Rust ;)",
             ));
+            tcxt.errors.poisoned(true);
             None
         }
     }
