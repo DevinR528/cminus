@@ -17,9 +17,6 @@ fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
     match args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice() {
         [] => println!("version 0.0.0 of enumc"),
-        ["test" | "t", _more @ ..] => {
-            println!("{:?}", cmd!("cargo b").read());
-        }
         ["run" | "r", more @ ..] => {
             cmd!("cargo b").run().unwrap();
             if let Err(e) = build_files(more, "-as") {
@@ -127,14 +124,25 @@ fn ui_test_run(files: &[&str], args: &str) -> Result<(), Box<dyn std::error::Err
                 path.set_extension("stderr");
                 let mut fd = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
                 let mut buf = vec![];
+                let cleaned_err = strip_ansi_escapes::strip(&out.stderr)?;
                 if fd.read_to_end(&mut buf)? > 0 {
-                    if buf == out.stderr {
+                    if buf == cleaned_err {
                         writeln_green("Pass: ", &format!("{}", path.display()))?;
+                    } else {
+                        writeln_red(
+                            "Error: ",
+                            &format!(
+                                "`{}` compile errors did not match\n\n{}",
+                                path.display(),
+                                String::from_utf8_lossy(&out.stderr)
+                            ),
+                        )?;
+                        std::process::exit(1)
                     }
                 } else {
                     println!("{}", path.display());
                     // We truncate the file just incase
-                    fd.write_all_at(&out.stderr, 0)?;
+                    fd.write_all_at(&cleaned_err, 0)?;
                     writeln_green(
                         "Written: ",
                         &format!("{}\nre-run to test if output is consistent", path.display()),

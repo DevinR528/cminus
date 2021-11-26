@@ -1,0 +1,15 @@
+linked fn printf<T>(_fmt: cstr, _val: T) {}
+
+struct foo {
+    y: int,
+}
+
+fn add(it: foo): int {
+    return it.y;
+}
+
+fn main() {
+    let b = foo { y: 10 };
+    let a = add(b);
+    printf("%d\n", a);
+}

@@ -1,12 +1,4 @@
-error: [E0i] assigned to wrong type
-found `int` expected `<T>`
-  --> ./stuff/parse_ui/generic/gen_err.cm:3:10
-2 |fn bar<T>(it: T) {
-3 |    it = 1; // error catches generic used as concrete type
-  |         ^
-4 |}
-
-error: [E0tc] assign to expression of wrong type
+Error: [E0tc] assign to expression of wrong type
 found `int` expected `<T>`
   --> ./stuff/parse_ui/generic/gen_err.cm:3:5
 2 |fn bar<T>(it: T) {
@@ -14,17 +6,16 @@ found `int` expected `<T>`
   |    ^^^^^^^^
 4 |}
 
-error: [E0tc] return type must be void `<T>`
+Error: function `foo` has return type `<T>` but no return statement
+  --> ./stuff/parse_ui/generic/gen_err.cm:6:1
+5 |
+6 |fn foo<T>(): T {} // error return nothing when generic type specified
+  |^^^^^^^^^^^^^^^^^^
+
+Error: [E0tc] return type must be void `<T>`
   --> ./stuff/parse_ui/generic/gen_err.cm:6:16
 5 |
 6 |fn foo<T>(): T {} // error return nothing when generic type specified
   |               ^^
 
-error: function `foo` has return type `<T>` but no return statement
-  --> ./stuff/parse_ui/generic/gen_err.cm:6:1
-5 |
-6 |fn foo<T>(): T {} // error return nothing when generic type specified
-  |^^^^^^^^^^^^^^^^^
-
-errors
-compilation stopped found 1 error
+compilation stopped found 3 errors

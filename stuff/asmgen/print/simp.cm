@@ -1,4 +1,4 @@
-linked fn printf<T>(fmt: string, val: T) {}
+linked fn printf<T>(fmt: cstr, val: T) {}
 
 
 

@@ -12,10 +12,9 @@ impl Expr {
         match self {
             Expr::Ident { ident: _, .. } => {
                 // TODO: damn, this needs to track mutations to work
-                // int a, b;
-                // a = 5;
+                // let a = 5;
                 // a += 1;
-                // b = a + 1; ERROR ERROR a is now 6 but we think its 5
+                // let b = a + 1; ERROR ERROR a is now 6 but we think its 5
 
                 // if let Some(v) = tcxt.consts.get(ident.as_str()) {
                 //     *self = Expr::Value(Val::lower((*v).clone()));

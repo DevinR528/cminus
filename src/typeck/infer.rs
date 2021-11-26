@@ -424,12 +424,25 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Expr::Call { path, args, type_args } => {
                 let mut infered_ty_args = vec![];
-                for (idx, arg) in args.iter().enumerate() {
+                for arg in args.iter() {
                     self.visit_expr(arg);
                 }
 
                 let func = self.tcxt.var_func.name_func.get(&path.segs[0]);
                 if let Some(func) = func {
+                    if func.params.len() != args.len() {
+                        self.tcxt.errors.push_error(Error::error_with_span(
+                            self.tcxt,
+                            expr.span,
+                            &format!(
+                                "[E0i] called `{}` with wrong number of arguments expected {}",
+                                func.ident,
+                                func.params.len()
+                            ),
+                        ));
+                        self.tcxt.errors.poisoned(true);
+                        return;
+                    }
                     if type_args.is_empty() && !func.generics.is_empty() {
                         for (arg, param) in args.iter().zip(&func.params) {
                             if let Some(expr_ty) = self.tcxt.expr_ty.get(&arg) {
@@ -450,10 +463,11 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                                     ),
                                 ));
                                 self.tcxt.errors.poisoned(true);
+                                return;
                             }
                         }
 
-                        let last = infered_ty_args.len() - 1;
+                        let last = infered_ty_args.len().saturating_sub(1);
                         for gen in &func.generics {
                             let idx =
                                 infered_ty_args.iter().position(|(_, g)| gen.ident == *g).unwrap();
@@ -568,7 +582,6 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         enm.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
                     let ident = enm.ident;
 
-                    // TODO remove??
                     for arg in items.iter() {
                         self.visit_expr(arg);
                     }
