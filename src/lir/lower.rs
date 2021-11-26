@@ -3,7 +3,7 @@ use std::fmt;
 use crate::{
     ast::{
         parse::symbol::Ident,
-        types::{self as ty, Path, Spanned, DUMMY},
+        types::{self as ty, FuncKind, Path, Spanned, DUMMY},
     },
     error::Error,
     lir::{const_fold::Folder, mono::TraitRes},
@@ -37,7 +37,7 @@ impl Val {
             Val::Int(_) => Ty::Int,
             Val::Char(_) => Ty::Char,
             Val::Bool(_) => Ty::Bool,
-            Val::Str(_) => Ty::String,
+            Val::Str(s) => Ty::ConstStr(s.name().len()),
         }
     }
 
@@ -212,7 +212,7 @@ impl FieldInit {
         FieldInit {
             ident: f.ident,
             init: Expr::lower(tyctx, fold, f.init),
-            ty: Ty::lower(tyctx, &def.ty.val),
+            ty: Ty::lower(tyctx, &def.ty.get().val),
         }
     }
 }
@@ -402,8 +402,8 @@ impl Expr {
         match self {
             Expr::Ident { ident: _, ty } => ty.clone(),
             Expr::Deref { indir: _, expr: _, ty } => ty.clone(),
-            Expr::AddrOf(expr) => expr.type_of(),
-            Expr::Array { ident: _, exprs: _, ty } => ty.clone(),
+            Expr::AddrOf(expr) => Ty::Ptr(box expr.type_of()),
+            Expr::Array { ident: _, exprs, ty } => ty.clone(),
             Expr::Urnary { op: _, expr: _, ty } => ty.clone(),
             Expr::Binary { op: _, lhs: _, rhs: _, ty } => ty.clone(),
             Expr::Parens(expr) => expr.type_of(),
@@ -603,10 +603,10 @@ pub enum Ty {
     ///
     /// The number of dereferences represented as layers.
     Ref(Box<Ty>),
-    /// A string of `char`'s.
+    /// A const array of `char`'s, the size is known at compile time.
     ///
     /// `"hello, world"`
-    String,
+    ConstStr(usize),
     /// A positive or negative number.
     Int,
     /// An ascii character.
@@ -637,7 +637,7 @@ impl Ty {
                 let tag = 8_usize;
                 tag + variants
             }
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Char | Ty::Float => 8,
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float => 8,
             Ty::Bool => 4,
             Ty::Void => 0,
             _ => unreachable!("generic type should be monomorphized"),
@@ -646,7 +646,7 @@ impl Ty {
 
     crate fn null_val(&self) -> Val {
         match self {
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Float => Val::Int(0),
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::Float => Val::Int(0),
             Ty::Char | Ty::Bool => Val::Int(0),
             _ => unreachable!("generic type should be monomorphized cannot create null value"),
         }
@@ -692,7 +692,7 @@ impl fmt::Display for Ty {
             ),
             Ty::Ptr(t) => write!(f, "&{}", t),
             Ty::Ref(t) => write!(f, "*{}", t),
-            Ty::String => write!(f, "string"),
+            Ty::ConstStr(..) => write!(f, "string"),
             Ty::Int => write!(f, "int"),
             Ty::Char => write!(f, "char"),
             Ty::Float => write!(f, "float"),
@@ -710,7 +710,7 @@ pub struct Param {
 
 impl Param {
     fn lower(tyctx: &TyCheckRes<'_, '_>, v: ty::Param) -> Self {
-        Param { ident: v.ident, ty: Ty::lower(tyctx, &v.ty.val) }
+        Param { ident: v.ident, ty: Ty::lower(tyctx, &v.ty.get().val) }
     }
 }
 
@@ -857,11 +857,6 @@ impl Stmt {
                 val: ty::Expr::Call { path, args, mut type_args },
                 ..
             }) => {
-                // TODO: path/name resolution
-                for ty in type_args.iter_mut() {
-                    *ty = tyctx.patch_generic_from_path(ty, statement.span);
-                }
-
                 let ident = path.segs.last().unwrap();
                 if type_args.iter().all(|arg| !arg.val.has_generics()) {
                     TraitRes::new(tyctx, type_args.iter().map(|a| &a.val).collect())
@@ -970,7 +965,7 @@ pub struct Field {
 
 impl Field {
     fn lower(tyctx: &TyCheckRes<'_, '_>, v: ty::Field) -> Self {
-        Field { ident: v.ident, ty: Ty::lower(tyctx, &v.ty.val) }
+        Field { ident: v.ident, ty: Ty::lower(tyctx, &v.ty.get().val) }
     }
 }
 
@@ -1062,6 +1057,8 @@ pub struct Func {
     pub generics: Vec<Ty>,
     /// the type and identifier of each parameter.
     pub params: Vec<Param>,
+    /// The kind of function this is.
+    pub kind: FuncKind,
     /// All the crap the function does.
     pub stmts: Vec<Stmt>,
 }
@@ -1069,20 +1066,22 @@ pub struct Func {
 impl Func {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, func: &ty::Func) -> Self {
         Func {
-            ret: Ty::lower(tyctx, &func.ret.val),
+            ret: Ty::lower(tyctx, &func.ret.get().val),
             ident: func.ident,
             params: func.params.iter().map(|p| Param::lower(tyctx, p.clone())).collect(),
             generics: func.generics.iter().map(|g| Ty::lower(tyctx, &g.to_type())).collect(),
+            kind: func.kind,
             stmts: func.stmts.stmts.iter().map(|s| Stmt::lower(tyctx, fold, s.clone())).collect(),
         }
     }
 
     fn lower_minus_body(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, func: &ty::Func) -> Self {
         Func {
-            ret: Ty::lower(tyctx, &func.ret.val),
+            ret: Ty::lower(tyctx, &func.ret.get().val),
             ident: func.ident,
             params: func.params.iter().map(|p| Param::lower(tyctx, p.clone())).collect(),
             generics: func.generics.iter().map(|g| Ty::lower(tyctx, &g.to_type())).collect(),
+            kind: func.kind,
             stmts: vec![],
         }
     }
@@ -1169,7 +1168,7 @@ impl Ty {
             },
             ty::Ty::Ptr(t) => Ty::Ptr(box Ty::lower(tyctx, &t.val)),
             ty::Ty::Ref(t) => Ty::Ref(box Ty::lower(tyctx, &t.val)),
-            ty::Ty::String => Ty::String,
+            ty::Ty::ConstStr(size) => Ty::ConstStr(*size),
             ty::Ty::Int => Ty::Int,
             ty::Ty::Char => Ty::Char,
             ty::Ty::Float => Ty::Float,
