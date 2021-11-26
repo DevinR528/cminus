@@ -1,0 +1,8 @@
+linked fn printf<T>(fmt: string, val: T) {}
+
+
+
+fn main() {
+    let fmt = "hello %d";
+    printf(fmt, 10);
+}

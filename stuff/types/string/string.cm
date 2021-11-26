@@ -1,0 +1,33 @@
+// struct dstr {
+//     buf: *char,
+//     len: int,
+// }
+
+// fn new_string(): dstr {
+//     let s = dstr { buf: &' ', len: 0 };
+//     return s;
+// }
+
+linked fn printf<T>(_fmt: cstr, _val: T) {}
+linked fn scanf<T>(_fmt: cstr, _val: *T) {}
+
+fn main() {
+    let s = "%d\n";
+    printf(s, 10);
+    printf("hello%s", ", world\n");
+    printf("hello let's print a float %f 🎉\n", 3.1415);
+    let x = 4.2;
+    printf("hello let's print a float %f\n", x);
+
+    let y = 0;
+    scanf("%d", &y);
+    printf("this is from a scan: %d\n", y);
+
+    let f = 0.0;
+    scanf("%f", &f);
+    printf("this is float from a scan: %f\n", f);
+
+    let b = false;
+    scanf("%d", &b);
+    printf("this is a bool from a scan: %s\n", b);
+}
