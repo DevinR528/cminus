@@ -6,8 +6,9 @@ use std::{
 
 use crate::{
     ast::parse::symbol::Ident,
+    data_struc::{rawptr::RawPtr, rawvec::RawVec},
     error::Error,
-    typeck::{check::fold_ty, rawvec::RawVec, TyCheckRes},
+    typeck::{check::fold_ty, TyCheckRes},
 };
 
 crate trait TypeEquality<T = Self> {
@@ -38,7 +39,7 @@ impl Val {
             Val::Int(_) => Ty::Int,
             Val::Char(_) => Ty::Char,
             Val::Bool(_) => Ty::Bool,
-            Val::Str(_) => Ty::String,
+            Val::Str(s) => Ty::ConstStr(s.name().len()),
         }
     }
 }
@@ -310,10 +311,10 @@ pub enum Ty {
     /// The number of dereferences represented as layers. A deref is `*` on a type that is an
     /// address i.e. `&x`
     Ref(Box<Type>),
-    /// A string of `char`'s.
+    /// A constant array of `char`'s, this has a compile time known size.
     ///
     /// `"hello, world"`
-    String,
+    ConstStr(usize),
     /// A positive or negative number.
     Int,
     /// An ascii character.
@@ -356,7 +357,7 @@ impl Ty {
                 params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
             }
             Ty::Path(p) => todo!("{}", p),
-            Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
+            Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
                 vec![]
             }
         }
@@ -374,8 +375,8 @@ impl Ty {
             Ty::Func { ret, params, .. } => {
                 ret.has_generics() | params.iter().any(|t| t.has_generics())
             }
-            Ty::Path(_) => todo!("{:?}", self),
-            Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
+            Ty::Path(_) => false,
+            Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
         }
     }
 
@@ -443,7 +444,7 @@ impl Ty {
                 // peel off indirection
                 Ty::Ptr(ty) => ty.val,
                 Ty::Array { size: _, ty: _ } => todo!("first element of array"),
-                Ty::String => todo!("char??"),
+                Ty::ConstStr(..) => todo!("char??"),
                 _ty => return None,
             };
             deref -= 1;
@@ -531,7 +532,7 @@ impl fmt::Display for Ty {
             Ty::Path(p) => {
                 write!(f, "{}", p.segs.iter().map(|i| i.name()).collect::<Vec<_>>().join("::"))
             }
-            Ty::String => write!(f, "string"),
+            Ty::ConstStr(..) => write!(f, "string"),
             Ty::Int => write!(f, "int"),
             Ty::Char => write!(f, "char"),
             Ty::Float => write!(f, "float"),
@@ -564,7 +565,8 @@ impl TypeEquality for Ty {
             }
             (Ty::Ptr(t1), Ty::Ptr(t2)) => t1.val.is_ty_eq(&t2.val),
             (Ty::Ref(t1), Ty::Ref(t2)) => t1.val.is_ty_eq(&t2.val),
-            (Ty::String, Ty::String)
+            // TODO: we don't want/need the size to be ==
+            (Ty::ConstStr(..), Ty::ConstStr(..))
             | (Ty::Int, Ty::Int)
             | (Ty::Char, Ty::Char)
             | (Ty::Float, Ty::Float)
@@ -588,21 +590,21 @@ impl TypeEquality<Ty> for Generic {
 
 #[derive(Clone, Debug)]
 pub struct Param {
-    pub ty: Type,
+    pub ty: RawPtr<Type>,
     pub ident: Ident,
     pub span: Range,
 }
 
 #[derive(Clone, Debug)]
 pub struct Block {
-    pub stmts: Vec<Statement>,
+    pub stmts: RawVec<Statement>,
     pub span: Range,
 }
 
 impl fmt::Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "}}")?;
-        for _stmt in &self.stmts {
+        for _stmt in self.stmts.iter() {
             write!(f, "..;")?;
         }
         write!(f, "}}")
@@ -714,7 +716,7 @@ impl Spany for Stmt {}
 #[derive(Clone, Debug)]
 pub struct Field {
     pub ident: Ident,
-    pub ty: Type,
+    pub ty: RawPtr<Type>,
     pub span: Range,
 }
 
@@ -731,7 +733,7 @@ pub struct Variant {
     /// The name of the variant `some`.
     pub ident: Ident,
     /// The types contained in the variants "tuple".
-    pub types: Vec<Type>,
+    pub types: RawVec<Type>,
     pub span: Range,
 }
 
@@ -773,10 +775,18 @@ impl Generic {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FuncKind {
+    Normal,
+    Linked,
+    Extern,
+    EmptyTrait,
+}
+
 #[derive(Clone, Debug)]
 pub struct Func {
     /// The return type `int name() { stmts }`
-    pub ret: Type,
+    pub ret: RawPtr<Type>,
     /// Name of the function.
     pub ident: Ident,
     /// The generic parameters listed for a function.
@@ -785,17 +795,19 @@ pub struct Func {
     pub params: Vec<Param>,
     /// All the crap the function does.
     pub stmts: Block,
+    pub kind: FuncKind,
     pub span: Range,
 }
 
 impl Default for Func {
     fn default() -> Self {
         Self {
-            ret: Ty::Void.into_spanned(DUMMY),
+            ret: crate::rawptr!(Ty::Void.into_spanned(DUMMY)),
             ident: Ident::dummy(),
             generics: vec![],
             params: vec![],
-            stmts: Block { stmts: vec![], span: DUMMY },
+            stmts: Block { stmts: crate::raw_vec![], span: DUMMY },
+            kind: FuncKind::Normal,
             span: DUMMY,
         }
     }
@@ -810,7 +822,7 @@ pub enum TraitMethod {
 impl TraitMethod {
     crate fn return_ty(&self) -> &Type {
         match self {
-            Self::Default(func) | Self::NoBody(func) => &func.ret,
+            Self::Default(func) | Self::NoBody(func) => func.ret.get(),
         }
     }
 

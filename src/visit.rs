@@ -78,12 +78,12 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Declaration)
 }
 
 crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
-    let Func { ident: _, params, stmts, ret: _, generics: _, span: _ } = func;
+    let Func { ident: _, params, stmts, ret: _, generics: _, kind: _, span: _ } = func;
     // visit.visit_ident(ident);
     // visit.visit_generics(generics);
     visit.visit_params(params);
     // visit.visit_ty(ret);
-    for stmt in &stmts.stmts {
+    for stmt in stmts.stmts.iter() {
         visit.visit_stmt(stmt);
     }
 }
@@ -114,12 +114,12 @@ crate fn walk_adt<'ast, V: Visit<'ast>>(visit: &mut V, adt: &'ast Adt) {
         Adt::Struct(Struct { ident: _, fields, generics: _, span: _ }) => {
             // visit.visit_ident(ident);
             for Field { ident: _, ty, span: _ } in fields {
-                visit.visit_ty(ty);
+                visit.visit_ty(ty.get());
             }
         }
         Adt::Enum(Enum { ident: _, variants, generics: _, .. }) => {
             for Variant { ident: _, types, span: _ } in variants {
-                for ty in types {
+                for ty in types.iter() {
                     visit.visit_ty(ty);
                 }
             }
@@ -134,13 +134,13 @@ crate fn walk_const<'ast, V: Visit<'ast>>(visit: &mut V, var: &'ast Const) {
 
 crate fn walk_params<'ast, V: Visit<'ast>>(visit: &mut V, params: &[Param]) {
     for Param { ident: _, ty, .. } in params {
-        visit.visit_ty(ty);
+        visit.visit_ty(ty.get());
     }
 }
 
 crate fn walk_match_arm<'ast, V: Visit<'ast>>(visit: &mut V, arms: &'ast [MatchArm]) {
     for MatchArm { pat: _, blk: Block { stmts, .. }, .. } in arms {
-        for stmt in stmts {
+        for stmt in stmts.iter() {
             visit.visit_stmt(stmt);
         }
     }
@@ -158,18 +158,18 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
         Stmt::TraitMeth(expr) => visit.visit_expr(expr),
         Stmt::If { cond, blk: Block { stmts, .. }, els } => {
             visit.visit_expr(cond);
-            for stmt in stmts {
+            for stmt in stmts.iter() {
                 visit.visit_stmt(stmt);
             }
             if let Some(Block { stmts, .. }) = els {
-                for stmt in stmts {
+                for stmt in stmts.iter() {
                     visit.visit_stmt(stmt);
                 }
             }
         }
         Stmt::While { cond, blk } => {
             visit.visit_expr(cond);
-            for stmt in &blk.stmts {
+            for stmt in blk.stmts.iter() {
                 visit.visit_stmt(stmt);
             }
         }
@@ -180,7 +180,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
         Stmt::Ret(expr) => visit.visit_expr(expr),
         Stmt::Exit => {}
         Stmt::Block(Block { stmts, .. }) => {
-            for stmt in stmts {
+            for stmt in stmts.iter() {
                 visit.visit_stmt(stmt);
             }
         }
@@ -325,12 +325,12 @@ crate fn walk_mut_decl<'ast, V: VisitMut<'ast>>(visit: &mut V, item: &'ast mut D
 }
 
 crate fn walk_mut_func<'ast, V: VisitMut<'ast>>(visit: &mut V, func: &'ast mut Func) {
-    let Func { ident: _, params, stmts, ret, generics: _, span: _ } = func;
+    let Func { ident: _, params, stmts, ret, generics: _, kind: _, span: _ } = func;
     // visit.visit_ident(ident);
     // visit.visit_generics(generics);
     visit.visit_params(params);
-    visit.visit_ty(ret);
-    for stmt in &mut stmts.stmts {
+    visit.visit_ty(ret.get_mut());
+    for stmt in stmts.stmts.iter_mut() {
         visit.visit_stmt(stmt);
     }
 }
@@ -361,12 +361,12 @@ crate fn walk_mut_adt<'ast, V: VisitMut<'ast>>(visit: &mut V, adt: &'ast mut Adt
         Adt::Struct(Struct { ident: _, fields, generics: _, span: _ }) => {
             // visit.visit_ident(ident);
             for Field { ident: _, ty, span: _ } in fields {
-                visit.visit_ty(ty);
+                visit.visit_ty(ty.get_mut());
             }
         }
         Adt::Enum(Enum { ident: _, variants, generics: _, .. }) => {
             for Variant { ident: _, types, span: _ } in variants {
-                for ty in types {
+                for ty in types.iter_mut() {
                     visit.visit_ty(ty);
                 }
             }
@@ -381,13 +381,13 @@ crate fn walk_mut_var<'ast, V: VisitMut<'ast>>(visit: &mut V, var: &'ast mut Con
 
 crate fn walk_mut_params<'ast, V: VisitMut<'ast>>(visit: &mut V, params: &'ast mut [Param]) {
     for Param { ident: _, ty, .. } in params {
-        visit.visit_ty(ty);
+        visit.visit_ty(ty.get_mut());
     }
 }
 
 crate fn walk_mut_match_arm<'ast, V: VisitMut<'ast>>(visit: &mut V, arms: &'ast mut [MatchArm]) {
     for MatchArm { pat: _, blk: Block { stmts, .. }, .. } in arms {
-        for stmt in stmts {
+        for stmt in stmts.iter_mut() {
             visit.visit_stmt(stmt);
         }
     }
@@ -405,18 +405,18 @@ crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut S
         Stmt::TraitMeth(expr) => visit.visit_expr(expr),
         Stmt::If { cond, blk: Block { stmts, .. }, els } => {
             visit.visit_expr(cond);
-            for stmt in stmts {
+            for stmt in stmts.iter_mut() {
                 visit.visit_stmt(stmt);
             }
             if let Some(Block { stmts, .. }) = els {
-                for stmt in stmts {
+                for stmt in stmts.iter_mut() {
                     visit.visit_stmt(stmt);
                 }
             }
         }
         Stmt::While { cond, blk: stmts } => {
             visit.visit_expr(cond);
-            for stmt in &mut stmts.stmts {
+            for stmt in stmts.stmts.iter_mut() {
                 visit.visit_stmt(stmt);
             }
         }
@@ -427,7 +427,7 @@ crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut S
         Stmt::Ret(expr) => visit.visit_expr(expr),
         Stmt::Exit => {}
         Stmt::Block(Block { stmts, .. }) => {
-            for stmt in stmts {
+            for stmt in stmts.iter_mut() {
                 visit.visit_stmt(stmt);
             }
         }

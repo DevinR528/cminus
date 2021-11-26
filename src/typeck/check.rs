@@ -126,12 +126,12 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     self.tcxt.errors.poisoned(true);
                 }
 
-                for stmt in stmts {
+                for stmt in stmts.iter() {
                     self.visit_stmt(stmt);
                 }
 
                 if let Some(Block { stmts, .. }) = els {
-                    for stmt in stmts {
+                    for stmt in stmts.iter() {
                         self.visit_stmt(stmt);
                     }
                 }
@@ -152,7 +152,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
-                for stmt in &blk.stmts {
+                for stmt in blk.stmts.iter() {
                     self.visit_stmt(stmt);
                 }
             }
@@ -189,7 +189,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                     .insert(*variable, ty.clone());
                             }
 
-                            for stmt in &arm.blk.stmts {
+                            for stmt in arm.blk.stmts.iter() {
                                 self.tcxt.visit_stmt(stmt);
                                 // self.visit_stmt(stmt);
                             }
@@ -235,7 +235,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
                             // println!("{} {:?} {}", fn_name, bound_vars, arm);
 
-                            for stmt in &arm.blk.stmts {
+                            for stmt in arm.blk.stmts.iter() {
                                 self.tcxt.visit_stmt(stmt);
                                 // self.visit_stmt(stmt);
                             }
@@ -267,14 +267,11 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::Ret(expr) => {
-                let mut ret_ty =
-                    resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr)).map(|t| {
-                        self.tcxt.patch_generic_from_path(&t.into_spanned(DUMMY), stmt.span).val
-                    });
+                let mut ret_ty = resolve_ty(self.tcxt, expr, self.tcxt.expr_ty.get(expr));
 
                 let func_ret_ty = self.tcxt.var_func.get_fn_by_span(expr.span).and_then(|fname| {
                     self.tcxt.var_func.func_return.insert(fname);
-                    self.tcxt.var_func.name_func.get(&fname).map(|f| f.ret.val.clone())
+                    self.tcxt.var_func.name_func.get(&fname).map(|f| f.ret.get().val.clone())
                 });
 
                 let mut stack = if let Some((def, ident)) = self
@@ -313,23 +310,24 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::Exit => {
-                let func_ret_ty =
-                    self.tcxt.var_func.get_fn_by_span(stmt.span).and_then(|fname| {
-                        self.tcxt.var_func.name_func.get(&fname).map(|f| &f.ret.val)
-                    });
-                if !func_ret_ty.is_ty_eq(&Some(&Ty::Void)) {
+                let func = self
+                    .tcxt
+                    .var_func
+                    .get_fn_by_span(stmt.span)
+                    .and_then(|fname| self.tcxt.var_func.name_func.get(&fname));
+                if !func.map_or(false, |f| f.ret.get().val.is_ty_eq(&Ty::Void)) {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         stmt.span,
                         &format!(
                             "[E0tc] return type must be void `{}`",
-                            func_ret_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
+                            func.map_or("<unknown>".to_owned(), |f| f.ret.get().val.to_string()),
                         ),
                     ));
                 }
             }
             Stmt::Block(Block { stmts, .. }) => {
-                for stmt in stmts {
+                for stmt in stmts.iter() {
                     self.visit_stmt(stmt);
                 }
             }
@@ -341,12 +339,10 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 /// TODO: remove coercion
 crate fn is_truthy(ty: Option<&Ty>) -> bool {
     if let Some(t) = ty {
-        match t {
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::String | Ty::Int | Ty::Char | Ty::Float | Ty::Bool => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            t,
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool
+        )
     } else {
         false
     }
@@ -608,7 +604,7 @@ fn check_pattern_type(
                 },
             }
         }
-        Ty::String => check_val_pat(tcxt, pat, ty, "string", span, bound_vars),
+        Ty::ConstStr(..) => check_val_pat(tcxt, pat, ty, "string", span, bound_vars),
         Ty::Float => check_val_pat(tcxt, pat, ty, "float", span, bound_vars),
         Ty::Int => check_val_pat(tcxt, pat, ty, "int", span, bound_vars),
         Ty::Char => check_val_pat(tcxt, pat, ty, "char", span, bound_vars),
@@ -762,7 +758,7 @@ fn walk_field_access(
     expr: &Expression,
 ) -> Option<Ty> {
     match &expr.val {
-        Expr::Ident(id) => fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.val.clone()) } else { None }),
+        Expr::Ident(id) => fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.get().val.clone()) } else { None }),
         Expr::Deref { indir, expr } => {
             if let Some(ty) = walk_field_access(tcxt, fields, expr) {
                 Some(ty.dereference(*indir))
@@ -773,7 +769,7 @@ fn walk_field_access(
         Expr::Array { ident, exprs } => {
             if let arr @ Some(ty @ Ty::Array { .. }) = fields
                 .iter()
-                .find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None })
+                .find_map(|f| if f.ident == *ident { Some(&f.ty.get().val) } else { None })
             {
                 let dim = ty.array_dim();
                 if exprs.len() != dim {
@@ -870,7 +866,7 @@ crate fn fold_ty(
                 None
             }
         },
-        (Ty::String, Ty::String) => todo!(),
+        (Ty::ConstStr(..), Ty::ConstStr(..)) => todo!(),
         (Ty::Ptr(t), Ty::Int) => match op {
             BinOp::Add
             | BinOp::Sub
@@ -963,6 +959,6 @@ fn lit_to_type(lit: &Val) -> Ty {
         Val::Int(_) => Ty::Int,
         Val::Char(_) => Ty::Char,
         Val::Bool(_) => Ty::Bool,
-        Val::Str(_) => Ty::String,
+        Val::Str(s) => Ty::ConstStr(s.name().len()),
     }
 }

@@ -67,7 +67,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Item) {
 }
 
 crate fn walk_func<'ast, V: Visit<'ast>>(visit: &mut V, func: &'ast Func) {
-    let Func { ident: _, params, stmts, ret: _, generics: _ } = func;
+    let Func { ident: _, params, stmts, ret: _, generics: _, kind: _ } = func;
     // visit.visit_ident(ident);
     // visit.visit_generics(generics);
     visit.visit_params(params);

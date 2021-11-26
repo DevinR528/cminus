@@ -25,9 +25,6 @@ use crate::{
     visit::Visit,
 };
 
-//
-//
-//
 // This handles type inference for us.
 #[derive(Debug)]
 crate struct TypeInfer<'v, 'ast, 'input> {
@@ -98,7 +95,8 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                 (Ty::Ref(t1), Ty::Ref(t2)) => {
                     Some(Ty::Ref(box self.unify(Some(&t1.val), Some(&t2.val))?.into_spanned(DUMMY)))
                 }
-                (Ty::String, Ty::String) => Some(Ty::String),
+                // TODO: hmmmm
+                (Ty::ConstStr(..), Ty::ConstStr(..)) => Some(Ty::ConstStr(0)),
                 (Ty::Int, Ty::Int) => Some(Ty::Int),
                 (Ty::Char, Ty::Char) => Some(Ty::Char),
                 (Ty::Float, Ty::Float) => Some(Ty::Float),
@@ -123,29 +121,6 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
     }
 
     fn infer_rhs_field(&mut self, lhs_ty: &Ty, rhs: &'ast Expression, parent: &'ast Expression) {
-        fn fetch_fields<'a>(
-            lhs_ty: &Ty,
-            span: Range,
-            tcxt: &mut TyCheckRes<'a, '_>,
-        ) -> Option<&'a Struct> {
-            match lhs_ty {
-                Ty::Struct { ident, gen } => tcxt.name_struct.get(ident).copied(),
-                Ty::Path(path) => tcxt.name_struct.get(&path.local_ident()).copied(),
-                Ty::Ptr(_) => todo!(),
-                Ty::Ref(_) => todo!(),
-                Ty::Generic { ident, bound } => None,
-                Ty::Array { size, ty } => todo!(),
-                _ => {
-                    tcxt.errors.push_error(Error::error_with_span(
-                        tcxt,
-                        span,
-                        &format!("[E0tc] invalid field accesor target"),
-                    ));
-                    tcxt.errors.poisoned(true);
-                    None
-                }
-            }
-        }
         let fields = if let Some(s) = fetch_fields(lhs_ty, parent.span, self.tcxt) {
             &s.fields
         } else {
@@ -153,7 +128,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
         };
         match &rhs.val {
             Expr::Ident(id) => {
-                if let Some(field_ty) = fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.val.clone()) } else { None }) {
+                if let Some(field_ty) = fields.iter().find_map(|f| if f.ident == *id { Some(f.ty.get().val.clone()) } else { None }) {
                     self.tcxt.expr_ty.insert(rhs, field_ty.clone());
                     // We are at the end of the field access expression so, the whole expr resolves to this
                     self.tcxt.expr_ty.insert(parent, field_ty);
@@ -190,7 +165,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
             Expr::Array { ident, exprs } => {
                 if let arr @ Some(ty @ Ty::Array { .. }) = fields
                     .iter()
-                    .find_map(|f| if f.ident == *ident { Some(&f.ty.val) } else { None })
+                    .find_map(|f| if f.ident == *ident { Some(&f.ty.get().val) } else { None })
                 {
                     let dim = ty.array_dim();
                     if exprs.len() != dim {
@@ -218,7 +193,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
             Expr::FieldAccess { lhs, rhs: inner } => {
                 let id = lhs.val.as_ident();
                 if let Some(t @ Ty::Struct { ident, .. }) = &self.tcxt.type_of_ident(id, inner.span).and_then(|t| t.resolve()) {
-                    self.infer_rhs_field(&t, &**inner, parent);
+                    self.infer_rhs_field(t, &**inner, parent);
 
                     if let Some(accty) = self.tcxt.expr_ty.get(&**inner).cloned() {
                         self.tcxt.expr_ty.insert(&**inner, accty);
@@ -371,7 +346,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Stmt::Exit => {}
             Stmt::Block(blk) => {
-                for stmt in &blk.stmts {
+                for stmt in blk.stmts.iter() {
                     self.visit_stmt(stmt);
                 }
             }
@@ -458,9 +433,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     if type_args.is_empty() && !func.generics.is_empty() {
                         for (arg, param) in args.iter().zip(&func.params) {
                             if let Some(expr_ty) = self.tcxt.expr_ty.get(&arg) {
-                                if param.ty.val.has_generics() {
+                                if param.ty.get().val.has_generics() {
                                     if let Some(ty_gen_pair) =
-                                        peel_out_ty(Some(expr_ty), &param.ty.val)
+                                        peel_out_ty(Some(expr_ty), &param.ty.get().val)
                                     {
                                         infered_ty_args.push(ty_gen_pair);
                                     }
@@ -495,25 +470,24 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         }
                     }
 
-                    let ret_val = self.tcxt.patch_generic_from_path(&func.ret, expr.span).val;
+                    let ret_val = &func.ret.get().val;
                     // If the function is generic do complicated stuff
                     if ret_val.has_generics() {
-                        let mut subed_ty = ret_val;
+                        let mut subed_ty = ret_val.clone();
 
                         // If there are no explicit type args rely on inference of the arguments
                         if type_args.is_empty() {
                             // Do any of the param generics match the return type
                             let params = func.params.iter().enumerate().filter(|(_, p)| {
-                                func.ret
-                                    .val
+                                ret_val
                                     .generics()
                                     .iter()
-                                    .any(|g| p.ty.val.generics().contains(g))
+                                    .any(|g| p.ty.get().val.generics().contains(g))
                             });
 
                             for (idx, param) in params {
                                 let expr_ty = self.tcxt.expr_ty.get(&args[idx]);
-                                if let Some((ty, gen)) = peel_out_ty(expr_ty, &param.ty.val) {
+                                if let Some((ty, gen)) = peel_out_ty(expr_ty, &param.ty.get().val) {
                                     subed_ty.subst_generic(gen, &ty);
                                 }
                             }
@@ -523,22 +497,20 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             // `call::<int, bool>()` we need to know
                             // which type/generic goes with which
                             let idx_gen = func.generics.iter().enumerate().filter_map(|(i, g)| {
-                                if func.ret.val.generics().contains(&&g.ident) {
+                                if ret_val.generics().contains(&&g.ident) {
                                     Some((i, g.ident))
                                 } else {
                                     None
                                 }
                             });
                             for (idx, gen) in idx_gen {
-                                let ty_arg = self
-                                    .tcxt
-                                    .patch_generic_from_path(&type_args.slice()[idx], expr.span);
+                                let ty_arg = &type_args.slice()[idx];
                                 subed_ty.subst_generic(gen, &ty_arg.val);
                             }
                         }
                         self.tcxt.expr_ty.insert(expr, subed_ty);
                     } else {
-                        self.tcxt.expr_ty.insert(expr, func.ret.val.clone());
+                        self.tcxt.expr_ty.insert(expr, ret_val.clone());
                     }
                 }
             }
@@ -556,7 +528,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     .get(&type_args.iter().map(|t| &t.val).collect::<Vec<_>>());
 
                 if let Some(imp) = opt_imp {
-                    self.tcxt.expr_ty.insert(expr, imp.method.ret.val.clone());
+                    self.tcxt.expr_ty.insert(expr, imp.method.ret.get().val.clone());
                 }
             }
             Expr::FieldAccess { lhs, rhs } => {
@@ -619,6 +591,26 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             Expr::Value(val) => {
                 self.tcxt.expr_ty.insert(expr, val.val.to_type());
             }
+        }
+    }
+}
+
+fn fetch_fields<'a>(lhs_ty: &Ty, span: Range, tcxt: &mut TyCheckRes<'a, '_>) -> Option<&'a Struct> {
+    match lhs_ty {
+        Ty::Struct { ident, gen } => tcxt.name_struct.get(ident).copied(),
+        Ty::Path(path) => tcxt.name_struct.get(&path.local_ident()).copied(),
+        Ty::Ptr(_) => todo!(),
+        Ty::Ref(_) => todo!(),
+        Ty::Generic { ident, bound } => None,
+        Ty::Array { size, ty } => todo!(),
+        _ => {
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                span,
+                &format!("[E0tc] invalid field accesor target"),
+            ));
+            tcxt.errors.poisoned(true);
+            None
         }
     }
 }

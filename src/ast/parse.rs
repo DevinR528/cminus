@@ -9,9 +9,10 @@ use crate::{
     ast::{
         lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
         parse::symbol::Ident,
-        types::{self as ast, Decl, Expr, Path, Spany, Stmt, Type, Val},
+        types::{self as ast, Decl, Expr, FuncKind, Path, Spany, Stmt, Type, Val},
     },
-    typeck::{rawvec::RawVec, scope::hash_file},
+    data_struc::rawvec::RawVec,
+    typeck::scope::hash_file,
 };
 
 crate mod error;
@@ -248,28 +249,15 @@ impl<'a> AstBuilder<'a> {
         self.eat_if(&TokenMatch::OpenParen);
         self.eat_whitespace();
 
-        let params = if !self.eat_if(&TokenMatch::CloseParen) {
-            self.make_params(&generics)?
-        } else {
-            vec![]
-        };
+        let params =
+            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
 
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
 
         let ret = if self.eat_if(&TokenMatch::Colon) {
             self.eat_whitespace();
-            // @cleanup: this is kinda hacky (we do this here, traits, impls and make_params)
-            // Not sure if this is appropriate at parse time?
-            let mut ty = self.make_ty()?;
-            if let ast::Ty::Path(p) = &mut ty.val {
-                if p.segs.len() == 1 {
-                    if let Some(generic) = generics.iter().find(|g| g.ident == p.segs[0]) {
-                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
-                    }
-                }
-            }
-            ty
+            self.make_ty()?
         } else {
             self.eat_whitespace();
             ast::Ty::Void.into_spanned(self.curr_span())
@@ -280,8 +268,16 @@ impl<'a> AstBuilder<'a> {
 
         let span = ast::to_rng(start..self.input_idx(), self.file_id);
 
-        Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
-            .into_spanned(span))
+        Ok(ast::Decl::Func(ast::Func {
+            ident,
+            ret: crate::rawptr!(ret),
+            generics,
+            params,
+            stmts,
+            kind: FuncKind::Normal,
+            span,
+        })
+        .into_spanned(span))
     }
 
     // Parse `fn name<T>(it: T) -> int { .. }` with or without generics.
@@ -302,11 +298,8 @@ impl<'a> AstBuilder<'a> {
         self.eat_if(&TokenMatch::OpenParen);
         self.eat_whitespace();
 
-        let params = if !self.eat_if(&TokenMatch::CloseParen) {
-            self.make_params(&generics)?
-        } else {
-            vec![]
-        };
+        let params =
+            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
 
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
@@ -332,15 +325,23 @@ impl<'a> AstBuilder<'a> {
 
         let span = self.curr_span();
         let stmts = if self.eat_if(&TokenMatch::Semi) {
-            ast::Block { stmts: vec![], span }
+            ast::Block { stmts: crate::raw_vec![], span }
         } else {
             self.make_block()?
         };
 
         let span = ast::to_rng(start..self.input_idx, self.file_id);
 
-        Ok(ast::Decl::Func(ast::Func { ident, ret, generics, params, stmts, span })
-            .into_spanned(span))
+        Ok(ast::Decl::Func(ast::Func {
+            ident,
+            ret: crate::rawptr!(ret),
+            generics,
+            params,
+            stmts,
+            kind: FuncKind::Linked,
+            span,
+        })
+        .into_spanned(span))
     }
 
     fn parse_impl(&mut self) -> ParseResult<ast::Declaration> {
@@ -462,22 +463,14 @@ impl<'a> AstBuilder<'a> {
         self.eat_whitespace();
 
         let mut params =
-            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params(gens)? } else { vec![] };
+            if !self.eat_if(&TokenMatch::CloseParen) { self.make_params()? } else { vec![] };
 
         self.eat_if(&TokenMatch::CloseParen);
         self.eat_whitespace();
 
         let ret = if self.eat_if(&TokenMatch::Colon) {
             self.eat_whitespace();
-            let mut ty = self.make_ty()?;
-            if let ast::Ty::Path(p) = &mut ty.val {
-                if p.segs.len() == 1 {
-                    if let Some(generic) = gens.iter().find(|g| g.ident == p.segs[0]) {
-                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
-                    }
-                }
-            }
-            ty
+            self.make_ty()?
         } else {
             self.eat_whitespace();
             ast::Ty::Void.into_spanned(self.curr_span())
@@ -490,21 +483,23 @@ impl<'a> AstBuilder<'a> {
             let span = ast::to_rng(start..self.input_idx, self.file_id);
             ast::TraitMethod::Default(ast::Func {
                 ident,
-                ret,
+                ret: crate::rawptr!(ret),
                 generics: gens.to_vec(),
                 params,
                 stmts,
+                kind: FuncKind::Normal,
                 span,
             })
         } else {
-            let stmts = ast::Block { stmts: vec![], span: self.curr_span() };
+            let stmts = ast::Block { stmts: crate::raw_vec![], span: self.curr_span() };
             let span = ast::to_rng(start..self.input_idx, self.file_id);
             ast::TraitMethod::NoBody(ast::Func {
                 ident,
-                ret,
+                ret: crate::rawptr!(ret),
                 generics: gens.to_vec(),
                 params,
                 stmts,
+                kind: FuncKind::EmptyTrait,
                 span,
             })
         })
@@ -527,7 +522,7 @@ impl<'a> AstBuilder<'a> {
             let types = self.make_types(&TokenMatch::OpenParen, &TokenMatch::CloseParen)?;
 
             let span = ast::to_rng(start..self.input_idx, self.file_id);
-            variants.push(ast::Variant { ident, types, span });
+            variants.push(ast::Variant { ident, types: RawVec::from_vec(types), span });
 
             // TODO: report errors when missing commas if possible
             self.eat_whitespace();
@@ -561,7 +556,7 @@ impl<'a> AstBuilder<'a> {
             let ty = self.make_ty()?;
 
             let span = ast::to_rng(start..self.input_idx(), self.file_id);
-            params.push(ast::Field { ident, ty, span });
+            params.push(ast::Field { ident, ty: crate::rawptr!(ty), span });
 
             self.eat_whitespace();
             if self.eat_if(&TokenMatch::Comma) {
@@ -1199,13 +1194,16 @@ impl<'a> AstBuilder<'a> {
     fn make_block(&mut self) -> ParseResult<ast::Block> {
         self.push_call_stack("make_block");
         let start = self.input_idx;
-        let mut stmts = vec![];
+        let mut stmts = crate::raw_vec![];
 
         // If the function body is empty
         if self.cmp_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]) {
             self.eat_seq_ignore_ws(&[TokenMatch::OpenBrace, TokenMatch::CloseBrace]);
             let span = ast::to_rng(start..self.input_idx, self.file_id);
-            return Ok(ast::Block { stmts: vec![ast::Stmt::Exit.into_spanned(span)], span });
+            return Ok(ast::Block {
+                stmts: crate::raw_vec![ast::Stmt::Exit.into_spanned(span)],
+                span,
+            });
         }
 
         self.eat_whitespace();
@@ -1534,7 +1532,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     /// Parse `ident[ws]:[ws]type[ws],[ws]ident: type[ws]` everything inside the parens is optional.
-    fn make_params(&mut self, gens: &[ast::Generic]) -> ParseResult<Vec<ast::Param>> {
+    fn make_params(&mut self) -> ParseResult<Vec<ast::Param>> {
         self.push_call_stack("make_params");
         let mut params = vec![];
         loop {
@@ -1552,17 +1550,10 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
 
             let mut ty = self.make_ty()?;
-            if let ast::Ty::Path(p) = &mut ty.val {
-                if p.segs.len() == 1 {
-                    if let Some(generic) = gens.iter().find(|g| g.ident == p.segs[0]) {
-                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
-                    }
-                }
-            }
 
             let span = ast::to_rng(start..self.input_idx(), self.file_id);
 
-            params.push(ast::Param { ident, ty, span });
+            params.push(ast::Param { ident, ty: crate::rawptr!(ty), span });
 
             self.eat_whitespace();
             if self.eat_if(&TokenMatch::Comma) {
@@ -1776,7 +1767,7 @@ impl<'a> AstBuilder<'a> {
                         "char" => ast::Ty::Char.into_spanned(span),
                         "int" => ast::Ty::Int.into_spanned(span),
                         "float" => ast::Ty::Float.into_spanned(span),
-                        "string" => ast::Ty::String.into_spanned(span),
+                        "cstr" => ast::Ty::ConstStr(0).into_spanned(span),
                         _ => {
                             let path = self.make_path()?;
                             let span = ast::to_rng(start..self.input_idx(), self.file_id);

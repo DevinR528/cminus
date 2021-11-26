@@ -79,7 +79,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'ast, 'a> {
                     ty::Expr::Call {
                         path: trait_.clone(),
                         args: args.to_vec(),
-                        type_args: crate::raw_vec![i.method.ret.clone()],
+                        type_args: crate::raw_vec![i.method.ret.get().clone()],
                     }
                     .into_spanned(DUMMY),
                 ));
@@ -133,7 +133,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'ast, 'a> {
                 x = Some(ty::Expr::Call {
                     path: Path::single(ident),
                     args: args.to_vec(),
-                    type_args: crate::raw_vec![i.method.ret.clone()],
+                    type_args: crate::raw_vec![i.method.ret.get().clone()],
                 });
             } else {
                 panic!(

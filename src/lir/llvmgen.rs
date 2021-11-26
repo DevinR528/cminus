@@ -36,7 +36,7 @@ impl Ty {
                 )
                 .into(),
             Ty::Enum { ident, gen: _, def: _ } => context.opaque_struct_type(ident.name()).into(),
-            Ty::String => context.i16_type().array_type(0).into(),
+            Ty::ConstStr(..) => context.i16_type().array_type(0).into(),
             Ty::Int => context.i64_type().into(),
             Ty::Char => context.i8_type().into(),
             Ty::Float => context.f64_type().into(),
@@ -60,7 +60,7 @@ impl Ty {
             Ty::Enum { ident, gen: _, def: _ } => {
                 context.opaque_struct_type(ident.name()).const_zero().into()
             }
-            Ty::String => context.i16_type().array_type(0).const_zero().into(),
+            Ty::ConstStr(..) => context.i16_type().array_type(0).const_zero().into(),
             Ty::Int => context.i64_type().const_zero().into(),
             Ty::Char => context.i8_type().const_zero().into(),
             Ty::Float => context.f64_type().const_zero().into(),
@@ -186,7 +186,7 @@ impl<'ctx> LLVMGen<'ctx> {
             Ty::Array { .. }
             | Ty::Struct { .. }
             | Ty::Enum { .. }
-            | Ty::String
+            | Ty::ConstStr(..)
             | Ty::Int
             | Ty::Char
             | Ty::Float
