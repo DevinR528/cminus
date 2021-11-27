@@ -1,7 +1,0 @@
-linked fn write(_: int);
-
-fn main()
-    {
-        write(1);
-        exit;
-    }

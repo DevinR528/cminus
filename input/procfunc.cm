@@ -1,8 +1,0 @@
-fn x(y: int): int
-{
-  return y;
-}
-
-fn main() {
-  x(1);
-}

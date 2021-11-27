@@ -1,9 +1,0 @@
-const c: int = 0;
-
-fn b(x: int, y: int, z: float): int {
-    return x+y;
-}
-
-fn main() {
-    c = b(1,1,2.0);
-}

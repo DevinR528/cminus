@@ -1,9 +1,0 @@
-linked fn write(_: int);
-
-fn x(y: int) {
-   y = y;
-}
-
-fn main() {
-    write(x(1));
-}

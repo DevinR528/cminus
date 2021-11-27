@@ -1,6 +1,0 @@
-linked fn write(_: string);
-
-fn main() {
-    write("Hello world!");
-    exit;
-}
