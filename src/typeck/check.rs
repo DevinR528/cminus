@@ -107,11 +107,8 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             Stmt::AssignOp { lval, rval, .. } => {
                 self.check_assignment(lval, rval, stmt.span, false)
             }
-            Stmt::Call(_expr) => {
-                // Hmm we need something here?
-            }
-            Stmt::TraitMeth(_e) => {
-                // TODO:
+            Stmt::Call(..) | Stmt::TraitMeth(..) => {
+                // These are checked by `TyCheckRes::visit_expr`
             }
             Stmt::If { cond, blk: Block { stmts, .. }, els } => {
                 let cond_ty =

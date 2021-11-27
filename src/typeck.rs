@@ -53,8 +53,9 @@ use crate::{
         parse::{symbol::Ident, ParseResult, ParsedBlob},
         types::{
             to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
-            Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany,
-            Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
+            Field, FieldInit, Func, FuncKind, Generic, Impl, MatchArm, Param, Pat, Path, Range,
+            Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant,
+            DUMMY,
         },
     },
     error::{Error, ErrorReport},
@@ -371,6 +372,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             struct NameResUserTypes<'ast, 'b> {
                 res: &'ast ScopeWalker,
                 tcxt: &'ast TyCheckRes<'ast, 'b>,
+                func: &'ast Func,
             }
             impl<'ast, 'b> VisitMut<'ast> for NameResUserTypes<'ast, 'b> {
                 fn visit_expr(&mut self, expr: &'ast mut Expression) {
@@ -383,17 +385,32 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             expr.val = Expr::EnumInit { path, variant, items: args.clone() };
                         }
                     }
+                    // if it's still a call resolve any dependent generic type args from `Ty::Path
+                    // -> Ty::Generic`
+                    if let Expr::Call { path, type_args, .. } = &expr.val {
+                        for ty_arg in unsafe { type_args.iter_mut_shared() } {
+                            if !matches!(ty_arg.val, Ty::Path(..)) {
+                                continue;
+                            }
+                            let resolved =
+                                self.tcxt.patch_generic_from_path(ty_arg, &self.func.generics);
+                            if let Some(res) = resolved {
+                                *ty_arg = res;
+                            }
+                        }
+                    }
                 }
             }
 
             // Fix enum inits parsed as call expressions
             for stmt in unsafe { func.stmts.stmts.iter_mut_shared() } {
-                NameResUserTypes { res: &self.name_res, tcxt: self }.visit_stmt(stmt);
+                NameResUserTypes { res: &self.name_res, tcxt: self, func }.visit_stmt(stmt);
             }
 
             crate::visit::walk_func(self, func);
 
-            if !matches!(func.ret.get().val, Ty::Void)
+            if matches!(func.kind, FuncKind::Normal)
+                && !matches!(func.ret.get().val, Ty::Void)
                 && !self.var_func.func_return.contains(&func.ident)
             {
                 self.errors.push_error(Error::error_with_span(
@@ -868,7 +885,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             expr.span,
                             &format!(
-                                "cannot index array with {}",
+                                "[E0ty] cannot index array with {}",
                                 ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                             ),
                         ));
@@ -883,7 +900,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        "no type found for array expr",
+                        "[E0ty] no type found for array expr",
                     ));
                     self.errors.poisoned(true);
                 }
@@ -912,7 +929,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self.errors.push_error(Error::error_with_span(
                                 self,
                                 expr.span,
-                                "cannot negate non bool type",
+                                "[E0ty] cannot negate non bool type",
                             ));
                             self.errors.poisoned(true);
                         }
@@ -945,7 +962,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         self.errors.push_error(Error::error_with_span(
                             self,
                             inner_expr.span,
-                            "cannot take the address of an rvalue",
+                            "[E0ty] cannot take the address of an rvalue",
                         ));
                         self.errors.poisoned(true);
                         None
@@ -954,7 +971,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        &format!("identifier `{}` not found", inner_expr.val.as_ident()),
+                        &format!("[E0ty] identifier `{}` not found", inner_expr.val.as_ident()),
                     ));
                     self.errors.poisoned(true);
                     None
@@ -993,7 +1010,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        &format!("no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
+                        &format!("[E0ty] no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
                     ));
                     self.errors.poisoned(true);
                 }
@@ -1015,7 +1032,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        "no type found for paren expr",
+                        "[E0ty] no type found for paren expr",
                     ));
                     self.errors.poisoned(true);
                 }
@@ -1038,7 +1055,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        &format!("[E0tc] no function named `{}` defined", path),
+                        &format!("[E0ty] no function named `{}` defined", path),
                     ));
                     return;
                 };
@@ -1078,7 +1095,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        "wrong number of arguments",
+                        "[E0ty] wrong number of arguments",
                     ));
                     self.errors.poisoned(true);
                 }
@@ -1087,12 +1104,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     let mut param_ty = func_params.get(idx).map(|p| p.ty.get().val.clone());
                     let mut arg_ty = self.expr_ty.get(arg).cloned();
 
-                    // TODO: I removed `replace_with_concret_ty`(at bottom of file) on 11/26/21
-                    // if this breaks that's why
-                    if let Some(Ty::Generic { ident, .. }) = &param_ty {
-                        if let Some(ty_arg) = gen_arg_map.get(ident) {
-                            param_ty = Some(ty_arg.clone());
-                        }
+                    // The call to `replace_with_concrete_ty` is needed to fill nested types in ie.
+                    // &T or foo<T>
+                    if let Some(ty_arg) =
+                        replace_with_concrete_ty(self, param_ty.as_ref(), &gen_arg_map)
+                    {
+                        param_ty = Some(ty_arg);
                     }
 
                     // TODO: remove
@@ -1103,7 +1120,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             arg.span,
                             &format!(
-                                "[E0tc] call with wrong argument type\nfound `{}` expected `{}`",
+                                "[E0ty] call with wrong argument type\nfound `{}` expected `{}`",
                                 arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
@@ -1118,7 +1135,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        &format!("no trait named `{}`", trait_),
+                        &format!("[E0ty] no trait named `{}`", trait_),
                     ));
                     self.errors.poisoned(true);
                 }
@@ -1175,7 +1192,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             arg.span,
                             &format!(
-                                "trait call with wrong argument type\nfound `{}` expected `{}`",
+                                "[E0ty] trait call with wrong argument type\nfound `{}` expected `{}`",
                                 arg_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 param_ty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                             ),
@@ -1265,7 +1282,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             init.span,
                             &format!(
-                                "field initialized with mismatched type\nfound `{}` expected `{}`",
+                                "[E0ty] field initialized with mismatched type\nfound `{}` expected `{}`",
                                 exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 field_ty,
                             ),
@@ -1304,7 +1321,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         self.errors.push_error(Error::error_with_span(
                             self,
                             expr.span,
-                            &format!("enum `{}` has no variant `{}`", path, variant),
+                            &format!("[E0ty] enum `{}` has no variant `{}`", path, variant),
                         ));
                         self.errors.poisoned(true);
                         return;
@@ -1353,7 +1370,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self,
                             item.span,
                             &format!(
-                                "enum tuple initialized with mismatched type\nfound `{}` expected `{}`",
+                                "[E0ty] enum tuple initialized with mismatched type\nfound `{}` expected `{}`",
                                 exprty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                                 variant_ty.val,
                             ),
@@ -1434,7 +1451,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        "no type found for field access",
+                        "[E0ty] no type found for field access",
                     ));
                     self.errors.poisoned(true);
                 }
@@ -1489,16 +1506,34 @@ crate fn check_field_access<'ast>(
         // FIXME: come on clone here that's cray
         (ident, (*tcxt.name_struct.get(&ident).expect("no struct definition found")).clone())
     } else {
-        panic!("{}", Error::error_with_span(tcxt, lhs.span, "not valid field access"));
+        tcxt.errors.push_error(Error::error_with_span(
+            tcxt,
+            lhs.span,
+            "[E0ty] not valid field access",
+        ));
+        tcxt.errors.poisoned(true);
+        return None;
     };
 
     match &rhs.val {
         Expr::Ident(ident) => {
-            let rty = struc
-                .fields
-                .iter()
-                .find_map(|f| if f.ident == *ident { Some(f.ty.get().val.clone()) } else { None })
-                .unwrap_or_else(|| panic!("no field `{}` found for struct `{}`", ident, name));
+            let rty = if let Some(rty) = struc.fields.iter().find_map(|f| {
+                if f.ident == *ident {
+                    Some(f.ty.get().val.clone())
+                } else {
+                    None
+                }
+            }) {
+                rty
+            } else {
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    struc.span,
+                    &format!("[E0ty] no field `{}` found for struct `{}`", ident, name,),
+                ));
+                tcxt.errors.poisoned(true);
+                return None;
+            };
             tcxt.expr_ty.insert(rhs, rty.clone());
             Some(rty)
         }
@@ -1507,11 +1542,23 @@ crate fn check_field_access<'ast>(
                 tcxt.visit_expr(expr);
             }
 
-            let rty = struc
-                .fields
-                .iter()
-                .find_map(|f| if f.ident == *ident { Some(f.ty.get().val.clone()) } else { None })
-                .unwrap_or_else(|| panic!("no field `{}` found for struct `{}`", ident, name));
+            let rty = if let Some(rty) = struc.fields.iter().find_map(|f| {
+                if f.ident == *ident {
+                    Some(f.ty.get().val.clone())
+                } else {
+                    None
+                }
+            }) {
+                rty
+            } else {
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    struc.span,
+                    &format!("[E0ty] no field `{}` found for struct `{}`", ident, name,),
+                ));
+                tcxt.errors.poisoned(true);
+                return None;
+            };
 
             tcxt.expr_ty.insert(rhs, rty.clone());
 
@@ -1544,7 +1591,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                     tcxt,
                     expr.span,
                     &format!(
-                        "cannot dereference `{}`",
+                        "[E0ty] cannot dereference `{}`",
                         ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                     ),
                 ));
@@ -1567,7 +1614,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                     tcxt,
                     expr.span,
                     &format!(
-                        "cannot dereference array `{}`",
+                        "[E0ty] cannot dereference array `{}`",
                         ty.map_or("<unknown>".to_owned(), |t| t.to_string())
                     ),
                 ));
@@ -1587,54 +1634,55 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
     }
 }
 
-// THIS WAS REMOVED FROM call expression checking 11/26/21
-// fn replace_with_concret_ty(
-//     tcxt: &TyCheckRes<'_, '_>,
-//     param_ty: Option<&Ty>,
-//     gen_arg_map: &HashMap<Ident, Ty>,
-// ) -> Option<Ty> {
-//     Some(match param_ty? {
-//         Ty::Generic { ident, .. } => gen_arg_map.get(ident)?.clone(),
-//         t @ Ty::Path(..) => tcxt.name_res.resolve_name(t, tcxt)?,
-//         Ty::Array { size, ty: arrty } => Ty::Array {
-//             size: *size,
-//             ty: box replace_with_concret_ty(
-//                 tcxt,
-//                 Some(&arrty.val),
-//                 gen_arg_map,
-//             )?
-//             .into_spanned(DUMMY),
-//         },
-//         Ty::Struct { ident, gen } => Ty::Struct {
-//             ident: *ident,
-//             gen: gen
-//                 .iter()
-//                 .map(|g| {
-//                     replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
-//                         .map(|t| t.into_spanned(DUMMY))
-//                 })
-//                 .collect::<Option<Vec<_>>>()?,
-//         },
-//         Ty::Enum { ident, gen } => Ty::Enum {
-//             ident: *ident,
-//             gen: gen
-//                 .iter()
-//                 .map(|g| {
-//                     replace_with_concret_ty(tcxt, Some(&g.val), gen_arg_map)
-//                         .map(|t| t.into_spanned(DUMMY))
-//                 })
-//                 .collect::<Option<Vec<_>>>()?,
-//         },
-//         Ty::Ptr(inner) => Ty::Ptr(
-//             box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
-//                 .into_spanned(DUMMY),
-//         ),
-//         Ty::Ref(inner) => Ty::Ref(
-//             box replace_with_concret_ty(tcxt, Some(&inner.val), gen_arg_map)?
-//                 .into_spanned(DUMMY),
-//         ),
-//         _ => {
-//             return None;
-//         }
-//     })
-// }
+/// This should not do any name resolution or path -> generic patching but instead only pull out
+/// generic types and replace them with a concrete one.
+///
+/// If we have a generic type nested in a type this replaces it `foo<&T>` will become
+/// `foo<&concrete_type>`.
+fn replace_with_concrete_ty(
+    tcxt: &TyCheckRes<'_, '_>,
+    param_ty: Option<&Ty>,
+    gen_arg_map: &HashMap<Ident, Ty>,
+) -> Option<Ty> {
+    Some(match param_ty? {
+        Ty::Generic { ident, .. } => gen_arg_map.get(ident)?.clone(),
+        t @ Ty::Path(..) => {
+            println!("should be resolved");
+            tcxt.name_res.resolve_name(t, tcxt)?
+        }
+        Ty::Array { size, ty: arrty } => Ty::Array {
+            size: *size,
+            ty: box replace_with_concrete_ty(tcxt, Some(&arrty.val), gen_arg_map)?
+                .into_spanned(DUMMY),
+        },
+        Ty::Struct { ident, gen } => Ty::Struct {
+            ident: *ident,
+            gen: gen
+                .iter()
+                .map(|g| {
+                    replace_with_concrete_ty(tcxt, Some(&g.val), gen_arg_map)
+                        .map(|t| t.into_spanned(DUMMY))
+                })
+                .collect::<Option<Vec<_>>>()?,
+        },
+        Ty::Enum { ident, gen } => Ty::Enum {
+            ident: *ident,
+            gen: gen
+                .iter()
+                .map(|g| {
+                    replace_with_concrete_ty(tcxt, Some(&g.val), gen_arg_map)
+                        .map(|t| t.into_spanned(DUMMY))
+                })
+                .collect::<Option<Vec<_>>>()?,
+        },
+        Ty::Ptr(inner) => Ty::Ptr(
+            box replace_with_concrete_ty(tcxt, Some(&inner.val), gen_arg_map)?.into_spanned(DUMMY),
+        ),
+        Ty::Ref(inner) => Ty::Ref(
+            box replace_with_concrete_ty(tcxt, Some(&inner.val), gen_arg_map)?.into_spanned(DUMMY),
+        ),
+        _ => {
+            return None;
+        }
+    })
+}
