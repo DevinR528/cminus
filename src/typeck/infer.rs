@@ -467,11 +467,12 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             }
                         }
 
+                        // Sort the list like the type args
                         let last = infered_ty_args.len().saturating_sub(1);
                         for gen in &func.generics {
                             let idx =
                                 infered_ty_args.iter().position(|(_, g)| gen.ident == *g).unwrap();
-                            // move idx to the head of the list
+                            // move idx to the end of the list
                             infered_ty_args.swap(last, idx);
                         }
 
