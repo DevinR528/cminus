@@ -77,7 +77,7 @@ impl<'ctx> CodeGen<'ctx> {
             1 => "b",
             4 => "q", // TODO: everything is 64 bits
             8 => "q",
-            _ => "big",
+            _ => "too_big_break",
             // _ => unreachable!("larger than 8 bytes isn't valid to move in one go"),
         };
 
@@ -1091,11 +1091,23 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some(Location::NumberedOffset { offset, reg }) = &lval {
                     let mut running_offset = *offset;
                     for expr in fields.iter().flat_map(flatten_struct_init) {
-                        let rval = self.build_value(expr, assigned, can_clear).unwrap();
+                        let mut rval = self.build_value(expr, assigned, can_clear).unwrap();
 
                         let ele_size = expr.type_of().size();
 
                         running_offset -= ele_size;
+
+                        if rval.is_stack_offset() {
+                            let tmp = self.free_reg();
+                            self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                                src: rval.clone(),
+                                dst: Location::Register(tmp),
+                                size: ele_size,
+                            }]);
+                            self.used_regs.remove(&tmp);
+                            rval = Location::Register(tmp)
+                        }
+
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
                             // Move the value on the right hand side of the `= here`
                             src: rval,
