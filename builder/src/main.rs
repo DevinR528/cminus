@@ -61,6 +61,23 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        ["test" | "t"] => {
+            cmd!("cargo b").run().unwrap();
+
+            if let Err(e) = build_files(
+                &[
+                    "./stuff/asmgen/gen/gen.cm",
+                    "./stuff/types/string/string.cm",
+                    "./stuff/asmgen/ifs/simp.cm",
+                    "./stuff/asmgen/while/bubble.cm",
+                    "./stuff/asmgen/while/sort.cm",
+                ],
+                "-as",
+            ) {
+                writeln_red("Error: ", &e.to_string()).unwrap();
+                std::process::exit(1);
+            }
+        }
         [..] => {}
     }
 }

@@ -1,4 +1,8 @@
-fn write(_: string) {}
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+fn write(s: cstr) {
+    printf("%s\n", s);
+}
 
 fn main() {
     let x = 10;
