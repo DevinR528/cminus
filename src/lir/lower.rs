@@ -637,8 +637,13 @@ impl Ty {
                 let tag = 8_usize;
                 tag + variants
             }
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float => 8,
-            Ty::Bool => 4,
+            Ty::Ptr(_)
+            | Ty::Ref(_)
+            | Ty::ConstStr(..)
+            | Ty::Int
+            | Ty::Char
+            | Ty::Float
+            | Ty::Bool => 8,
             Ty::Void => 0,
             _ => unreachable!("generic type should be monomorphized"),
         }
@@ -1192,10 +1197,6 @@ fn lower_item(
     match &item.val {
         ty::Decl::Adt(_adt) => {}
         ty::Decl::Func(func) => {
-            // TODO: implement these in the lang
-            if func.ident == "write" || func.ident == "read" {
-                return;
-            }
             if func.generics.is_empty() {
                 lowered.push(Item::Func(Func::lower(tyctx, fold, func)));
             } else {
