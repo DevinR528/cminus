@@ -1,9 +1,0 @@
-linked fn write(_: float);
-
-fn main() {
-    write(51.0/17.0);
-    let i=100.5;  let k=2.1; let l=5.1;
-    let j = i / k / l ;
-    write(j);
-    exit;
-}
