@@ -306,17 +306,7 @@ impl<'a> AstBuilder<'a> {
 
         let ret = if self.eat_if(&TokenMatch::Colon) {
             self.eat_whitespace();
-            // @cleanup: this is kinda hacky (we do this here, traits and make_params)
-            // Not sure if this is appropriate at parse time?
-            let mut ty = self.make_ty()?;
-            if let ast::Ty::Path(p) = &mut ty.val {
-                if p.segs.len() == 1 {
-                    if let Some(generic) = generics.iter().find(|g| g.ident == p.segs[0]) {
-                        ty.val = ast::Ty::Generic { ident: p.segs.remove(0), bound: None };
-                    }
-                }
-            }
-            ty
+            self.make_ty()?
         } else {
             self.eat_whitespace();
             ast::Ty::Void.into_spanned(self.curr_span())
