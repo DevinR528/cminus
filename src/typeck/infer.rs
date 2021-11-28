@@ -18,6 +18,7 @@ use crate::{
     error::Error,
     typeck::{
         check::{fold_ty, resolve_ty},
+        check_field_access,
         generic::{Node, TyRegion},
         scope::ScopedName,
         TyCheckRes,
@@ -191,6 +192,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                 }
             },
             Expr::FieldAccess { lhs, rhs: inner } => {
+                // We know this `lhs` is a valid identifier
                 let id = lhs.val.as_ident();
                 if let Some(t @ Ty::Struct { ident, .. }) = &self.tcxt.type_of_ident(id, inner.span).and_then(|t| t.resolve()) {
                     self.infer_rhs_field(t, &**inner, parent);
@@ -250,7 +252,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         lval.span,
-                        &format!("[E0i] variable not found `{}`", lval.val.as_ident()),
+                        &format!("[E0i] variable not found `{}`", lval.val.debug_ident()),
                     ));
                     self.tcxt.errors.poisoned(true);
                     return;
@@ -286,9 +288,11 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             ));
                             self.tcxt.errors.poisoned(true);
                         }
+                    } else {
+                        // we are only marking that the ident is used
+                        self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
                     }
-                    // Mark the ident if that's what it is
-                    self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
+
                     // WE DO NOT DO TYPE CHECKING IN INFERENCE
 
                     // For any assignment we need to know the type of the lvalue, this is because
@@ -298,19 +302,33 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Stmt::AssignOp { lval, rval, op } => {
                 self.visit_expr(rval);
-                let rty = self.tcxt.expr_ty.get(rval);
 
                 // We must know the type of `lvar` now
-                let lty = self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
+                let lty = match &lval.val {
+                    Expr::Ident(id) => self.tcxt.type_of_ident(*id, lval.span),
+                    Expr::Array { ident, exprs } => self.tcxt.type_of_ident(*ident, lval.span),
+                    Expr::Deref { indir, expr } => self
+                        .tcxt
+                        .type_of_ident(lval.val.as_ident(), lval.span)
+                        // add the derefs
+                        .map(|t| t.dereference(*indir))
+                        // and then walk as far as they go into the type (ie. `**thing` if
+                        // `thing = &&other` would give the type of `other`)
+                        .and_then(|t| t.resolve()),
+                    Expr::FieldAccess { lhs, rhs } => check_field_access(self.tcxt, lhs, rhs),
+                    _ => unreachable!("invalid lvalue {:?}", lval),
+                };
                 if lty.is_none() {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         lval.span,
-                        &format!("[E0i] undeclared variable name `{}`", lval.val.as_ident()),
+                        &format!("[E0i] undeclared variable name `{}`", lval.val.debug_ident()),
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
 
+                // We do this after finding the left hand side type to make the borrow ckr happy :(
+                let rty = self.tcxt.expr_ty.get(rval);
                 if let Some(unified) = fold_ty(
                     self.tcxt,
                     lty.as_ref(),
@@ -367,7 +385,14 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.poisoned(true);
                 }
             }
-            Expr::Deref { indir, expr } => todo!(),
+            Expr::Deref { indir, expr: ex } => {
+                self.visit_expr(ex);
+                let exprty = self.tcxt.expr_ty.get(&**ex);
+
+                if let Some(ty) = exprty.cloned() {
+                    self.tcxt.expr_ty.insert(expr, Ty::Ref(box ty.into_spanned(DUMMY)));
+                }
+            }
             Expr::AddrOf(ex) => {
                 self.visit_expr(ex);
                 let exprty = self.tcxt.expr_ty.get(&**ex);
@@ -408,8 +433,6 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 let rhsty = self.tcxt.expr_ty.get(&**rhs);
                 let lhsty = self.tcxt.expr_ty.get(&**lhs);
 
-                // println!("FOLD {:?} == {:?}", lhsty, rhsty);
-
                 if let Some(unified) = fold_ty(self.tcxt, lhsty, rhsty, op, expr.span) {
                     self.tcxt.expr_ty.insert(expr, unified);
                 }
@@ -423,7 +446,6 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Call { path, args, type_args } => {
-                let mut infered_ty_args = vec![];
                 for arg in args.iter() {
                     self.visit_expr(arg);
                 }
@@ -444,12 +466,19 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         return;
                     }
                     if type_args.is_empty() && !func.generics.is_empty() {
+                        let mut infered_ty_args: Vec<(Ty, Ident)> = vec![];
+
                         for (arg, param) in args.iter().zip(&func.params) {
                             if let Some(expr_ty) = self.tcxt.expr_ty.get(&arg) {
                                 if param.ty.get().val.has_generics() {
                                     if let Some(ty_gen_pair) =
                                         peel_out_ty(Some(expr_ty), &param.ty.get().val)
                                     {
+                                        // We already collected info for this generic
+                                        if infered_ty_args.iter().any(|(_, g)| ty_gen_pair.1 == *g)
+                                        {
+                                            continue;
+                                        }
                                         infered_ty_args.push(ty_gen_pair);
                                     }
                                 }
@@ -470,8 +499,19 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                         // Sort the list like the type args
                         let last = infered_ty_args.len().saturating_sub(1);
                         for gen in &func.generics {
-                            let idx =
-                                infered_ty_args.iter().position(|(_, g)| gen.ident == *g).unwrap();
+                            let idx = if let Some(idx) =
+                                infered_ty_args.iter().position(|(_, g)| gen.ident == *g)
+                            {
+                                idx
+                            } else {
+                                self.tcxt.errors.push_error(Error::error_with_span(
+                                    self.tcxt,
+                                    gen.span,
+                                    &format!("[E0i] unused generic parameter `{}`", gen.ident),
+                                ));
+                                self.tcxt.errors.poisoned(true);
+                                return;
+                            };
                             // move idx to the end of the list
                             infered_ty_args.swap(last, idx);
                         }
@@ -555,21 +595,67 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         expr.span,
-                        &format!("[E0i] no type infered for argument `{}`", lhs.val.as_ident()),
+                        &format!("[E0i] no type infered for argument `{}`", lhs.val.debug_ident()),
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
             }
             Expr::StructInit { path, fields } => {
-                let struc = self.tcxt.name_struct.get(&path.segs[0]);
+                let struc = self.tcxt.name_struct.get(&path.segs[0]).cloned();
                 if let Some(struc) = struc {
-                    let gen =
-                        struc.generics.iter().map(|g| g.to_type().into_spanned(g.span)).collect();
-                    let ident = struc.ident;
-
-                    // TODO remove??
                     for field in fields.iter() {
                         self.visit_expr(&field.init);
+                    }
+
+                    let mut gen = struc
+                        .generics
+                        .iter()
+                        .map(|g| g.to_type().into_spanned(g.span))
+                        .collect::<Vec<_>>();
+                    let ident = struc.ident;
+
+                    if !struc.generics.is_empty() {
+                        let mut infered_ty_args: Vec<(Ty, Ident)> = vec![];
+                        for (field_init, field_def) in fields.iter().zip(&struc.fields) {
+                            if let Some(expr_ty) = self.tcxt.expr_ty.get(&field_init.init) {
+                                if field_def.ty.get().val.has_generics() {
+                                    if let Some(ty_gen_pair) =
+                                        peel_out_ty(Some(expr_ty), &field_def.ty.get().val)
+                                    {
+                                        // We already collected info for this generic
+                                        if infered_ty_args.iter().any(|(_, g)| ty_gen_pair.1 == *g)
+                                        {
+                                            continue;
+                                        }
+                                        infered_ty_args.push(ty_gen_pair);
+                                    }
+                                }
+                            } else {
+                                self.tcxt.errors.push_error(Error::error_with_span(
+                                    self.tcxt,
+                                    field_init.span,
+                                    &format!(
+                                        "[E0i] no type infered for field `{}`",
+                                        field_def.ident
+                                    ),
+                                ));
+                                self.tcxt.errors.poisoned(true);
+                                return;
+                            }
+                        }
+
+                        // Sort the list like the type args
+                        let last = infered_ty_args.len().saturating_sub(1);
+                        for gen in &struc.generics {
+                            let idx =
+                                infered_ty_args.iter().position(|(_, g)| gen.ident == *g).unwrap();
+                            // move idx to the end of the list
+                            infered_ty_args.swap(last, idx);
+                        }
+                        gen = infered_ty_args
+                            .into_iter()
+                            .map(|(t, _)| t.into_spanned(DUMMY))
+                            .collect();
                     }
 
                     self.tcxt.expr_ty.insert(expr, Ty::Struct { ident, gen });
@@ -613,15 +699,15 @@ fn fetch_fields<'a>(lhs_ty: &Ty, span: Range, tcxt: &mut TyCheckRes<'a, '_>) -> 
     match lhs_ty {
         Ty::Struct { ident, gen } => tcxt.name_struct.get(ident).copied(),
         Ty::Path(path) => tcxt.name_struct.get(&path.local_ident()).copied(),
-        Ty::Ptr(_) => todo!(),
-        Ty::Ref(_) => todo!(),
+        Ty::Ptr(inner) => fetch_fields(&inner.val, span, tcxt),
+        Ty::Ref(_) => todo!("{:?}", lhs_ty),
         Ty::Generic { ident, bound } => None,
         Ty::Array { size, ty } => todo!(),
         _ => {
             tcxt.errors.push_error(Error::error_with_span(
                 tcxt,
                 span,
-                &format!("[E0tc] invalid field accesor target"),
+                &format!("[E0tc] invalid field accessor target"),
             ));
             tcxt.errors.poisoned(true);
             None

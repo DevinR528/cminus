@@ -197,19 +197,45 @@ impl Expr {
     //     }
     // }
 
+    // A looser version of getting an `Ident` that won't fail.
+    crate fn debug_ident(&self) -> Ident {
+        match self {
+            Expr::Ident(id) => *id,
+            Expr::Deref { expr, .. } => expr.val.debug_ident(),
+            Expr::AddrOf(expr) => expr.val.debug_ident(),
+            Expr::Array { ident, .. } => *ident,
+            // TODO: hmm
+            Expr::TraitMeth { trait_: ident, .. } | Expr::Call { path: ident, .. } => {
+                *ident.segs.last().unwrap()
+            }
+            Expr::FieldAccess { lhs, .. } => lhs.val.debug_ident(),
+            Expr::StructInit { .. }
+            | Expr::EnumInit { .. }
+            | Expr::Urnary { .. }
+            | Expr::Binary { .. }
+            | Expr::Parens(..)
+            | Expr::ArrayInit { .. }
+            | Expr::Value(..) => Ident::new(DUMMY, "invalid expression identifier"),
+        }
+    }
+
     crate fn as_ident(&self) -> Ident {
         match self {
             Expr::Ident(id) => *id,
             Expr::Deref { expr, .. } => expr.val.as_ident(),
             Expr::AddrOf(expr) => expr.val.as_ident(),
             Expr::Array { ident, .. } => *ident,
+            // This is the correct thing to do since we use the ident to fetch the type of the
+            // target of a field access, i.e. the name of the struct (left hand side) so we can
+            // check the if it has a field (right hand side)
+            Expr::FieldAccess { lhs, .. } => lhs.val.as_ident(),
             // TODO: hmm
-            Expr::Call { path: ident, .. } => ident.segs[0],
+            Expr::TraitMeth { trait_: ident, .. } | Expr::Call { path: ident, .. } => {
+                *ident.segs.last().unwrap()
+            }
             // TODO: hmm
-            Expr::FieldAccess { .. }
-            | Expr::StructInit { .. }
+            Expr::StructInit { .. }
             | Expr::EnumInit { .. }
-            | Expr::TraitMeth { .. }
             | Expr::Urnary { .. }
             | Expr::Binary { .. }
             | Expr::Parens(..)
@@ -232,6 +258,8 @@ impl Expr {
                 }
             }
             Expr::Parens(ex) => ex.val.type_of(),
+            // Here we only care about the final type of an expression so
+            // `x.y.z` is only `type_of(z)` for our purposes
             Expr::FieldAccess { lhs, rhs } => rhs.val.type_of(),
             Expr::ArrayInit { items } => Some(Ty::Array {
                 size: items.len(),
@@ -336,7 +364,7 @@ impl Ty {
     ///
     /// ## Panics
     /// if `Self` is not a `Ty::Generic`.
-    crate fn generic(&self) -> Ident {
+    fn generic(&self) -> Ident {
         if let Self::Generic { ident, .. } = self {
             *ident
         } else {
@@ -406,23 +434,7 @@ impl Ty {
         }
     }
 
-    // crate fn reference(&self, mut deref: usize) -> Option<Self> {
-    //     let mut indirection = Some(self);
-    //     let mut stop = false;
-    //     while !stop {
-    //         match indirection {
-    //             Some(Ty::Ptr(next)) if deref > 0 => {
-    //                 deref -= 1;
-    //                 indirection = Some(&next.val);
-    //             }
-    //             _ => {
-    //                 stop = true;
-    //             }
-    //         }
-    //     }
-    //     indirection.cloned()
-    // }
-
+    /// Wrap `Ty` in `Ty::Ref` to represent following indirection.
     crate fn dereference(&self, mut indirection: usize) -> Self {
         let mut new = self.clone();
         while indirection > 0 {

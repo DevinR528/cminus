@@ -231,8 +231,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                                     .insert(*variable, ty.clone());
                             }
 
-                            // println!("{} {:?} {}", fn_name, bound_vars, arm);
-
                             for stmt in arm.blk.stmts.iter() {
                                 self.tcxt.visit_stmt(stmt);
                                 // self.visit_stmt(stmt);
@@ -375,13 +373,20 @@ crate fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
             }
             _ => return None,
         },
-        Ty::Ptr(_) => match rhs? {
-            _r @ Ty::Int => {
-                // pointer maths
+        Ty::Ptr(inner) => match rhs? {
+            r @ Ty::Int => {
+                *r = Ty::Ptr(inner.clone());
             }
             _ => return None,
         },
-        Ty::Ref(_) => todo!(),
+        Ty::Ref(_) => match rhs? {
+            _r @ Ty::Int => {
+                todo!("");
+            }
+            r => {
+                return None;
+            }
+        },
         Ty::Generic { ident: _, bound: _ } => return None,
         // TODO: char has no coercion as of now
         // array has no coercion
@@ -697,7 +702,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                 if exprs.len() != dim {
                     tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
-                        stmt_span,
+                        lval.span,
                         &format!("[E0tc] mismatched array dimension\nfound `{}` expected `{}`", exprs.len(), dim),
                     ));
                     tcxt.errors.poisoned(true);
@@ -706,24 +711,32 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
                     ty.index_dim(tcxt, exprs, stmt_span)
                 }
             } else {
-                panic!("ICE: todo `{:?}`", lval);
-                // TODO: specific error here?
-                // None
+                tcxt.errors.push_error(Error::error_with_span(
+                    tcxt,
+                    lval.span,
+                    &format!(
+                        "[E0tc] no array `{}` found (lvalue)",
+                        ident,
+                    ),
+                ));
+                tcxt.errors.poisoned(true);
+                None
             }
         },
         Expr::FieldAccess { lhs, rhs } => {
-            if let Some(Ty::Struct { ident, .. }) = tcxt.expr_ty.get(&**lhs).and_then(|t| t.resolve()) {
+            if let Some(Ty::Struct { ident, .. }) = tcxt.expr_ty.get(&**lhs).map(|t| {
+                field_resolve(t)
+            }) {
                 let fields = tcxt.name_struct.get(&ident).map(|s| s.fields.clone()).unwrap_or_default();
 
                 walk_field_access(tcxt, &fields, rhs)
             } else {
                 tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
-                    stmt_span,
+                    lhs.span,
                     &format!(
-                        "[E0tc] no struct `{}` found",
-                        tcxt.type_of_ident(lhs.val.as_ident(), lhs.span)
-                            .map_or("<unknown>".to_owned(), |t| t.to_string()),
+                        "[E0tc] no struct `{}` found (lvalue)",
+                        lhs.val.debug_ident(),
                     ),
                 ));
                 tcxt.errors.poisoned(true);
@@ -792,8 +805,9 @@ fn walk_field_access(
             }
         },
         Expr::FieldAccess { lhs, rhs } => {
-            let id = lhs.val.as_ident();
-            if let Some(Ty::Struct { ident: name, .. }) = tcxt.type_of_ident(id, expr.span).and_then(|t| t.resolve()) {
+            // We know this `lhs` is a valid identifier
+            // let id = lhs.val.as_ident();
+            if let Some(Ty::Struct { ident: name, .. }) = tcxt.expr_ty.get(&**lhs).map(|t| field_resolve(t)) {
                 // TODO: this is kinda ugly because of the clone but it complains about tcxt otherwise
                 // or default not being impl'ed \o/
                 let fields = tcxt.name_struct.get(&name).map(|s| s.fields.clone()).unwrap_or_default();
@@ -802,7 +816,7 @@ fn walk_field_access(
                 tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
-                    &format!("[E0tc] no struct `{}` found", id),
+                    &format!("[E0tc] no struct `{}` found", lhs.val.debug_ident()),
                 ));
                 tcxt.errors.poisoned(true);
                 None
@@ -825,6 +839,16 @@ fn walk_field_access(
             tcxt.errors.poisoned(true);
             None
         }
+    }
+}
+
+fn field_resolve(ty: &Ty) -> &Ty {
+    match ty {
+        Ty::Struct { ident, gen } => ty,
+        Ty::Enum { ident, gen } => ty,
+        Ty::Ptr(inner) => &inner.val,
+        Ty::Ref(inner) => &inner.val,
+        _ => unreachable!("this should have been caught by inference or TyCheckRes's main pass"),
     }
 }
 
@@ -924,7 +948,6 @@ crate fn fold_ty(
         (Ty::Func { .. }, _) => unreachable!("Func should never be folded"),
         _ => None,
     };
-    // println!("in fold {:?} {:?} == {:?}", lhs, rhs, res);
     res
 }
 
