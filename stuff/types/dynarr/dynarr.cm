@@ -1,0 +1,31 @@
+// A dynamically sized array, like c++ `std::Vector` or Rusts `Vec<T>`
+//
+
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+linked fn malloc<T>(_size: int): *T;
+linked fn free<T>(_ptr: *T);
+linked fn realloc<T>(_ptr: *T, _size: int): *T;
+
+struct dynarr<T> {
+    buff: *T,
+    len: int,
+    cap: int,
+}
+
+fn push<T>(arr: *dynarr<T>, it: T) {
+    if (arr.len == arr.cap) {
+        exit;
+    } else {
+        arr.buff += arr.len;
+        *arr.buff = it;
+        arr.len += 1;
+    }
+}
+
+fn main() {
+    let x = malloc::<int>(10 * 8);
+    let arr = dynarr { buff: x, len: 0, cap: 10 };
+    push(&arr, 10);
+    printf("%d", *arr.buff);
+}

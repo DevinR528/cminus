@@ -1,4 +1,4 @@
-linked fn printf<T>(_fmt: cstr, _val: T) {}
+linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn add(x: int, y: int): int {
     return x + y;
