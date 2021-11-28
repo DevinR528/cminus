@@ -878,7 +878,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Bang);
             let ex = self.make_expr()?;
             let expr = ast::Expr::Urnary { op: ast::UnOp::Not, expr: box ex }
-                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
 
             self.eat_whitespace();
 
@@ -893,7 +893,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::Tilde);
             let ex = self.make_expr()?;
             let expr = ast::Expr::Urnary { op: ast::UnOp::OnesComp, expr: box ex }
-                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
 
             self.eat_whitespace();
 
@@ -912,7 +912,7 @@ impl<'a> AstBuilder<'a> {
             }
             let id = self.make_lh_expr()?;
             let expr = ast::Expr::Deref { indir, expr: box id }
-                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
 
             self.eat_whitespace();
 
@@ -924,7 +924,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::And);
             let ex = self.make_expr()?;
             let expr = ast::Expr::AddrOf(box ex)
-                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
 
             self.eat_whitespace();
 
@@ -939,7 +939,7 @@ impl<'a> AstBuilder<'a> {
             let ex = self.make_expr()?;
 
             let expr = ast::Expr::Parens(box ex)
-                .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
             self.eat_whitespace();
 
             self.eat_if(&TokenMatch::CloseParen);
@@ -963,18 +963,23 @@ impl<'a> AstBuilder<'a> {
         Ok(if matches!(self.curr.kind, TokenKind::Ident | TokenKind::Star) {
             let start = self.input_idx;
 
-            if self.curr.kind == TokenMatch::Star && self.check_next(&TokenMatch::Ident) {
+            if self.curr.kind == TokenMatch::Star {
                 let indir = self.count_eaten_seq(&TokenMatch::Star);
+
+                if self.curr.kind != TokenMatch::Ident {
+                    todo!("error?")
+                }
+
                 ast::Expr::Deref { indir, expr: box self.make_lh_expr()? }
-                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
+                    .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
             } else if self.check_next(&TokenMatch::Dot) {
                 // We are in a field access
                 let lhs = ast::Expr::Ident(self.make_ident()?)
-                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
+                    .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
                 self.eat_if(&TokenMatch::Dot);
 
                 ast::Expr::FieldAccess { lhs: box lhs, rhs: box self.make_lh_expr()? }
-                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
+                    .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
             } else if self.check_next(&TokenMatch::OpenBracket) {
                 // We are in an array index expr
                 let start = self.input_idx;
@@ -999,7 +1004,7 @@ impl<'a> AstBuilder<'a> {
                 self.eat_if(&TokenMatch::CloseBracket);
 
                 ast::Expr::Array { ident, exprs }
-                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
+                    .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
             } else {
                 self.eat_whitespace();
                 let start = self.input_idx;
@@ -1048,14 +1053,14 @@ impl<'a> AstBuilder<'a> {
                     // TODO an enum that is just a path
                     // This can be an enum also
                     ast::Expr::Call { path, type_args: RawVec::from_vec(type_args), args }
-                        .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
+                        .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
                 } else if is_struct {
                     let fields = self.make_field_list()?;
-                    let span = ast::to_rng(start..self.input_idx(), self.file_id);
+                    let span = ast::to_rng(start..self.input_idx, self.file_id);
                     ast::Expr::StructInit { path, fields }.into_spanned(span)
                 } else if is_itemless_enum {
                     let variant = path.segs.pop().unwrap();
-                    let span = ast::to_rng(start..self.input_idx(), self.file_id);
+                    let span = ast::to_rng(start..self.input_idx, self.file_id);
                     ast::Expr::EnumInit { path, variant, items: vec![] }.into_spanned(span)
                 } else {
                     return Err(ParseError::Error(
@@ -1251,7 +1256,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
-        let span = ast::to_rng(start..self.input_idx(), self.file_id);
+        let span = ast::to_rng(start..self.input_idx, self.file_id);
         Ok(stmt.into_spanned(span))
     }
 
@@ -1898,6 +1903,7 @@ impl<'a> AstBuilder<'a> {
         {}
     }
 
+    /// Checks the next token in the `tokens` vector.
     fn check_next(&self, tkn: &TokenMatch) -> bool {
         self.tokens.first().map_or(false, |t| t.kind == *tkn)
     }
@@ -2473,7 +2479,7 @@ fn add() {
         let mut x = input.split("let");
         let start = x.next().unwrap().chars().count();
         let end = x.next().unwrap().chars().count() + start;
-        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end + 1, hash_file("test.file")))
+        assert_eq!(func.stmts.stmts[0].span, ast::to_rng(start..end, hash_file("test.file")))
     } else {
         panic!("assert failed for function call with import path")
     }
