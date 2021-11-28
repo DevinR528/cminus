@@ -414,61 +414,6 @@ impl<'ctx> CodeGen<'ctx> {
         })
     }
 
-    fn call_scanf(&mut self, expr: &'ctx Expr) {
-        fn format_str(ty: &Ty) -> &str {
-            match ty {
-                Ty::Ptr(_) | Ty::Ref(_) | Ty::Int | Ty::Bool => ".int_rformat",
-                Ty::ConstStr(..) => ".str_rformat",
-                Ty::Char => ".char_rformat",
-                Ty::Float => ".float_rformat",
-                Ty::Array { ty, .. } => format_str(ty),
-                _ => unreachable!("not valid print strings"),
-            }
-        }
-
-        let expr_type = expr.type_of();
-        let fmt_str = format_str(&expr_type).to_string();
-        let size = expr_type.size();
-
-        let val = self.build_value(expr, None, CanClearRegs::No).unwrap();
-
-        let mut pushed = false;
-        if self.total_stack % 16 != 0 || self.total_stack == 0 {
-            self.asm_buf.push(Instruction::Math {
-                src: Location::Const { val: Val::Int((16 - (self.total_stack % 16)) as isize) },
-                dst: Location::Register(Register::RSP),
-                op: BinOp::Sub,
-                cmt: "sub to align scanf stack",
-            });
-
-            if self.total_stack == 0 {
-                self.total_stack += 16;
-            }
-            pushed = true;
-        }
-
-        // if matches!(expr_type, Ty::String) {
-        self.asm_buf.extend_from_slice(&[
-            Instruction::Load { src: val, dst: Location::Register(Register::RSI), size: 8 },
-            Instruction::Mov { src: ZERO, dst: Location::Register(Register::RAX), comment: "" },
-            Instruction::Load {
-                src: Location::NamedOffset(fmt_str),
-                dst: Location::Register(Register::RDI),
-                size,
-            },
-            Instruction::Call(Location::Label("scanf".to_owned())),
-        ]);
-
-        if pushed {
-            self.asm_buf.push(Instruction::Math {
-                src: Location::Const { val: Val::Int((16 - (self.total_stack % 16)) as isize) },
-                dst: Location::Register(Register::RSP),
-                op: BinOp::Add,
-                cmt: "put the stack back",
-            });
-        }
-    }
-
     fn gen_call_expr(
         &mut self,
         path: &ty::Path,
@@ -743,7 +688,20 @@ impl<'ctx> CodeGen<'ctx> {
     fn get_pointer(&mut self, expr: &'ctx LValue) -> Option<Location> {
         Some(match expr {
             LValue::Ident { ident, ty: _ } => self.vars.get(ident)?.clone(),
-            LValue::Deref { indir: _, expr: _, ty: _ } => todo!(),
+            LValue::Deref { indir, expr, ty } => {
+                let loc = self.get_pointer(&**expr)?;
+                let register = self.free_reg();
+                if loc.is_stack_offset() {
+                    self.asm_buf.extend_from_slice(&[Instruction::Mov {
+                        src: loc,
+                        dst: Location::Register(register),
+                        comment: "deref",
+                    }]);
+                    Location::NumberedOffset { offset: 0, reg: register }
+                } else {
+                    todo!("pretty sure this is an error {:?}", loc)
+                }
+            }
             LValue::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty {
@@ -753,7 +711,27 @@ impl<'ctx> CodeGen<'ctx> {
                 };
                 self.index_arr(arr, exprs, ele_size, false)?
             }
-            LValue::FieldAccess { lhs: _, def: _, rhs: _, field_idx: _ } => todo!(),
+            LValue::FieldAccess { lhs, def, rhs, field_idx } => {
+                let left_loc = self.vars.get(&lhs.as_ident().unwrap()).cloned();
+                let lhs_ty = lhs.type_of();
+
+                if let Some(Location::NumberedOffset { offset, reg }) = left_loc {
+                    let accessor = construct_field_offset_lvalue(self, &rhs, offset, reg, def)?;
+                    if matches!(lhs_ty, Ty::Ptr(..)) {
+                        let register = self.free_reg();
+                        self.asm_buf.extend_from_slice(&[Instruction::Mov {
+                            src: accessor,
+                            dst: Location::Register(register),
+                            comment: "deref of lvalue",
+                        }]);
+                        Location::NumberedOffset { offset: 0, reg: register }
+                    } else {
+                        accessor
+                    }
+                } else {
+                    panic!("have not resolved field access")
+                }
+            }
         })
     }
 
@@ -768,7 +746,20 @@ impl<'ctx> CodeGen<'ctx> {
                 // panic!("{} {:?}", ident, self.vars);
                 self.vars.get(ident)?.clone()
             }
-            Expr::Deref { indir: _, expr: _, ty: _ } => todo!(),
+            Expr::Deref { indir, expr: ex, ty } => {
+                let loc = self.build_value(ex, assigned, can_clear)?;
+                let register = self.free_reg();
+                if loc.is_stack_offset() {
+                    self.asm_buf.extend_from_slice(&[Instruction::Mov {
+                        src: loc,
+                        dst: Location::Register(register),
+                        comment: "deref",
+                    }]);
+                    Location::NumberedOffset { offset: 0, reg: register }
+                } else {
+                    todo!("pretty sure this is an error {:?}", loc)
+                }
+            }
             Expr::AddrOf(ex) => {
                 let loc = self.build_value(ex, assigned, can_clear)?;
                 let register = self.free_reg();
@@ -1070,7 +1061,18 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::FieldAccess { lhs, rhs, def } => {
                 let lval = self.vars.get(&lhs.as_ident()).cloned();
                 if let Some(Location::NumberedOffset { offset, reg }) = &lval {
-                    construct_field_offset(self, rhs, *offset, *reg, def)?
+                    let accessor = construct_field_offset(self, rhs, *offset, *reg, def)?;
+                    if matches!(lhs.type_of(), Ty::Ptr(..)) {
+                        let register = self.free_reg();
+                        self.asm_buf.extend_from_slice(&[Instruction::Mov {
+                            src: accessor,
+                            dst: Location::Register(register),
+                            comment: "deref of lvalue",
+                        }]);
+                        Location::NumberedOffset { offset: 0, reg: register }
+                    } else {
+                        accessor
+                    }
                 } else {
                     panic!("have not resolved field access")
                 }
@@ -1096,8 +1098,6 @@ impl<'ctx> CodeGen<'ctx> {
 
                         let ele_size = expr.type_of().size();
 
-                        running_offset -= ele_size;
-
                         if rval.is_stack_offset() {
                             let tmp = self.free_reg();
                             self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
@@ -1118,6 +1118,10 @@ impl<'ctx> CodeGen<'ctx> {
                             dst: Location::NumberedOffset { offset: running_offset, reg: *reg },
                             size: ele_size,
                         }]);
+
+                        // The first field is the start of the struct so don't go to the next field
+                        // until after it's been initialized
+                        running_offset -= ele_size;
                     }
 
                     if let Some(lval @ Location::NumberedOffset { .. }) = lval {
@@ -1192,8 +1196,6 @@ impl<'ctx> CodeGen<'ctx> {
 
                 let lval: Option<Location> = try { self.vars.get(&assigned?)?.clone() };
 
-                // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
-                // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
                 // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
                 for (idx, item) in items.iter().enumerate() {
                     let rval = self.build_value(item, None, can_clear).unwrap();
@@ -1745,6 +1747,69 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
     }
 }
 
+// TODO: @copypaste this whole thing could be removed if `LValue -> Expr` worked but the lifetimes
+// can't match when creating an `Expr` from a `LValue`
+fn construct_field_offset_lvalue<'a>(
+    gen: &mut CodeGen<'a>,
+    rhs: &'a LValue,
+    offset: usize,
+    reg: Register,
+    def: &Struct,
+) -> Option<Location> {
+    match rhs {
+        LValue::Ident { ident, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    return Some(Location::NumberedOffset { offset: offset - count, reg });
+                }
+                // Do this after so first field is the 0th offset
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        LValue::Deref { indir, expr, ty } => {
+            todo!("follow the pointer")
+        }
+        LValue::Array { ident, exprs, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    let arr = Location::NumberedOffset { offset: offset - count, reg };
+                    let ele_size =
+                        if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
+                    return gen.index_arr(arr, exprs, ele_size, true);
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        LValue::FieldAccess { lhs, rhs: inner, def: inner_def, field_idx } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if Some(f.ident) == lhs.as_ident() {
+                    return construct_field_offset_lvalue(
+                        gen,
+                        inner,
+                        offset - count,
+                        reg,
+                        inner_def,
+                    );
+                }
+                count += f.ty.size();
+            }
+
+            // type checking missed this field somehow
+            None
+        }
+        _ => unreachable!("not a valid struct field accessor"),
+    }
+}
+
 fn construct_field_offset<'a>(
     gen: &mut CodeGen<'a>,
     rhs: &'a Expr,
@@ -1759,6 +1824,8 @@ fn construct_field_offset<'a>(
                 if f.ident == *ident {
                     return Some(Location::NumberedOffset { offset: offset - count, reg });
                 }
+
+                // Do this after so first field is the 0th offset
                 count += f.ty.size();
             }
 
