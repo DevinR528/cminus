@@ -34,7 +34,7 @@ impl<'ast, 'b> VisitMut<'ast> for GenSubstitution<'ast, 'b> {
 
     fn visit_expr(&mut self, expr: &'ast mut ty::Expression) {
         if let Some(t) = self.tcxt.expr_ty.get(expr) {
-            if t.has_generics() && t.generic() == self.generic.ident {
+            if t.has_generics() && t.generics().contains(&&self.generic.ident) {
                 self.tcxt.mono_expr_ty.borrow_mut().insert(expr.clone(), self.ty.clone());
             }
         }

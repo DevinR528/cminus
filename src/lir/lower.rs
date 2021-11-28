@@ -252,11 +252,27 @@ pub enum Expr {
         def: Impl,
     },
     /// Access the fields of a struct `expr.expr.expr;`.
-    FieldAccess { lhs: Box<Expr>, def: Struct, rhs: Box<Expr> },
+    FieldAccess {
+        lhs: Box<Expr>,
+        #[dbg_ignore]
+        def: Struct,
+        rhs: Box<Expr>,
+    },
     /// An ADT is initialized with field values.
-    StructInit { path: Path, fields: Vec<FieldInit>, def: Struct },
+    StructInit {
+        path: Path,
+        fields: Vec<FieldInit>,
+        #[dbg_ignore]
+        def: Struct,
+    },
     /// An ADT is initialized with field values.
-    EnumInit { path: Path, variant: Ident, items: Vec<Expr>, def: Enum },
+    EnumInit {
+        path: Path,
+        variant: Ident,
+        items: Vec<Expr>,
+        #[dbg_ignore]
+        def: Enum,
+    },
     /// An array initializer `{0, 1, 2}`
     ArrayInit { items: Vec<Expr>, ty: Ty },
     /// A literal value `1, "hello", true`
@@ -291,27 +307,29 @@ impl Expr {
                 exprs: exprs.into_iter().map(|e| Expr::lower(tyctx, fold, e)).collect(),
             },
             ty::Expr::FieldAccess { lhs, rhs } => {
+                let original_lhs_span = lhs.span;
+
                 let left = Expr::lower(tyctx, fold, *lhs);
                 let right = Expr::lower(tyctx, fold, *rhs);
 
-                let def = match &left {
-                    Expr::Ident { ty: Ty::Struct { def, .. }, .. } => def.clone(),
-                    Expr::Deref { indir: _, expr: _, ty } => {
-                        let mut peel = ty;
-                        while let Ty::Ptr(t) | Ty::Ref(t) = peel {
-                            peel = t;
+                fn get_type_of_struct_ident(
+                    left: &Expr,
+                    orig_span: ty::Range,
+                    tyctx: &TyCheckRes<'_, '_>,
+                ) -> Struct {
+                    match left {
+                        Expr::Ident { ident, .. } => tyctx
+                            .type_of_ident(*ident, orig_span)
+                            .map(|t| deref_field(&Ty::lower(tyctx, &t), None))
+                            .expect("field access of non struct"),
+                        Expr::Array { ident: _, exprs: _, ty: inner } => {
+                            get_type_of_struct_ident(left, orig_span, tyctx)
                         }
-                        if let Ty::Struct { def, .. } = peel {
-                            def.clone()
-                        } else {
-                            unreachable!("lhs of field access must be struct {:?}", left)
-                        }
+                        _ => unreachable!("lhs of field access must be struct {:?}", left),
                     }
-                    Expr::AddrOf(_) => todo!(),
-                    Expr::Array { ident: _, exprs: _, ty: _ } => todo!(),
+                }
 
-                    _ => unreachable!("lhs of field access must be struct {:?}", left),
-                };
+                let def = get_type_of_struct_ident(&left, original_lhs_span, tyctx);
 
                 Expr::FieldAccess { lhs: box left, def, rhs: box right }
             }
@@ -440,7 +458,20 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Remove any amount of pointer indirection or follows.
+fn deref_field(ty: &Ty, left: Option<&LValue>) -> Struct {
+    let mut peel = ty;
+    while let Ty::Ptr(t) | Ty::Ref(t) = peel {
+        peel = t;
+    }
+    if let Ty::Struct { def, .. } = peel {
+        def.clone()
+    } else {
+        unreachable!("lhs of field access must be struct {:?}", left)
+    }
+}
+
+#[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum LValue {
     /// Access a named variable `a`.
     Ident { ident: Ident, ty: Ty },
@@ -451,7 +482,13 @@ pub enum LValue {
     /// Each `exprs` represents an access of a dimension of the array.
     Array { ident: Ident, exprs: Vec<Expr>, ty: Ty },
     /// Access the fields of a struct `expr.expr.expr;`.
-    FieldAccess { lhs: Box<LValue>, def: Struct, rhs: Box<LValue>, field_idx: u32 },
+    FieldAccess {
+        lhs: Box<LValue>,
+        #[dbg_ignore]
+        def: Struct,
+        rhs: Box<LValue>,
+        field_idx: u32,
+    },
 }
 
 impl LValue {
@@ -489,20 +526,9 @@ impl LValue {
                 let left = LValue::lower(tyctx, fold, *lhs);
 
                 let def = match &left {
-                    LValue::Ident { ty: Ty::Struct { def, .. }, .. } => def.clone(),
-                    LValue::Deref { indir: _, expr: _, ty } => {
-                        let mut peel = ty;
-                        while let Ty::Ptr(t) | Ty::Ref(t) = peel {
-                            peel = t;
-                        }
-                        if let Ty::Struct { def, .. } = peel {
-                            def.clone()
-                        } else {
-                            unreachable!("lhs of field access must be struct {:?}", left)
-                        }
-                    }
+                    LValue::Ident { ty, .. } => deref_field(ty, Some(&left)),
+                    LValue::Deref { indir: _, expr: _, ty } => deref_field(ty, Some(&left)),
                     LValue::Array { ident: _, exprs: _, ty: _ } => todo!(),
-
                     _ => unreachable!("lhs of field access must be struct {:?}", left),
                 };
 
@@ -576,9 +602,27 @@ impl LValue {
             LValue::FieldAccess { rhs, .. } => rhs.type_of(),
         }
     }
+
+    // TODO: this is REALLY terrible amount of cloning going on here..
+    crate fn as_expr(&self) -> Expr {
+        match self {
+            LValue::Ident { ident, ty } => Expr::Ident { ident: *ident, ty: ty.clone() },
+            LValue::Deref { indir, expr, ty } => {
+                Expr::Deref { indir: *indir, expr: box expr.as_expr(), ty: ty.clone() }
+            }
+            LValue::Array { ident, exprs, ty } => {
+                Expr::Array { ident: *ident, exprs: exprs.to_vec(), ty: ty.clone() }
+            }
+            LValue::FieldAccess { lhs, rhs, def, .. } => Expr::FieldAccess {
+                lhs: box lhs.as_expr(),
+                rhs: box rhs.as_expr(),
+                def: def.clone(),
+            },
+        }
+    }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Ty {
     /// A generic type parameter `<T>`.
     ///
@@ -589,11 +633,21 @@ pub enum Ty {
     /// A struct defined by the user.
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
-    Struct { ident: Ident, gen: Vec<Ty>, def: Struct },
+    Struct {
+        ident: Ident,
+        gen: Vec<Ty>,
+        #[dbg_ignore]
+        def: Struct,
+    },
     /// An enum defined by the user.
     ///
     /// The `ident` is the name of the "type" and there are 'gen' generics.
-    Enum { ident: Ident, gen: Vec<Ty>, def: Enum },
+    Enum {
+        ident: Ident,
+        gen: Vec<Ty>,
+        #[dbg_ignore]
+        def: Enum,
+    },
     /// A pointer to a type.
     ///
     /// This is equivalent to indirection, for each layer of `Ty::Ptr(..)` we have
