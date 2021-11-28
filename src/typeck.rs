@@ -840,6 +840,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_stmt(&mut self, stmt: &'ast Statement) {
         self.errors.poisoned(false);
 
+        // Collect all the `let x = ..` assignments and add them to our current scope (whatever
+        // function scope we are in)
         self.name_res.visit_stmt(stmt);
 
         let mut infer = TypeInfer { tcxt: self };
@@ -862,8 +864,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         match &expr.val {
             Expr::Ident(var_name) => {
                 if let Some(ty) = self.type_of_ident(*var_name, expr.span) {
-                    // self.expr_ty.insert(expr, ty);
-                    // Ok because of `x += 1;` turns into `x = x + 1;`
+                    // TODO: at this point all types should be known but it there may be a few
+                    // stragglers especially parts of field access ie.
+                    // `thing.x.y.z` (check)
                 } else {
                     self.errors.push_error(Error::error_with_span(
                         self,
@@ -971,7 +974,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
-                        &format!("[E0ty] identifier `{}` not found", inner_expr.val.as_ident()),
+                        &format!("[E0ty] identifier `{}` not found", inner_expr.val.debug_ident()),
                     ));
                     self.errors.poisoned(true);
                     None
@@ -1059,6 +1062,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     ));
                     return;
                 };
+
                 // Iter the type arguments at the call site
                 for (gen_arg_idx, ty_arg) in type_args.iter().enumerate() {
                     // Don't use the same stack for each iteration
@@ -1218,8 +1222,23 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 };
                 self.expr_ty.insert(expr, ret_ty);
             }
-            Expr::Value(val) => {
-                // inference collects these
+            Expr::FieldAccess { lhs, rhs } => {
+                self.visit_expr(lhs);
+
+                // rhs is saved in `check_field_access`
+                let field_ty = check_field_access(self, lhs, rhs);
+                if let Some(ty) = field_ty {
+                    self.expr_ty.insert(expr, ty);
+                    // no is_some check: because of `x.y += 1;` being lowered to `x.y = x.y + 1;`
+                } else {
+                    // TODO: this error is crappy
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        expr.span,
+                        "[E0ty] no type found for field access",
+                    ));
+                    self.errors.poisoned(true);
+                }
             }
             Expr::StructInit { path, fields } => {
                 let name = *path.segs.last().unwrap();
@@ -1438,23 +1457,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 );
                 // no is_some check: because of `x[0] += 1;` being lowered to `x[0] = w[0] + 1;`
             }
-            Expr::FieldAccess { lhs, rhs } => {
-                self.visit_expr(lhs);
-
-                // rhs is saved in `check_field_access`
-                let field_ty = check_field_access(self, lhs, rhs);
-                if let Some(ty) = field_ty {
-                    self.expr_ty.insert(expr, ty);
-                    // no is_some check: because of `x.y += 1;` being lowered to `x.y = w.y + 1;`
-                } else {
-                    // TODO: this error is crappy
-                    self.errors.push_error(Error::error_with_span(
-                        self,
-                        expr.span,
-                        "[E0ty] no type found for field access",
-                    ));
-                    self.errors.poisoned(true);
-                }
+            Expr::Value(val) => {
+                // inference collects these
             }
         }
         // We do NOT call walk_expr here since we recursively walk the exprs
@@ -1500,40 +1504,60 @@ crate fn check_field_access<'ast>(
     lhs: &'ast Expression,
     rhs: &'ast Expression,
 ) -> Option<Ty> {
-    let lhs_ty = tcxt.expr_ty.get(lhs);
+    fn field_access(ty: &Ty) -> Option<Ty> {
+        Some(match ty {
+            Ty::Struct { ident, gen } => ty.clone(),
+            Ty::Enum { ident, gen } => ty.clone(),
+            Ty::Ptr(inner) => field_access(&inner.val)?,
+            Ty::Ref(inner) => field_access(&inner.val)?,
+            _ => return None,
+        })
+    }
 
-    let (name, struc) = if let Some(Ty::Struct { ident, .. }) = lhs_ty.and_then(|t| t.resolve()) {
-        // FIXME: come on clone here that's cray
-        (ident, (*tcxt.name_struct.get(&ident).expect("no struct definition found")).clone())
-    } else {
-        tcxt.errors.push_error(Error::error_with_span(
-            tcxt,
-            lhs.span,
-            "[E0ty] not valid field access",
-        ));
-        tcxt.errors.poisoned(true);
-        return None;
+    // Because we use `check_field_access` in the infer phase we can't rely on
+    // `tcxt.expr_ty.get()`, we do collect the lhs expr
+    let lhs_ty = tcxt.type_of_ident(lhs.val.as_ident(), lhs.span);
+
+    let (name, struc) =
+        if let Some(Ty::Struct { ident, .. }) = lhs_ty.as_ref().and_then(|t| field_access(t)) {
+            // FIXME: come on clone here that's cray
+            (ident, (*tcxt.name_struct.get(&ident).expect("no struct definition found")).clone())
+        } else {
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                lhs.span,
+                &format!(
+                    "[E0ty] not valid field access `{}`",
+                    lhs_ty.map_or("<unknown>".into(), |t| t.to_string())
+                ),
+            ));
+            tcxt.errors.poisoned(true);
+            return None;
+        };
+
+    let opt_ident_type = |ident: Ident, tcxt: &TyCheckRes<'_, '_>| -> Option<Ty> {
+        if let Some(rty) = struc.fields.iter().find_map(|f| {
+            if f.ident == ident {
+                Some(f.ty.get().val.clone())
+            } else {
+                None
+            }
+        }) {
+            Some(rty)
+        } else {
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                struc.span,
+                &format!("[E0ty] no field `{}` found for struct `{}`", ident, name,),
+            ));
+            tcxt.errors.poisoned(true);
+            None
+        }
     };
 
     match &rhs.val {
         Expr::Ident(ident) => {
-            let rty = if let Some(rty) = struc.fields.iter().find_map(|f| {
-                if f.ident == *ident {
-                    Some(f.ty.get().val.clone())
-                } else {
-                    None
-                }
-            }) {
-                rty
-            } else {
-                tcxt.errors.push_error(Error::error_with_span(
-                    tcxt,
-                    struc.span,
-                    &format!("[E0ty] no field `{}` found for struct `{}`", ident, name,),
-                ));
-                tcxt.errors.poisoned(true);
-                return None;
-            };
+            let rty = opt_ident_type(*ident, tcxt)?;
             tcxt.expr_ty.insert(rhs, rty.clone());
             Some(rty)
         }
@@ -1542,23 +1566,7 @@ crate fn check_field_access<'ast>(
                 tcxt.visit_expr(expr);
             }
 
-            let rty = if let Some(rty) = struc.fields.iter().find_map(|f| {
-                if f.ident == *ident {
-                    Some(f.ty.get().val.clone())
-                } else {
-                    None
-                }
-            }) {
-                rty
-            } else {
-                tcxt.errors.push_error(Error::error_with_span(
-                    tcxt,
-                    struc.span,
-                    &format!("[E0ty] no field `{}` found for struct `{}`", ident, name,),
-                ));
-                tcxt.errors.poisoned(true);
-                return None;
-            };
+            let rty = opt_ident_type(*ident, tcxt)?;
 
             tcxt.expr_ty.insert(rhs, rty.clone());
 
@@ -1577,16 +1585,16 @@ crate fn check_field_access<'ast>(
     }
 }
 
-/// The is used in the collection of expressions.
-/// TODO: return an error
+/// This is used in the collection of expressions and ONLY checks that it is an expressing kind that
+/// can be dereferenced, there is no type checking (can this pointer type be deref'ed this many
+/// times).
 fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
     match &expr.val {
         Expr::Ident(id) => {
             let ty = tcxt.type_of_ident(*id, expr.span).or_else(|| tcxt.expr_ty.get(expr).cloned());
             if let Some(_ty) = ty {
-                // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
+                // MAYBE: check and add expr to expr_ty map
             } else {
-                // panic!("{:?}", expr);
                 tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
                     expr.span,
@@ -1608,7 +1616,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
                 .type_of_ident(*ident, expr.span)
                 .and_then(|ty| ty.index_dim(tcxt, exprs, expr.span));
             if let Some(_ty) = ty {
-                // println!("{:?} == {:?}", ty, tcxt.expr_ty.get(expr))
+                // MAYBE: check and add expr to expr_ty map
             } else {
                 tcxt.errors.push_error(Error::error_with_span(
                     tcxt,
