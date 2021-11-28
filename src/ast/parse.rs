@@ -11,7 +11,7 @@ use crate::{
         parse::symbol::Ident,
         types::{self as ast, Decl, Expr, FuncKind, Path, Spany, Stmt, Type, Val},
     },
-    data_struc::rawvec::RawVec,
+    data_struc::{rawvec::RawVec, str_help::StripEscape},
     typeck::scope::hash_file,
 };
 
@@ -24,6 +24,8 @@ use error::ParseError;
 use ops::{AssocOp, Fixit};
 
 use self::lex::Base;
+
+use super::types::Spanned;
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -946,7 +948,7 @@ impl<'a> AstBuilder<'a> {
             let op = self.make_op()?;
             (expr, op)
         } else {
-            todo!("{:?}", self.curr)
+            return Err(ParseError::Error("lit, ptr, parens, ones comp, nots", self.curr_span()));
         })
     }
 
@@ -958,10 +960,14 @@ impl<'a> AstBuilder<'a> {
     /// - fn call
     fn make_lh_expr(&mut self) -> ParseResult<ast::Expression> {
         self.push_call_stack("make_lh_expr");
-        Ok(if self.curr.kind == TokenMatch::Ident {
+        Ok(if matches!(self.curr.kind, TokenKind::Ident | TokenKind::Star) {
             let start = self.input_idx;
 
-            if self.check_next(&TokenMatch::Dot) {
+            if self.curr.kind == TokenMatch::Star && self.check_next(&TokenMatch::Ident) {
+                let indir = self.count_eaten_seq(&TokenMatch::Star);
+                ast::Expr::Deref { indir, expr: box self.make_lh_expr()? }
+                    .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id))
+            } else if self.check_next(&TokenMatch::Dot) {
                 // We are in a field access
                 let lhs = ast::Expr::Ident(self.make_ident()?)
                     .into_spanned(ast::to_rng(start..self.input_idx(), self.file_id));
@@ -1059,7 +1065,10 @@ impl<'a> AstBuilder<'a> {
                 }
             }
         } else {
-            todo!()
+            return Err(ParseError::Error(
+                "ident, field access, array index or fn call",
+                self.curr_span(),
+            ));
         })
     }
 
@@ -1314,7 +1323,7 @@ impl<'a> AstBuilder<'a> {
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::CloseBrace);
-        self.eat_whitespace();
+        // self.eat_whitespace();
 
         Ok(ast::Stmt::Match { expr, arms })
     }
@@ -1335,12 +1344,12 @@ impl<'a> AstBuilder<'a> {
         self.push_call_stack("make_expr_stmt");
         // @copypaste We are sort of taking this from `advance_to_op` but limiting the choices to
         // just calls and trait method calls
-        Ok(if self.curr.kind == TokenMatch::Ident {
+        Ok(if matches!(self.curr.kind, TokenKind::Ident | TokenKind::Star) {
             let expr = self.make_lh_expr()?;
             self.eat_whitespace();
 
             match expr.val {
-                // TODO: assingment is also valid here
+                // TODO: assignment is also valid here
                 //
                 // `x[0] = 6; x = call; v.v.f = yo;
                 ast::Expr::Ident(_) => self.make_assign_stmt_expr(expr)?,
@@ -1442,9 +1451,9 @@ impl<'a> AstBuilder<'a> {
             self.eat_whitespace();
 
             let blk = self.make_block()?;
-            self.eat_if(&TokenMatch::Comma);
 
             let span = ast::to_rng(start..self.input_idx(), self.file_id);
+            self.eat_if(&TokenMatch::Comma);
             arms.push(ast::MatchArm { pat, blk, span })
         }
         Ok(arms)
@@ -1626,13 +1635,10 @@ impl<'a> AstBuilder<'a> {
                             .map_err(|_| ParseError::InvalidFloatLiteral(self.curr_span()))?,
                     ),
                     LiteralKind::Char { terminated } => {
-                        let mut text = text.to_string();
-                        // Remove the first ' and pop the last '
-                        text.remove(0);
-                        text.pop();
-
+                        let end = text.len() - 1;
+                        let text = &text[1..end];
                         if text.replace('\\', "").len() == 1 {
-                            Val::Char(text.chars().next().unwrap())
+                            Val::Char(StripEscape::new(text).next().unwrap())
                         } else {
                             return Err(ParseError::Error(
                                 "multi character `char`",
@@ -1684,6 +1690,7 @@ impl<'a> AstBuilder<'a> {
         Ok(args)
     }
 
+    /// Parses `::<type, type...>` where the `type` is concrete or generic.
     fn make_type_args(&mut self) -> ParseResult<Vec<Type>> {
         self.eat_seq_ignore_ws(&[TokenMatch::Colon, TokenMatch::Colon]);
         Ok(if self.curr.kind == TokenMatch::Lt {
@@ -1737,7 +1744,7 @@ impl<'a> AstBuilder<'a> {
 
     /// Parse `type[ws]`.
     ///
-    /// This also handles `*type, [lit_int, type]` and user defined items.
+    /// This also handles `*type, [lit_int, type], foo<T>` and user defined items.
     fn make_ty(&mut self) -> ParseResult<ast::Type> {
         self.push_call_stack("make_ty");
 
@@ -1759,9 +1766,16 @@ impl<'a> AstBuilder<'a> {
                         "float" => ast::Ty::Float.into_spanned(span),
                         "cstr" => ast::Ty::ConstStr(0).into_spanned(span),
                         _ => {
+                            let start = self.input_idx;
                             let path = self.make_path()?;
-                            let span = ast::to_rng(start..self.input_idx(), self.file_id);
-                            ast::Ty::Path(path).into_spanned(span)
+
+                            if self.curr.kind == TokenMatch::Lt {
+                                let tys = self.make_types(&TokenMatch::Lt, &TokenMatch::Gt)?;
+                                ast::Ty::Path(path).into_spanned(span)
+                            } else {
+                                let span = ast::to_rng(start..self.input_idx(), self.file_id);
+                                ast::Ty::Path(path).into_spanned(span)
+                            }
                         }
                     };
                     self.eat_if(&TokenMatch::Ident);
@@ -2004,6 +2018,16 @@ impl<'a> AstBuilder<'a> {
         }
     }
 
+    /// Count the tokens eaten that matched `pat`.
+    fn count_eaten_seq(&mut self, pat: &TokenMatch) -> usize {
+        let mut count = 0;
+        while pat == &self.curr.kind {
+            count += 1;
+            self.eat_tkn();
+        }
+        count
+    }
+
     /// Bump the current token if it matches `pat`.
     fn eat_if(&mut self, pat: &TokenMatch) -> bool {
         if pat == &self.curr.kind {
@@ -2065,6 +2089,21 @@ impl<'a> AstBuilder<'a> {
     /// The end count of the current cursor index.
     fn input_idx(&self) -> usize {
         self.input_idx + self.curr.len
+    }
+}
+
+#[test]
+fn parse_char_lit() {
+    let input = r#"
+const foo: char = '\n';
+"#;
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
+    parser.parse().unwrap();
+
+    if let Decl::Const(k) = &parser.items()[0].val {
+        if let Expr::Value(Spanned { val: Val::Char(ch), .. }) = k.init.val {
+            assert_eq!(ch, '\n');
+        }
     }
 }
 
