@@ -1,0 +1,19 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+struct dynarr {
+    buff: int,
+    next: int,
+    other: int,
+}
+
+fn add_field(darr: *dynarr, it: int) {
+    darr.buff += it;
+}
+
+fn main() {
+    let z = 10;
+    let arr = dynarr { buff: z, next: 22, other: 10 };
+
+    add_field(&arr, 10);
+    printf("%d should be 20\n", arr.buff);
+}

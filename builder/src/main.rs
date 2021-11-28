@@ -66,11 +66,15 @@ fn main() {
 
             if let Err(e) = build_files(
                 &[
-                    "./stuff/asmgen/gen/gen.cm",
-                    "./stuff/types/string/string.cm",
-                    "./stuff/asmgen/ifs/simp.cm",
-                    "./stuff/asmgen/while/bubble.cm",
-                    "./stuff/asmgen/while/sort.cm",
+                    "./stuff/asmgen/gen/gen.cm",      // fairly complex generic arguments
+                    "./stuff/types/string/string.cm", // test all kinds of printf/scanf types
+                    "./stuff/asmgen/ifs/simp.cm",     // test if/else blocks
+                    "./stuff/asmgen/while/bubble.cm", /* test while loops and creating variable
+                                                       * in blocks */
+                    "./stuff/asmgen/while/sort.cm", // same as above with ints
+                    "./stuff/asmgen/args/args.cm",  // test getting argc and argv in main
+                    "./stuff/types/dynarr/field.cm", // test passing struct pointer and mutating
+                    "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
                 ],
                 "-as",
             ) {

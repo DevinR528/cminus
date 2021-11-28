@@ -1,0 +1,22 @@
+
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+struct dynarr<T> {
+    buff: *T,
+}
+
+fn inc_ptr(ptr: int): int {
+    return ptr + 8;
+}
+
+fn push<T>(arr: *dynarr<T>, it: T) {
+    arr.buff = inc_ptr(arr.buff);
+    *arr.buff = it;
+}
+
+fn main() {
+    let x = 100;
+    let arr = dynarr { buff: &x };
+    push(&arr, 10);
+    printf("%d should be 10\n", *arr.buff);
+}
