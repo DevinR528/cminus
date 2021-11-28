@@ -12,6 +12,7 @@ use crate::{
         parse::symbol::Ident,
         types::{self as ty, FuncKind},
     },
+    data_struc::str_help::StripEscape,
     lir::{
         asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
         lower::{
@@ -1227,32 +1228,8 @@ impl<'ctx> CodeGen<'ctx> {
                 Val::Float(_) | Val::Int(_) | Val::Bool(_) => Location::Const { val: val.clone() },
                 Val::Char(c) => Location::Const { val: Val::Int(*c as isize) },
                 Val::Str(s) => {
-                    fn clean_str(s: &str) -> String {
-                        struct StripEscapte<'a> {
-                            s: std::str::Chars<'a>,
-                        }
-                        impl<'a> Iterator for StripEscapte<'a> {
-                            type Item = char;
-
-                            fn next(&mut self) -> Option<Self::Item> {
-                                self.s.next().and_then(|c| match c {
-                                    '\\' => Some(match self.s.next() {
-                                        Some('n') => '\n',
-                                        Some('t') => '\t',
-                                        Some('f') => '\r',
-                                        Some('0') => '\0',
-                                        Some('\\') => '\\',
-                                        c => unreachable!("{:?}", c),
-                                    }),
-                                    '"' => self.next(),
-                                    c => Some(c),
-                                })
-                            }
-                        }
-                        StripEscapte { s: s.chars() }.collect()
-                    }
                     let string = s.name();
-                    let cleaned = clean_str(string);
+                    let cleaned = StripEscape::new(string).into_iter().collect();
                     let name = format!(".Sstring_{}", self.asm_buf.len());
                     let x =
                         self.globals.entry(*s).or_insert(Global::Text { name, content: cleaned });
