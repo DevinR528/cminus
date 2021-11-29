@@ -96,7 +96,7 @@ fn process_file<'a>(
         println!("    type checking:     {}", tyck_mem.change_and_reset());
 
         if verbose {
-            println!("{:#?}", tyck);
+            println!("{:?}", tyck);
         }
     }
 
