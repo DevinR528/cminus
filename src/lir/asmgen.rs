@@ -36,6 +36,11 @@ const STATIC_PREAMBLE: &str = r#"
 const ZERO: Location = Location::Const { val: Val::Int(0) };
 const ONE: Location = Location::Const { val: Val::Int(1) };
 
+const RAX: Location = Location::Register(Register::RAX);
+const RSP: Location = Location::Register(Register::RSP);
+const RBP: Location = Location::Register(Register::RBP);
+const RDX: Location = Location::Register(Register::RDX);
+
 #[derive(Clone, Copy, Debug)]
 enum CanClearRegs {
     Yes,
@@ -426,7 +431,7 @@ impl<'ctx> CodeGen<'ctx> {
         if (self.total_stack % 16 != 0 || self.total_stack == 0) {
             self.asm_buf.push(Instruction::Math {
                 src: Location::Const { val: Val::Int((16 - self.total_stack % 16) as isize) },
-                dst: Location::Register(Register::RSP),
+                dst: RSP,
                 op: BinOp::Sub,
                 cmt: "printf stack misaligned",
             });
@@ -537,7 +542,7 @@ impl<'ctx> CodeGen<'ctx> {
                         },
                         Instruction::Math {
                             src: Location::Const { val: Val::Int(8) },
-                            dst: Location::Register(Register::RSP),
+                            dst: RSP,
                             op: BinOp::Add,
                             cmt: "fix above push",
                         },
@@ -572,7 +577,7 @@ impl<'ctx> CodeGen<'ctx> {
 
         self.asm_buf.push(Instruction::Mov {
             src: if float_flag { ONE } else { ZERO },
-            dst: Location::Register(Register::RAX),
+            dst: RAX,
             comment: "set float flag",
         });
 
@@ -591,7 +596,7 @@ impl<'ctx> CodeGen<'ctx> {
         if pushed_to_align_float_stack {
             self.asm_buf.push(Instruction::Math {
                 src: Location::Const { val: Val::Int((16 - (self.total_stack % 16)) as isize) },
-                dst: Location::Register(Register::RSP),
+                dst: RSP,
                 op: BinOp::Add,
                 cmt: "stack was larger than 16bits and misaligned",
             });
@@ -605,7 +610,7 @@ impl<'ctx> CodeGen<'ctx> {
             });
         }
 
-        Location::Register(Register::RAX)
+        RAX
     }
 
     fn push_stack(&mut self, ty: &Ty) {
@@ -613,7 +618,7 @@ impl<'ctx> CodeGen<'ctx> {
             Ty::Array { size, ty } => {
                 self.asm_buf.push(Instruction::Math {
                     src: Location::Const { val: Val::Int((size * ty.size()) as isize) },
-                    dst: Location::Register(Register::RSP),
+                    dst: RSP,
                     op: BinOp::Sub,
                     cmt: "make stack for array",
                 });
@@ -635,7 +640,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 self.asm_buf.push(Instruction::Math {
                     src: Location::Const { val: Val::Int(largest_variant as isize) },
-                    dst: Location::Register(Register::RSP),
+                    dst: RSP,
                     op: BinOp::Sub,
                     cmt: "stack for enum",
                 });
@@ -885,7 +890,7 @@ impl<'ctx> CodeGen<'ctx> {
                     if pushed {
                         self.asm_buf.push(Instruction::Math {
                             src: Location::Const { val: Val::Int(8) },
-                            dst: Location::Register(Register::RSP),
+                            dst: RSP,
                             op: BinOp::Add,
                             cmt: "bin op stack align this is probably wrong",
                         });
@@ -934,7 +939,7 @@ impl<'ctx> CodeGen<'ctx> {
                             });
 
                             spilled_rax = true;
-                            if matches!(rloc, Location::Register(Register::RAX)) {
+                            if matches!(rloc, RAX) {
                                 let free_reg = self.free_reg_except(Register::RDX);
                                 self.asm_buf.push(Instruction::Pop {
                                     loc: Location::Register(free_reg),
@@ -946,7 +951,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 // non needed register I think this is "Okay-Doh'kay"
                                 spilled_rax = false;
                             }
-                            if matches!(lloc, Location::Register(Register::RAX)) {
+                            if matches!(lloc, RAX) {
                                 let free_reg = self.free_reg_except(Register::RDX);
                                 self.asm_buf.push(Instruction::Pop {
                                     loc: Location::Register(free_reg),
@@ -969,7 +974,7 @@ impl<'ctx> CodeGen<'ctx> {
                             });
 
                             spilled_rdx = true;
-                            if matches!(lloc, Location::Register(Register::RDX)) {
+                            if matches!(lloc, RDX) {
                                 // This is overkill but we can't have rdx here
                                 let free_reg = self.free_reg_except(Register::RAX);
                                 self.asm_buf.push(Instruction::Pop {
@@ -981,7 +986,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 // see above rax comment
                                 spilled_rdx = false;
                             }
-                            if matches!(rloc, Location::Register(Register::RDX)) {
+                            if matches!(rloc, RDX) {
                                 // This is overkill but we can't have rdx here
                                 let free_reg = self.free_reg_except(Register::RAX);
                                 self.asm_buf.push(Instruction::Pop {
@@ -1020,16 +1025,16 @@ impl<'ctx> CodeGen<'ctx> {
 
                     // FIXME:
                     // The check for loc == register should be redundant
-                    if spilled_rax && !matches!(rloc, Location::Register(Register::RAX)) {
+                    if spilled_rax && !matches!(rloc, RAX) {
                         self.asm_buf.push(Instruction::Pop {
-                            loc: Location::Register(Register::RAX),
+                            loc: RAX,
                             size: 8,
                             comment: "move back to rax",
                         });
                     }
-                    if spilled_rdx && !matches!(lloc, Location::Register(Register::RDX)) {
+                    if spilled_rdx && !matches!(lloc, RDX) {
                         self.asm_buf.push(Instruction::Pop {
-                            loc: Location::Register(Register::RDX),
+                            loc: RDX,
                             size: 8,
                             comment: "move back to rdx",
                         });
@@ -1053,7 +1058,32 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
             Expr::Call { path, args, type_args, def } => {
-                self.gen_call_expr(path, def.kind, args, type_args, can_clear)
+                let mut spilled = false;
+                if !matches!(def.ret, Ty::Void) {
+                    if self.used_regs.contains(&Register::RAX) {
+                        spilled = true;
+                        self.asm_buf.push(Instruction::Push {
+                            loc: RAX,
+                            size: 8,
+                            comment: "had to spill reg for call",
+                        });
+                    }
+                }
+                let ret_loc = self.gen_call_expr(path, def.kind, args, type_args, can_clear);
+                if spilled {
+                    let reg = self.free_reg();
+                    self.asm_buf.extend_from_slice(&[
+                        Instruction::Mov {
+                            src: ret_loc,
+                            dst: Location::Register(reg),
+                            comment: "move ret val out of rax since we spilled",
+                        },
+                        Instruction::Pop { loc: RAX, size: 8, comment: "move back to rax" },
+                    ]);
+                    Location::Register(reg)
+                } else {
+                    ret_loc
+                }
             }
             Expr::TraitMeth { trait_, args, type_args, def } => {
                 self.gen_call_expr(trait_, def.method.kind, args, type_args, can_clear)
@@ -1297,7 +1327,7 @@ impl<'ctx> CodeGen<'ctx> {
                             // our book keeping
                             Instruction::Math {
                                 src: Location::Const { val: Val::Int(8) },
-                                dst: Location::Register(Register::RSP),
+                                dst: RSP,
                                 op: BinOp::Add,
                                 cmt: "even out after push",
                             },
@@ -1325,7 +1355,7 @@ impl<'ctx> CodeGen<'ctx> {
                             // our book keeping
                             Instruction::Math {
                                 src: Location::Const { val: Val::Int(8) },
-                                dst: Location::Register(Register::RSP),
+                                dst: RSP,
                                 op: BinOp::Add,
                                 cmt: "even out after push in promote",
                             },
@@ -1436,9 +1466,12 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Stmt::Call { expr: CallExpr { path, args, type_args }, def } => {
-                self.clear_float_regs_except(None, CanClearRegs::Yes);
-                self.clear_regs_except(None, CanClearRegs::Yes);
+                // TODO: if we return something check rax is free
+
                 self.gen_call_expr(path, def.kind, args, type_args, CanClearRegs::No);
+
+                self.clear_float_regs_except(None, CanClearRegs::Yes);
+                self.clear_regs_except(Some(&RAX), CanClearRegs::Yes);
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
             Stmt::If { cond, blk, els } => {
@@ -1523,15 +1556,11 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Ret(expr, _ty) => {
                 let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
-                if matches!(val, Location::Register(Register::RAX)) {
+                if matches!(val, RAX) {
                 } else {
                     self.asm_buf.extend_from_slice(&[
                         // return value is stored in %rax
-                        Instruction::Mov {
-                            src: val,
-                            dst: Location::Register(Register::RAX),
-                            comment: "",
-                        },
+                        Instruction::Mov { src: val, dst: RAX, comment: "" },
                     ]);
                 }
             }
@@ -1710,12 +1739,8 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                 name = func.ident
             )),
             Instruction::Label(func.ident.name().to_string()),
-            Instruction::Push { loc: Location::Register(Register::RBP), size: 8, comment: "" },
-            Instruction::Mov {
-                src: Location::Register(Register::RSP),
-                dst: Location::Register(Register::RBP),
-                comment: "",
-            },
+            Instruction::Push { loc: RBP, size: 8, comment: "" },
+            Instruction::Mov { src: RSP, dst: RBP, comment: "" },
         ]);
         // self.current_stack = 8;
         // self.total_stack = 8;
@@ -1736,11 +1761,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
 
         // HACK: so when other programs run our programs they don't non-zero exit
         if func.ident.name() == "main" {
-            self.asm_buf.push(Instruction::SizedMov {
-                src: ZERO,
-                dst: Location::Register(Register::RAX),
-                size: 8,
-            });
+            self.asm_buf.push(Instruction::SizedMov { src: ZERO, dst: RAX, size: 8 });
         }
 
         self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
@@ -1821,6 +1842,7 @@ fn construct_field_offset<'a>(
         Expr::Ident { ident, ty } => {
             let mut count = 0;
             for f in &def.fields {
+                println!("{} = {} - {}", ident, offset, count);
                 if f.ident == *ident {
                     return Some(Location::NumberedOffset { offset: offset - count, reg });
                 }
