@@ -353,6 +353,9 @@ crate fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
             r @ Ty::Bool => {
                 *r = Ty::Int;
             }
+            r @ Ty::Ptr(..) => {
+                *r = Ty::Int;
+            }
             _ => return None,
         },
         Ty::Float => match rhs? {
