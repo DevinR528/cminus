@@ -3,6 +3,7 @@ linked fn printf<T>(_fmt: cstr, _val: T);
 
 struct dynarr<T> {
     buff: *T,
+    abc: int,
 }
 
 fn inc_ptr(ptr: int): int {
@@ -10,13 +11,20 @@ fn inc_ptr(ptr: int): int {
 }
 
 fn push<T>(arr: *dynarr<T>, it: T) {
+    arr.abc += 1;
+    printf("%d ptr addr pre\n", arr.buff);
     arr.buff = inc_ptr(arr.buff);
+    printf("%d ptr addr post\n", arr.buff);
     *arr.buff = it;
 }
 
 fn main() {
     let x = 100;
-    let arr = dynarr { buff: &x };
+    let y = 0;
+    let arr = dynarr { buff: &x, abc: 10 };
     push(&arr, 10);
     printf("%d should be 10\n", *arr.buff);
+    printf("%d ptr addr\n", arr.buff);
+    printf("%d should be 10\n", arr.abc);
+    printf("%d should be 10\n", y);
 }

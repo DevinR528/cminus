@@ -186,17 +186,56 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     crate fn to_global(&self, glob: &Global) -> String {
+        use std::fmt::Write;
+
+        let mut buf = String::new();
         match glob {
-            Global::Text { name, content } => {
-                format!("{}: .string {:?}", name, content)
+            Global::Text { name, content, mutable } => {
+                if *mutable {
+                    writeln!(buf, ".global {}\n.data", name);
+                }
+                writeln!(buf, "{}: .string {:?}\n.text", name, content);
             }
-            Global::Int { name, content } => {
-                format!("{}:   .quad {}", name, content)
+            Global::Int { name, content, mutable } => {
+                if *mutable {
+                    writeln!(buf, ".global {}\n.data", name);
+                }
+                writeln!(buf, "{}:   .quad {}\n.text", name, content);
             }
-            Global::Char { name, content } => {
-                format!("{}:   .quad {}", name, content)
+            Global::Char { name, content, mutable } => {
+                if *mutable {
+                    writeln!(buf, ".global {}\n.data", name);
+                }
+                writeln!(buf, "{}:   .quad {}\n.text", name, content);
             }
-        }
+            Global::Array { name, content, mutable } => {
+                writeln!(buf, "    .global {}", name,);
+                if *mutable {
+                    writeln!(buf, "    .data");
+                } else {
+                    writeln!(buf, "    .section    .rodata");
+                }
+                writeln!(
+                    buf,
+                    "    .align 32\n    .type {}, @object\n    .size {}, {}\n{}:",
+                    name,
+                    name,
+                    content.len() * 8,
+                    name,
+                );
+                for item in content {
+                    match item {
+                        Val::Float(v) => writeln!(buf, "    .quad {}", v.to_bits()),
+                        Val::Int(v) => writeln!(buf, "    .quad {}", v),
+                        Val::Char(v) => writeln!(buf, "    .quad {}", (*v) as u8),
+                        Val::Bool(v) => writeln!(buf, "    .quad {}", if *v { 1 } else { 0 }),
+                        Val::Str(v) => writeln!(buf, "    .string {:?}", v),
+                    };
+                }
+                writeln!(buf, ".text");
+            }
+        };
+        buf
     }
 
     crate fn dump_asm(&self) -> Result<(), String> {
@@ -271,6 +310,7 @@ impl<'ctx> CodeGen<'ctx> {
             Location::Const { .. }
             | Location::Label(_)
             | Location::NamedOffset(_)
+            | Location::NamedOffsetIndex { .. }
             | Location::FloatReg(_)
             | Location::Indexable { .. }
             | Location::NumberedOffset { .. } => {}
@@ -309,6 +349,7 @@ impl<'ctx> CodeGen<'ctx> {
             | Location::RegAddr { .. }
             | Location::Label(_)
             | Location::NamedOffset(_)
+            | Location::NamedOffsetIndex { .. }
             | Location::Indexable { .. }
             | Location::NumberedOffset { .. } => {}
         };
@@ -413,6 +454,65 @@ impl<'ctx> CodeGen<'ctx> {
                 Location::Register(tmpidx)
             } else {
                 todo!("multidim arrays")
+            }
+        } else if let Location::NamedOffset(name) = &arr {
+            if let Expr::Value(Val::Int(idx)) = exprs[0] {
+                if exprs.len() == 1 {
+                    Location::NamedOffsetIndex {
+                        name: name.clone(),
+                        plus: (idx as usize) * ele_size,
+                    }
+                } else {
+                    todo!("multidim arrays")
+                }
+                // TODO: add bounds checking maybe
+                // Dynamic indexing
+            } else if exprs.len() == 1 {
+                let index_val = self.build_value(&exprs[0], None, CanClearRegs::No)?;
+
+                let tmpidx = self.free_reg();
+                let array_reg = self.free_reg();
+                // lea -16(%rbp), %rxx // array
+                // movq -8(%rbp), %rxy // index * ele_size
+                // addq %rxy, %rxx
+                // movq (%rxx), %rax
+                self.asm_buf.extend_from_slice(&[
+                    Instruction::SizedMov {
+                        src: index_val,
+                        dst: Location::Register(tmpidx),
+                        size: exprs[0].type_of().size(),
+                    },
+                    Instruction::Math {
+                        src: Location::Const { val: Val::Int(ele_size as isize) },
+                        dst: Location::Register(tmpidx),
+                        op: BinOp::Mul,
+                        cmt: "array index * ele size",
+                    },
+                    Instruction::Load {
+                        src: arr,
+                        dst: Location::Register(array_reg),
+                        size: ele_size,
+                    },
+                    Instruction::Math {
+                        src: Location::Register(tmpidx),
+                        dst: Location::Register(array_reg),
+                        op: BinOp::Add,
+                        cmt: "array index + idx * ele size",
+                    },
+                    Instruction::SizedMov {
+                        src: if by_value {
+                            Location::NumberedOffset { offset: 0, reg: array_reg }
+                        } else {
+                            Location::Register(array_reg)
+                        },
+                        dst: Location::Register(tmpidx),
+                        size: ele_size,
+                    },
+                ]);
+
+                Location::Register(tmpidx)
+            } else {
+                todo!("non const int index")
             }
         } else {
             unreachable!("array must be numbered offset location")
@@ -776,7 +876,7 @@ impl<'ctx> CodeGen<'ctx> {
                     });
                     Location::Register(register)
                 } else {
-                    todo!("pretty sure this is an error {:?}", loc)
+                    loc
                 }
             }
             Expr::Array { ident, exprs, ty } => {
@@ -1264,7 +1364,8 @@ impl<'ctx> CodeGen<'ctx> {
                     let cleaned = StripEscape::new(string).into_iter().collect();
                     let name = format!(".Sstring_{}", self.asm_buf.len());
                     let x =
-                        self.globals.entry(*s).or_insert(Global::Text { name, content: cleaned });
+                        // TODO: should this be mutable?
+                        self.globals.entry(*s).or_insert(Global::Text { name, content: cleaned, mutable: false, });
                     Location::NamedOffset(x.name().to_string())
                 }
             },
@@ -1520,14 +1621,18 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 self.asm_buf.push(Instruction::Label(uncond_label));
-                let cond_val = self.build_value(cond, None, CanClearRegs::Yes).unwrap();
-                // Check if true
-                self.asm_buf.push(Instruction::Cmp {
-                    src: Location::Const { val: Val::Int(1) },
-                    dst: cond_val,
-                });
-                // Jump back to the loop body
-                self.asm_buf.push(Instruction::CondJmp { loc: loop_body, cond: JmpCond::Eq });
+                if cond.is_const_true() {
+                    self.asm_buf.push(Instruction::Jmp(loop_body));
+                } else {
+                    let cond_val = self.build_value(cond, None, CanClearRegs::Yes).unwrap();
+                    // Check if true
+                    self.asm_buf.push(Instruction::Cmp {
+                        src: Location::Const { val: Val::Int(1) },
+                        dst: cond_val,
+                    });
+                    // Jump back to the loop body
+                    self.asm_buf.push(Instruction::CondJmp { loc: loop_body, cond: JmpCond::Eq });
+                }
             }
             Stmt::Match { expr, arms, ty } => {
                 let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
@@ -1643,15 +1748,38 @@ impl<'ctx> CodeGen<'ctx> {
 }
 
 impl<'ast> Visit<'ast> for CodeGen<'ast> {
-    fn visit_var(&mut self, var: &'ast Const) {
+    fn visit_const(&mut self, var: &'ast Const) {
+        fn convert_to_const(e: &Expr) -> Val {
+            match e {
+                Expr::Urnary { op, expr, ty } => todo!(),
+                Expr::Binary { op, lhs, rhs, ty } => todo!(),
+                Expr::Parens(_) => todo!(),
+                Expr::StructInit { path, fields, def } => todo!(),
+                Expr::EnumInit { path, variant, items, def } => todo!(),
+                Expr::ArrayInit { items, ty } => todo!(),
+                Expr::Value(val) => val.clone(),
+                _ => unreachable!("not valid const expressions"),
+            }
+        }
         let name = format!(".Lglobal_{}", var.ident);
         match var.ty {
-            Ty::Generic { .. }
-            | Ty::Array { .. }
-            | Ty::Struct { .. }
-            | Ty::Enum { .. }
-            | Ty::Ptr(_)
-            | Ty::Ref(_) => todo!(),
+            Ty::Generic { .. } | Ty::Struct { .. } | Ty::Enum { .. } | Ty::Ptr(_) | Ty::Ref(_) => {
+                todo!()
+            }
+            Ty::Array { .. } => {
+                self.globals.insert(
+                    var.ident,
+                    Global::Array {
+                        name: name.clone(),
+                        content: if let Expr::ArrayInit { items, .. } = &var.init {
+                            items.iter().map(|e| convert_to_const(e)).collect()
+                        } else {
+                            unreachable!("non const string value used in constant")
+                        },
+                        mutable: var.mutable,
+                    },
+                );
+            }
             Ty::ConstStr(..) => {
                 self.globals.insert(
                     var.ident,
@@ -1662,6 +1790,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                         } else {
                             unreachable!("non const string value used in constant")
                         },
+                        mutable: var.mutable,
                     },
                 );
             }
@@ -1675,6 +1804,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                         } else {
                             unreachable!("non char value used in constant")
                         },
+                        mutable: var.mutable,
                     },
                 );
             }
@@ -1688,6 +1818,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                         } else {
                             unreachable!("non char value used in constant")
                         },
+                        mutable: var.mutable,
                     },
                 );
             }
@@ -1701,6 +1832,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                         } else {
                             unreachable!("non char value used in constant")
                         },
+                        mutable: var.mutable,
                     },
                 );
             }
@@ -1718,6 +1850,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                         } else {
                             unreachable!("non char value used in constant")
                         },
+                        mutable: var.mutable,
                     },
                 );
             }

@@ -288,6 +288,7 @@ impl Expr {
             ex => unreachable!("only trait impl calls and function calls are replaced {:?}", ex),
         });
 
+        // HACK: pass the monomorphized version of these along, from inference most likely
         if typ.has_generics() {
             if let Some(ty) = tyctx.mono_expr_ty.borrow().get(&ex) {
                 typ = ty.clone();
@@ -454,6 +455,15 @@ impl Expr {
             Expr::StructInit { path, fields, def } => todo!(),
             Expr::EnumInit { path, variant, items, def } => todo!(),
             _ => panic!("attempted to get ident of expression with no ident"),
+        }
+    }
+
+    crate fn is_const_true(&self) -> bool {
+        match self {
+            Expr::Value(Val::Bool(true)) => true,
+            Expr::Value(Val::Int(i)) if *i > 0 => true,
+            Expr::Value(Val::Float(f)) if f.is_sign_positive() => true,
+            _ => false,
         }
     }
 }
@@ -905,6 +915,7 @@ impl Stmt {
                 ty: Ty::lower(tyctx, &var.ty.val),
                 ident: var.ident,
                 init: Expr::lower(tyctx, fold, var.init),
+                mutable: var.mutable,
                 is_global: false,
             }),
             ty::Stmt::Assign { lval, rval, ty, is_let } => Stmt::Assign {
@@ -1192,6 +1203,7 @@ pub struct Const {
     pub ty: Ty,
     pub ident: Ident,
     pub init: Expr,
+    pub mutable: bool,
     pub is_global: bool,
 }
 
@@ -1276,6 +1288,7 @@ fn lower_item(
             ty: Ty::lower(tyctx, &var.ty.val),
             ident: var.ident,
             init: Expr::lower(tyctx, fold, var.init.clone()),
+            mutable: var.mutable,
             is_global: true,
         })),
         _ => {}
