@@ -1,4 +1,4 @@
-linked fn write(_: int);
+linked fn printf<T>(_fmt: cstr, _: T);
 
 // This is like an interface or Haskell's type class
 trait add<T> {
@@ -21,6 +21,6 @@ fn foo<T: add>(a: T, b: T,): T {
 fn main() {
     let x = 10; let y = 111;
     // Call `foo` with all the types specified
-    let a = foo::<int>(x, y);
-    write(a);
+    let a = foo(x, y);
+    printf("fn call with trait bound %d\n", a);
 }

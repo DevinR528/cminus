@@ -73,6 +73,10 @@ impl Ident {
         self.span
     }
 
+    pub fn token(&self) -> u32 {
+        self.tkn
+    }
+
     pub fn name(&self) -> &str {
         intern::with_intern(|intern| intern.lookup_str(self.tkn))
     }

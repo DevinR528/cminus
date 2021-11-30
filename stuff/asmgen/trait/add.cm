@@ -1,4 +1,4 @@
-fn write(_: int) {}
+linked fn printf<T>(_fmt: cstr, _: T);
 
 trait add<T> {
     fn add(a: T, b: T): T;
@@ -13,5 +13,5 @@ impl add<int> {
 fn main() {
     let x = 10; let y = 1;
     let a = <<int>::add>(x, y);
-    write(a);
+    printf("add trait %d\n", a);
 }

@@ -1,17 +1,17 @@
-fn write(_: int) {}
+linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
     let x = 5;
     let a = [1, 0, 9, 11, 15];
 
-    write(a[1]);
-    write(a[2]);
-    write(a[3]);
-    write(a[4]);
+    printf("%d\n", a[1]);
+    printf("%d\n", a[2]);
+    printf("%d\n", a[3]);
+    printf("%d\n", a[4]);
 
-    write(x);
+    printf("%d\n", x);
 
     let y = 10;
     a[0] = y;
-    write(a[0]);
+    printf("%d\n", a[0]);
 }

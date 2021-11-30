@@ -1,4 +1,7 @@
-fn write(_: int) {  }
+linked fn printf<T>(_fmt: cstr, _: T);
+
+// TODO: fix this
+fn nline() { printf("\n", 0); }
 
 fn main() {
     let a = [0,0,0,0,0];
@@ -6,15 +9,18 @@ fn main() {
     a[2] = 9;
     a[3] = 11;
     a[4] = 15;
-    write(a[1]);
-    write(a[2]);
-    write(a[3]);
-    write(a[4]);
+    printf("%d ", a[1]);
+    printf("%d ", a[2]);
+    printf("%d ", a[3]);
+    printf("%d ", a[4]);
+    nline();
 
     let b = [0,16,12,10,8];
 
-    write(b[1]);
-    write(b[2]);
-    write(b[3]);
-    write(b[4]);
+    printf("%d ", b[1]);
+    printf("%d ", b[2]);
+    printf("%d ", b[3]);
+    printf("%d ", b[4]);
+    nline();
+
 }
