@@ -207,12 +207,15 @@ impl<'a> AstBuilder<'a> {
         Ok(())
     }
 
-    // Parse `const name: type = expr;`
+    // Parse `const [mut] name: type = expr;`
     fn parse_const(&mut self) -> ParseResult<ast::Declaration> {
         self.push_call_stack("parse_const");
         let start = self.input_idx;
 
         self.eat_if_kw(kw::Const);
+        self.eat_whitespace();
+
+        let mutable = self.eat_if_kw(kw::Mut);
         self.eat_whitespace();
 
         let id = self.make_ident()?;
@@ -227,13 +230,13 @@ impl<'a> AstBuilder<'a> {
         self.eat_if(&TokenMatch::Eq);
         self.eat_whitespace();
 
-        let expr = self.make_expr()?;
+        let init = self.make_expr()?;
 
         self.eat_whitespace();
         self.eat_if(&TokenMatch::Semi);
 
         let span = ast::to_rng(start..self.input_idx, self.file_id);
-        Ok(ast::Decl::Const(ast::Const { ident: id, ty, init: expr, span }).into_spanned(span))
+        Ok(ast::Decl::Const(ast::Const { ident: id, ty, init, mutable, span }).into_spanned(span))
     }
 
     // Parse `fn name<T>(it: T) -> int { .. }` with or without generics.

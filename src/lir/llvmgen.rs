@@ -583,7 +583,7 @@ impl<'ctx> LLVMGen<'ctx> {
 }
 
 impl<'ast> Visit<'ast> for LLVMGen<'ast> {
-    fn visit_var(&mut self, var: &'ast Const) {
+    fn visit_const(&mut self, var: &'ast Const) {
         let global = self.module.add_global(
             var.ty.as_llvm_type(self.context),
             Some(AddressSpace::Global),

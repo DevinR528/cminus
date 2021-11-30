@@ -25,7 +25,7 @@ pub trait Visit<'ast>: Sized {
 
     fn visit_adt(&mut self, _adt: &'ast Adt) {}
 
-    fn visit_var(&mut self, _var: &'ast Const) {}
+    fn visit_const(&mut self, _var: &'ast Const) {}
 
     fn visit_params(&mut self, _params: &[Param]) {}
 
@@ -58,7 +58,7 @@ crate fn walk_decl<'ast, V: Visit<'ast>>(visit: &mut V, item: &'ast Item) {
             visit.visit_func(func);
         }
         Item::Const(var) => {
-            visit.visit_var(var);
+            visit.visit_const(var);
         }
         Item::Trait(trait_) => visit.visit_trait(trait_),
         Item::Impl(imp) => visit.visit_impl(imp),
@@ -116,7 +116,7 @@ crate fn walk_match_arm<'ast, V: Visit<'ast>>(visit: &mut V, arms: &'ast [MatchA
 
 crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
     match stmt {
-        Stmt::Const(var) => visit.visit_var(var),
+        Stmt::Const(var) => visit.visit_const(var),
         Stmt::Assign { lval, rval, .. } => {
             // visit.visit_ident(ident);
             visit.visit_lval(lval);
