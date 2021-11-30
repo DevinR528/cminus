@@ -696,6 +696,19 @@ impl fmt::Display for MatchArm {
 }
 
 #[derive(Clone, Debug)]
+pub struct AsmBlock {
+    pub captures: Vec<Ident>,
+    pub assembly: String,
+    pub span: Range,
+}
+
+impl fmt::Display for AsmBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.assembly)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
     Const(Const),
@@ -713,6 +726,8 @@ pub enum Stmt {
     While { cond: Expression, blk: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
     Match { expr: Expression, arms: Vec<MatchArm> },
+    /// Inline assembly block.
+    InlineAsm(AsmBlock),
     /// Return statement `return expr`
     Ret(Expression),
     /// Exit statement `exit`.
