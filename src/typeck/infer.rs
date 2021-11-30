@@ -264,9 +264,21 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 // @cleanup: this is duplicated in `TypeCheck::visit_var`
                 if let Some(fn_id) = self.tcxt.curr_fn {
                     if *is_let {
-                        // TODO: match this out so we know its an lval or just wait for later
-                        // when that's checked by `StmtCheck`
+                        // Since we are in a let stmt we know this MUST be an ident
                         let ident = lval.val.as_ident();
+
+                        if self.tcxt.global.contains_key(&ident) {
+                            self.tcxt.errors.push_error(Error::error_with_span(
+                                self.tcxt,
+                                lval.span,
+                                &format!(
+                                    "found variable `{}` that conflicts with global name",
+                                    ident
+                                ),
+                            ));
+                            self.tcxt.errors.poisoned(true);
+                        }
+
                         self.tcxt.var_func.unsed_vars.insert(
                             ScopedName::func_scope(fn_id, ident, lval.span.file_id),
                             (lval.span, Cell::new(false)),
@@ -280,6 +292,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             .or_default()
                             .insert(ident, ty)
                             .is_some()
+                            && !ident.name().starts_with('_')
                         {
                             self.tcxt.errors.push_error(Error::error_with_span(
                                 self.tcxt,
@@ -496,32 +509,35 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             }
                         }
 
-                        // Sort the list like the type args
-                        let last = infered_ty_args.len().saturating_sub(1);
-                        for gen in &func.generics {
-                            let idx = if let Some(idx) =
-                                infered_ty_args.iter().position(|(_, g)| gen.ident == *g)
-                            {
-                                idx
-                            } else {
-                                self.tcxt.errors.push_error(Error::error_with_span(
-                                    self.tcxt,
-                                    gen.span,
-                                    &format!("[E0i] unused generic parameter `{}`", gen.ident),
-                                ));
-                                self.tcxt.errors.poisoned(true);
-                                return;
-                            };
-                            // move idx to the end of the list
-                            infered_ty_args.swap(last, idx);
-                        }
+                        if !infered_ty_args.is_empty() {
+                            // Sort the list like the type args
+                            let last = infered_ty_args.len().saturating_sub(1);
+                            for gen in &func.generics {
+                                let idx = if let Some(idx) =
+                                    infered_ty_args.iter().position(|(_, g)| gen.ident == *g)
+                                {
+                                    idx
+                                } else {
+                                    self.tcxt.errors.push_error(Error::error_with_span(
+                                        self.tcxt,
+                                        gen.span,
+                                        &format!("[E0i] unused generic parameter `{}`", gen.ident),
+                                    ));
+                                    self.tcxt.errors.poisoned(true);
+                                    return;
+                                };
+                                // move idx to the end of the list
+                                infered_ty_args.swap(last, idx);
+                            }
 
-                        for (ty, _) in infered_ty_args {
-                            // SAFETY maybe:
-                            //
-                            // This will only ever be done on one thread at a time and nothing else
-                            // can mutate it, we are the only ones handling `type_args`.
-                            unsafe { type_args.push_shared(ty.into_spanned(DUMMY)) };
+                            for (ty, _) in infered_ty_args {
+                                // SAFETY maybe:
+                                //
+                                // This will only ever be done on one thread at a time and nothing
+                                // else can mutate it, we are the
+                                // only ones handling `type_args`.
+                                unsafe { type_args.push_shared(ty.into_spanned(DUMMY)) };
+                            }
                         }
                     }
 

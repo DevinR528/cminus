@@ -293,6 +293,9 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     &expr.val,
                 );
 
+                // TODO: REMOVE coercion...
+                // coercion(func_ret_ty.as_ref(), ret_ty.as_mut());
+
                 if !ret_ty.as_ref().is_ty_eq(&func_ret_ty.as_ref()) {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
@@ -378,7 +381,7 @@ crate fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
         },
         Ty::Ptr(inner) => match rhs? {
             r @ Ty::Int => {
-                *r = Ty::Ptr(inner.clone());
+                // *r = Ty::Ptr(inner.clone());
             }
             _ => return None,
         },
