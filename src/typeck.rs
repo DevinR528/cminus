@@ -820,6 +820,43 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             self.expr_ty.insert(&var.init, var.init.val.type_of().unwrap());
         }
 
+        // TODO: if we don't record global exprs (so far only for arrays) we panic in lowering
+        // because we don't have a type in the expr_ty map
+        match &var.init.val {
+            Expr::Ident(_) => todo!(),
+            Expr::Array { ident, exprs } => todo!(),
+            Expr::Urnary { op, expr } => todo!(),
+            Expr::Binary { op, lhs, rhs } => todo!(),
+            Expr::Parens(_) => todo!(),
+            Expr::StructInit { path, fields } => todo!(),
+            Expr::EnumInit { path, variant, items } => todo!(),
+            Expr::ArrayInit { items } => {
+                for ex in items {
+                    self.expr_ty.insert(
+                        ex,
+                        if let Ty::Array { ty, .. } = &var.ty.val {
+                            ty.val.clone()
+                        } else {
+                            self.errors.push_error(Error::error_with_span(
+                                self,
+                                var.span,
+                                &format!("type and expression do not agree"),
+                            ));
+                            return;
+                        },
+                    );
+                }
+            }
+            Expr::Value(..) => {}
+            _ => {
+                self.errors.push_error(Error::error_with_span(
+                    self,
+                    var.init.span,
+                    &format!("invalid const expression"),
+                ));
+            }
+        }
+
         // This const is declared in the file scope
         self.name_res.add_item(
             var.span.file_id,
