@@ -1362,7 +1362,7 @@ impl<'ctx> CodeGen<'ctx> {
                 Val::Str(s) => {
                     let string = s.name();
                     let cleaned = StripEscape::new(string).into_iter().collect();
-                    let name = format!(".Sstring_{}", self.asm_buf.len());
+                    let name = format!(".Sstring_{}", s.token());
                     let x =
                         // TODO: should this be mutable?
                         self.globals.entry(*s).or_insert(Global::Text { name, content: cleaned, mutable: false, });

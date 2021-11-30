@@ -1,8 +1,8 @@
-linked fn write(_: int);
+linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
     let x = 1 + 1;
     let y = x * 2;
     let z = x + y;
-    write(z);
+    printf("%d\n", z);
 }

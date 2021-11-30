@@ -8,6 +8,6 @@ fn foo<T>(T it): option<T> {
 }
 
 void main() {
-    let num = foo::<enum option<int>>(foo::<int>(10));
-    num = foo::<enum option<char>>(foo::<int>(10)); // error: follow generic type mismatch
+    let num = foo::<option<int>>(foo::<int>(10));
+    num = foo::<option<char>>(foo::<int>(10)); // error: follow generic type mismatch
 }

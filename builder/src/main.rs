@@ -1,3 +1,5 @@
+#![feature(stmt_expr_attributes)]
+
 use std::{
     env,
     fs::OpenOptions,
@@ -15,6 +17,7 @@ const ENUMC_DEBUG: &str = "./target/debug/enumc";
 
 fn main() {
     let args: Vec<_> = env::args().skip(1).collect();
+
     match args.iter().map(|s| s.as_str()).collect::<Vec<_>>().as_slice() {
         [] => println!("version 0.0.0 of enumc"),
         ["run" | "r", more @ ..] => {
@@ -64,17 +67,28 @@ fn main() {
         ["test" | "t"] => {
             cmd!("cargo b").run().unwrap();
 
+            #[rustfmt::skip]
             if let Err(e) = build_files(
                 &[
-                    "./stuff/asmgen/gen/gen.cm",      // fairly complex generic arguments
+                    "./stuff/asmgen/add/add.cm",
+                    "./stuff/asmgen/add/div.cm",
+                    "./stuff/asmgen/add/sub.cm",
+                    "./stuff/asmgen/array/arraycall.cm",
+                    "./stuff/asmgen/array/arrayinit.cm",
+                    "./stuff/asmgen/bool/print.cm",
+                    "./stuff/asmgen/call/call_obj.cm",
+                    "./stuff/asmgen/call/call.cm",
+                    "./stuff/asmgen/enum/two.cm",
+                    "./stuff/asmgen/gen/gen.cm", // fairly complex generic arguments
                     "./stuff/types/string/string.cm", // test all kinds of printf/scanf types
-                    "./stuff/asmgen/ifs/simp.cm",     // test if/else blocks
+                    "./stuff/asmgen/ifs/simp.cm", // test if/else blocks
                     "./stuff/asmgen/while/bubble.cm", /* test while loops and creating variable
-                                                       * in blocks */
+                                                  * in blocks */
                     "./stuff/asmgen/while/sort.cm", // same as above with ints
                     "./stuff/asmgen/args/args.cm",  // test getting argc and argv in main
                     "./stuff/types/dynarr/field.cm", // test passing struct pointer and mutating
-                    "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
+                    
+                    // "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
                 ],
                 "-as",
             ) {

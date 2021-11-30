@@ -1,7 +1,8 @@
-fn write(_: bool) {}
+linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
     let x = false;
-    write(x); // prints `false`
-    write(true); // prints `true`
+    // TODO: this is dumb make a better printf or something..
+    printf("%s\n", x); // prints `false`
+    printf("%s\n", true); // prints `true`
 }

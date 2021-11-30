@@ -3,12 +3,12 @@ enum option<T> {
     none,
 }
 
-fn foo<T>(T it): option<T> {
+fn foo<T>(it: T): option<T> {
     let opt = option::some(it);
     return opt;
 }
 
 fn main() {
     let num = foo::<option<int>>(foo::<int>(10));
-    let ch = foo::<enum option<char>>(foo::<char>('c'));
+    let ch = foo::<option<char>>(foo::<char>('c'));
 }

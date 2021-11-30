@@ -1,4 +1,8 @@
-linked fn write<T>(_: T);
+linked fn printf<T>(_fmt: cstr, _: T);
+
+fn print_str(s: cstr) {
+    printf("%s", s);
+}
 
 enum option {
     foo(char, int),
@@ -7,15 +11,15 @@ enum option {
 }
 
 fn main() {
-    let x = enum option::foo('c', 11);
+    let x = option::foo('c', 11);
     match x {
         // TODO: if `ch` or `num` is bound to a var named `x` weird stuff happens...
         option::foo(ch, num) -> {
-            write::<char>(ch);
-            write::<int>(num);
+            printf("found %c", ch);
+            printf(" and %d\n", num);
         },
         option::some -> {
-            write::<string>("some variant");
+            print_str("some variant");
         },
         option::none -> {
             exit;

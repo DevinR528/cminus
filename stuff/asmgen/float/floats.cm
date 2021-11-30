@@ -1,13 +1,11 @@
-
-// Linked by the compiler in a hacky special way ;)
-linked fn write(_: float);
+linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
     let x = 25;
     let y = 5;
     while (x > y) {
-        write(1.135);
+        printf("%f\n", 1.135);
         x -= y;
     }
-    write(6.66);
+    printf("%f\n", 6.66);
 }

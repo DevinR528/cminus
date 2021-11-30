@@ -1,7 +1,7 @@
-fn write(x: int) {}
+linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
     let x = 10.1;
     let y = x + 1.0;
-    write(y);
+    printf("%f\n", y);
 }
