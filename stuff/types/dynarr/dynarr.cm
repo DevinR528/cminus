@@ -24,6 +24,7 @@ fn push<T>(arr: *dynarr<T>, it: T) {
 }
 
 fn main() {
+    let _ = 10;
     let x = malloc::<int>(10 * 8);
     let arr = dynarr { buff: x, len: 0, cap: 10 };
     push(&arr, 10);
