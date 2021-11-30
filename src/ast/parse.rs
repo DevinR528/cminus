@@ -25,7 +25,7 @@ use ops::{AssocOp, Fixit};
 
 use self::lex::Base;
 
-use super::types::Spanned;
+use super::types::{AsmBlock, Spanned};
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -1243,13 +1243,15 @@ impl<'a> AstBuilder<'a> {
             self.make_if_stmt()?
         } else if self.eat_if_kw(kw::While) {
             self.make_while_stmt()?
+        } else if self.eat_if_kw(kw::Return) {
+            self.make_return_stmt()?
         } else if self.eat_if_kw(kw::Match) {
             self.in_match_stmt = true;
             let stmt = self.make_match_stmt()?;
             self.in_match_stmt = false;
             stmt
-        } else if self.eat_if_kw(kw::Return) {
-            self.make_return_stmt()?
+        } else if self.eat_if_kw(kw::Asm) {
+            self.make_asm_stmt()?
         } else if self.eat_if_kw(kw::Exit) {
             self.eat_whitespace();
             ast::Stmt::Exit
@@ -1346,6 +1348,37 @@ impl<'a> AstBuilder<'a> {
         let expr = self.make_expr()?;
 
         Ok(ast::Stmt::Ret(expr))
+    }
+
+    fn make_asm_stmt(&mut self) -> ParseResult<ast::Stmt> {
+        self.push_call_stack("make_asm_stmt");
+        self.eat_whitespace();
+
+        let start = self.input_idx;
+        let assembly = if self.eat_if(&TokenMatch::OpenBrace) {
+            let mut assembly = String::new();
+            while self.curr.kind != TokenMatch::CloseBrace {
+                let tkn_text = self.input_curr();
+                assembly.push_str(tkn_text);
+                if let Some(reg) = parse_as_register(tkn_text) {
+                } else if self.curr.kind == TokenMatch::Ident {
+                    captures.push()
+                }
+
+                self.eat_tkn();
+            }
+        } else {
+            return Err(ParseError::Error(
+                "assembly must be in a block",
+                ast::to_rng(start..self.input_idx, self.file_id),
+            ));
+        };
+
+        Ok(ast::Stmt::InlineAsm(AsmBlock {
+            captures: vec![],
+            assembly,
+            span: ast::to_rng(start..self.input_idx, self.file_id),
+        }))
     }
 
     fn make_expr_stmt(&mut self) -> ParseResult<ast::Stmt> {

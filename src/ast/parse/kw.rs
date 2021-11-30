@@ -65,6 +65,7 @@ keywords! {
     Underscore:         "_",
 
     As:                 "as",
+    Asm:                 "asm",
     Break:              "break",
     Const:              "const",
     Continue:           "continue",
