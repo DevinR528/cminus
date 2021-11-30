@@ -869,6 +869,7 @@ pub struct Const {
     pub ty: Type,
     pub ident: Ident,
     pub init: Expression,
+    pub mutable: bool,
     pub span: Range,
 }
 

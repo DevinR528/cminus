@@ -110,6 +110,10 @@ pub enum Location {
     ///
     /// Accessing global variables using rip offset.
     NamedOffset(String),
+    NamedOffsetIndex {
+        name: String,
+        plus: usize,
+    },
     NumberedOffset {
         offset: usize,
         reg: Register,
@@ -142,6 +146,9 @@ impl fmt::Display for Location {
             Location::Label(label) => label.fmt(f),
             Location::NamedOffset(label) => {
                 write!(f, "{:>width$}", format!("{}(%rip)", label), width = width)
+            }
+            Location::NamedOffsetIndex { name, plus } => {
+                write!(f, "{:>width$}", format!("{}+{}(%rip)", name, plus), width = width)
             }
             Location::NumberedOffset { offset, reg } => write!(
                 f,
@@ -182,9 +189,10 @@ impl Location {
 
 #[derive(Clone, Debug)]
 pub enum Global {
-    Text { name: String, content: String },
-    Int { name: String, content: i64 },
-    Char { name: String, content: u8 },
+    Text { name: String, content: String, mutable: bool },
+    Int { name: String, content: i64, mutable: bool },
+    Char { name: String, content: u8, mutable: bool },
+    Array { name: String, content: Vec<Val>, mutable: bool },
 }
 
 impl Global {
@@ -193,6 +201,7 @@ impl Global {
             Global::Text { name, .. } => name,
             Global::Int { name, .. } => name,
             Global::Char { name, .. } => name,
+            Global::Array { name, .. } => name,
         }
     }
 }
