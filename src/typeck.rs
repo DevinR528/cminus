@@ -612,6 +612,13 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
     fn visit_params(&mut self, params: &[Param]) {
         if let Some(fn_id) = self.curr_fn {
             for Param { ident, ty, span } in params {
+                if self.global.contains_key(ident) {
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        *span,
+                        &format!("found parameter `{}` that conflicts with global name", ident),
+                    ));
+                }
                 // This param is declared inside of a function
                 self.name_res.add_item(
                     span.file_id,
@@ -768,9 +775,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         }
     }
 
-    // TODO: this is not what it used to be
     fn visit_const(&mut self, var: &'ast Const) {
         if let Some(fn_id) = self.curr_fn {
+            if self.global.contains_key(&var.ident) {
+                self.errors.push_error(Error::error_with_span(
+                    self,
+                    var.span,
+                    &format!("found scoped const `{}` that conflicts with global name", var.ident),
+                ));
+            }
+
             let node = Node::Func(fn_id);
             let mut stack = if self.generic_res.has_generics(&node) { vec![node] } else { vec![] };
             self.generic_res.collect_generic_usage(
@@ -1455,6 +1469,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::ArrayInit { items } => {
+                println!("{:?}", items);
                 for item in items {
                     self.visit_expr(item);
                 }
