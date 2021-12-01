@@ -8,6 +8,7 @@ use crate::{
     ast::parse::symbol::Ident,
     data_struc::{rawptr::RawPtr, rawvec::RawVec},
     error::Error,
+    lir,
     typeck::{check::fold_ty, TyCheckRes},
 };
 
@@ -695,17 +696,27 @@ impl fmt::Display for MatchArm {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct AsmBlock {
-    pub captures: Vec<Ident>,
-    pub assembly: String,
-    pub span: Range,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Location {
+    Register(lir::Register),
+    FloatReg(lir::FloatRegister),
+    NamedOffset(Ident),
+    Offset { amt: usize, reg: Box<Location> },
+    InlineVar(Ident),
+    Const(Val),
 }
 
-impl fmt::Display for AsmBlock {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.assembly)
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Instruction {
+    pub inst: Ident,
+    pub src: Option<Location>,
+    pub dst: Option<Location>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsmBlock {
+    pub assembly: Vec<Instruction>,
+    pub span: Range,
 }
 
 #[derive(Clone, Debug)]

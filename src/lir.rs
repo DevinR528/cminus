@@ -5,3 +5,5 @@ crate mod llvmgen;
 crate mod lower;
 crate mod mono;
 crate mod visit;
+
+crate use asmgen::inst::{FloatRegister, Register};
