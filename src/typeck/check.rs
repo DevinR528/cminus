@@ -331,6 +331,9 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                 }
             }
             Stmt::AssignOp { lval, rval, op } => todo!(),
+            Stmt::InlineAsm(..) => {
+                // TODO: we could type check the ident in here
+            }
         }
     }
 }

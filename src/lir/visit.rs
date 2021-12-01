@@ -160,6 +160,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
                 visit.visit_stmt(stmt);
             }
         }
+        Stmt::InlineAsm(..) => {}
     }
 }
 

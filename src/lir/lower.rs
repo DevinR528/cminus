@@ -906,6 +906,8 @@ pub enum Stmt {
     Exit,
     /// A block of statements `{ stmts }`
     Block(Block),
+    /// A block of inline assembly.
+    InlineAsm(ty::AsmBlock),
 }
 
 impl Stmt {
@@ -1023,6 +1025,7 @@ impl Stmt {
                     is_let: false,
                 }
             }
+            ty::Stmt::InlineAsm(asm) => Stmt::InlineAsm(asm),
         }
     }
 }
