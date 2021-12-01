@@ -32,6 +32,7 @@ pub enum Register {
     R8, R9, R10, R11, R12, R13, R14, R15,
 }
 
+#[rustfmt::skip]
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -43,8 +44,8 @@ impl fmt::Display for Register {
             RBP => "%rbp".fmt(f),
             RSI => "%rsi".fmt(f),
             RDI => "%rdi".fmt(f),
-            R8 => "%r8".fmt(f),
-            R9 => "%r9".fmt(f),
+            R8  => "%r8".fmt(f),
+            R9  => "%r9".fmt(f),
             R10 => "%r10".fmt(f),
             R11 => "%r11".fmt(f),
             R12 => "%r12".fmt(f),

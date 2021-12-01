@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-mod inst;
+crate mod inst;
 use inst::{Global, Instruction, Location, Register, ARG_REGS, USABLE_REGS};
 
 const STATIC_PREAMBLE: &str = r#"
@@ -1671,6 +1671,24 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::Exit => {}
             Stmt::Block(_) => todo!(),
+            Stmt::InlineAsm(asm) => {
+                for inst in &asm.assembly {
+                    let mut asm_str = format!("    {}  ", inst.inst);
+
+                    if let Some(src) = &inst.src {
+                        match src {
+                            ty::Location::Register(reg) => asm_str.push_str(&reg.to_string()),
+                            ty::Location::FloatReg(_) => todo!(),
+                            ty::Location::NamedOffset(_) => todo!(),
+                            ty::Location::Offset { amt, reg } => todo!(),
+                            ty::Location::InlineVar(_) => todo!(),
+                            ty::Location::Const(_) => todo!(),
+                        }
+                    }
+
+                    self.asm_buf.push(Instruction::Meta(asm_str));
+                }
+            }
         }
     }
 
