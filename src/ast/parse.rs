@@ -7,11 +7,19 @@ use std::{
 
 use crate::{
     ast::{
-        lex::{self, LiteralKind, Token, TokenKind, TokenMatch},
-        parse::symbol::Ident,
-        types::{self as ast, Decl, Expr, FuncKind, Path, Spany, Stmt, Type, Val},
+        lex::{self, Base, LiteralKind, Token, TokenKind, TokenMatch},
+        parse::{
+            error::ParseError,
+            ops::{AssocOp, Fixit},
+            symbol::Ident,
+        },
+        types::{
+            self as ast, AsmBlock, Decl, Expr, FuncKind, Instruction, Location, Path, Spanned,
+            Spany, Stmt, Type, Val,
+        },
     },
     data_struc::{rawvec::RawVec, str_help::StripEscape},
+    lir::{FloatRegister, Register},
     typeck::scope::hash_file,
 };
 
@@ -19,13 +27,6 @@ crate mod error;
 crate mod kw;
 mod ops;
 crate mod symbol;
-
-use error::ParseError;
-use ops::{AssocOp, Fixit};
-
-use self::lex::Base;
-
-use super::types::{AsmBlock, Spanned};
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -712,12 +713,13 @@ impl<'a> AstBuilder<'a> {
         } else if matches!(
             self.curr.kind,
             TokenKind::Ident
-                | TokenKind::Literal { .. }
-                | TokenKind::Star
-                | TokenKind::And
-                | TokenKind::Bang
-                | TokenKind::Tilde
-                | TokenKind::OpenParen
+                | TokenKind::Literal { .. } // cstr, numbers, etc.
+                | TokenKind::Star           // deref
+                | TokenKind::Minus          // negative numbers
+                | TokenKind::And            // addrof
+                | TokenKind::Bang           // not
+                | TokenKind::Tilde          // urnary negate
+                | TokenKind::OpenParen // a parenthesized expression
         ) {
             // FIXME: we don't want to have to say `let x = enum foo::bar;` just `let x = foo::bar;`
             // TODO: don't parse for keywords if its a lit DUH
@@ -741,7 +743,7 @@ impl<'a> AstBuilder<'a> {
                     }
                 }
             }
-            // TODO: Refactor out
+            // TODO: factor out
             // Shunting Yard algo http://en.wikipedia.org/wiki/Shunting_yard_algorithm
             let mut output: Vec<ast::Expression> = vec![];
             let mut opstack: Vec<AssocOp> = vec![];
@@ -888,7 +890,31 @@ impl<'a> AstBuilder<'a> {
             let op = self.make_op()?;
             (expr, op)
         } else if self.curr.kind == TokenMatch::Minus {
-            todo!("this is a negative number")
+            // negative number `-10;`
+            let start = self.input_idx;
+
+            self.eat_if(&TokenMatch::Minus);
+            let mut lit = self.make_literal()?;
+            match lit.val {
+                ast::Val::Int(ref mut v) => {
+                    *v = -(*v);
+                }
+                ast::Val::Float(ref mut v) => {
+                    *v = -(*v);
+                }
+                _ => {
+                    return Err(ParseError::Error(
+                        "float or int can be negative",
+                        ast::to_rng(start..self.input_idx, self.file_id),
+                    ));
+                }
+            }
+            let ex = ast::Expr::Value(lit)
+                .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
+            self.eat_whitespace();
+
+            let op = self.make_op()?;
+            (ex, op)
         } else if self.curr.kind == TokenMatch::Tilde {
             // Ones comp `~expr`
             let start = self.input_idx;
@@ -1356,17 +1382,16 @@ impl<'a> AstBuilder<'a> {
 
         let start = self.input_idx;
         let assembly = if self.eat_if(&TokenMatch::OpenBrace) {
-            let mut assembly = String::new();
-            while self.curr.kind != TokenMatch::CloseBrace {
-                let tkn_text = self.input_curr();
-                assembly.push_str(tkn_text);
-                if let Some(reg) = parse_as_register(tkn_text) {
-                } else if self.curr.kind == TokenMatch::Ident {
-                    captures.push()
-                }
+            self.eat_whitespace();
 
-                self.eat_tkn();
+            let mut assembly = vec![];
+            while self.curr.kind != TokenMatch::CloseBrace {
+                assembly.push(self.make_assembly_inst()?);
+                self.eat_whitespace();
             }
+
+            self.eat_if(&TokenMatch::CloseBrace);
+            assembly
         } else {
             return Err(ParseError::Error(
                 "assembly must be in a block",
@@ -1375,10 +1400,82 @@ impl<'a> AstBuilder<'a> {
         };
 
         Ok(ast::Stmt::InlineAsm(AsmBlock {
-            captures: vec![],
             assembly,
             span: ast::to_rng(start..self.input_idx, self.file_id),
         }))
+    }
+
+    fn make_assembly_inst(&mut self) -> ParseResult<Instruction> {
+        let mut inst = if self.curr.kind == TokenMatch::Ident {
+            Instruction { inst: self.make_ident()?, src: None, dst: None }
+        } else {
+            return Err(ParseError::Error("invalid assembly instruction", self.curr_span()));
+        };
+
+        if !self.eat_if(&TokenMatch::Semi) {
+            inst.src = self.make_location()?;
+            self.eat_whitespace();
+            if self.eat_if(&TokenMatch::Comma) {
+                inst.dst = self.make_location()?;
+            }
+
+            if !self.eat_if(&TokenMatch::Semi) {
+                return Err(ParseError::Error("invalid number of operands", self.curr_span()));
+            }
+        }
+
+        Ok(inst)
+    }
+
+    fn make_location(&mut self) -> ParseResult<Option<Location>> {
+        Ok(if matches!(self.curr.kind, TokenKind::OpenParen) {
+            self.eat_if(&TokenMatch::OpenParen);
+
+            let loc = Location::InlineVar(self.make_ident()?);
+
+            self.eat_if(&TokenMatch::CloseParen);
+
+            Some(loc)
+        } else if matches!(self.curr.kind, TokenKind::Literal { kind, .. }) {
+            Some(Location::Const(self.make_literal()?.val))
+        } else if matches!(self.curr.kind, TokenKind::Ident) {
+            let reg = match self.input_curr() {
+                "%rax" => Location::Register(Register::RAX),
+                "%rcx" => Location::Register(Register::RCX),
+                "%rdx" => Location::Register(Register::RDX),
+                "%rbx" => Location::Register(Register::RBX),
+                "%rsp" => Location::Register(Register::RSP),
+                "%rbp" => Location::Register(Register::RBP),
+                "%rsi" => Location::Register(Register::RSI),
+                "%rdi" => Location::Register(Register::RDI),
+                "%r8" => Location::Register(Register::R8),
+                "%r9" => Location::Register(Register::R9),
+                "%r10" => Location::Register(Register::R10),
+                "%r11" => Location::Register(Register::R11),
+                "%r12" => Location::Register(Register::R12),
+                "%r13" => Location::Register(Register::R13),
+                "%r14" => Location::Register(Register::R14),
+                "%r15" => Location::Register(Register::R15),
+                "%xmm0" => Location::FloatReg(FloatRegister::XMM0),
+                "%xmm1" => Location::FloatReg(FloatRegister::XMM1),
+                "%xmm2" => Location::FloatReg(FloatRegister::XMM2),
+                "%xmm3" => Location::FloatReg(FloatRegister::XMM3),
+                "%xmm4" => Location::FloatReg(FloatRegister::XMM4),
+                "%xmm5" => Location::FloatReg(FloatRegister::XMM5),
+                "%xmm6" => Location::FloatReg(FloatRegister::XMM6),
+                "%xmm7" => Location::FloatReg(FloatRegister::XMM7),
+                _ => {
+                    return Err(ParseError::Error(
+                        "invalid assembly instruction",
+                        self.curr_span(),
+                    ));
+                }
+            };
+            self.eat_if(&TokenMatch::Ident);
+            Some(reg)
+        } else {
+            return Err(ParseError::Error("invalid assembly instruction", self.curr_span()));
+        })
     }
 
     fn make_expr_stmt(&mut self) -> ParseResult<ast::Stmt> {
@@ -2303,6 +2400,18 @@ fn parse_assign_op() {
 fn add() {
     let x = 10;
     x += 3+5;
+}
+"#;
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
+    parser.parse().unwrap();
+    assert_eq!(parser.items().len(), 1);
+}
+
+#[test]
+fn parse_negative_lit() {
+    let input = r#"
+fn add() {
+    let z = -1;
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
