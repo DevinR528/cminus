@@ -1,0 +1,12 @@
+linked fn printf<T>(_fmt: cstr, _: T);
+
+fn assert(val: bool) {
+    if (!val) {
+        printf("assert failed oops: file [todo] line [todo]\n", 0);
+        asm { ud2; }
+    }
+}
+
+fn main(argc: int) {
+    assert(argc == 1);
+}
