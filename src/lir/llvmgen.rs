@@ -537,6 +537,7 @@ impl<'ctx> LLVMGen<'ctx> {
                 self.builder.build_return(None);
             }
             Stmt::Block(_) => todo!(),
+            Stmt::InlineAsm(asm) => {}
         }
     }
 

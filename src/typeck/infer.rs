@@ -381,6 +381,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.visit_stmt(stmt);
                 }
             }
+            Stmt::InlineAsm(..) => {
+                // TODO: we could type check the ident in here
+            }
         }
     }
 
