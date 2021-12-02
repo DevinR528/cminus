@@ -4,8 +4,8 @@ linked fn signal(sig: int, handler: fn(int): int);
 fn sig_handle(sig: int): int {
     if (sig == 4) {
         asm {
-            mov 60, rax; // move syscall number 60 (exit) to rax
-            mov 4, rdi;  // move exit code (non zero for failure)
+            mov 60, %rax; // move syscall number 60 (exit) to rax
+            mov 4, %rdi;  // move exit code (non zero for failure)
             syscall;     // call it
         };
     }
