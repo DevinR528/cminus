@@ -567,39 +567,17 @@ impl<'ctx> CodeGen<'ctx> {
                 });
             } else if let Ty::Bool = ty {
                 if let Location::Const { val: Val::Bool(b) } = val {
-                    self.asm_buf.extend_from_slice(&[Instruction::Load {
-                        src: if b {
-                            Location::NamedOffset(".bool_true".into())
-                        } else {
-                            Location::NamedOffset(".bool_false".into())
-                        },
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        src: if b { ONE } else { ZERO },
                         dst: Location::Register(ARG_REGS[idx]),
                         size: 8,
                     }]);
                 } else {
-                    let free_reg = *USABLE_REGS
-                        .difference(&self.used_regs)
-                        .find(|r| !matches!(r, Register::RAX | Register::RSI | Register::RDI))
-                        .expect("ran out of registers");
-                    self.used_regs.insert(free_reg);
-                    self.asm_buf.extend_from_slice(&[
-                        Instruction::Load {
-                            src: Location::NamedOffset(".bool_true".into()),
-                            dst: Location::Register(ARG_REGS[idx]),
-                            size: 8,
-                        },
-                        Instruction::Load {
-                            src: Location::NamedOffset(".bool_false".into()),
-                            dst: Location::Register(free_reg),
-                            size: 8,
-                        },
-                        Instruction::Cmp { src: ZERO, dst: val },
-                        Instruction::CondMov {
-                            src: Location::Register(free_reg),
-                            dst: Location::Register(ARG_REGS[idx]),
-                            cond: CondFlag::Eq,
-                        },
-                    ]);
+                    self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
+                        src: val,
+                        dst: Location::Register(ARG_REGS[idx]),
+                        size: 8,
+                    }]);
                 }
             } else if let Ty::ConstStr(..) = ty {
                 if matches!(val, Location::NumberedOffset { .. } | Location::Register(..)) {
@@ -1993,7 +1971,7 @@ fn construct_field_offset<'a>(
         Expr::Ident { ident, ty } => {
             let mut count = 0;
             for f in &def.fields {
-                println!("{} = {} - {}", ident, offset, count);
+                // println!("{} = {} - {}", ident, offset, count);
                 if f.ident == *ident {
                     return Some(Location::NumberedOffset { offset: offset - count, reg });
                 }
