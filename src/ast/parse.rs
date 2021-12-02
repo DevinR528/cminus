@@ -1391,6 +1391,10 @@ impl<'a> AstBuilder<'a> {
             }
 
             self.eat_if(&TokenMatch::CloseBrace);
+            self.eat_whitespace();
+
+            self.eat_if(&TokenMatch::Semi);
+
             assembly
         } else {
             return Err(ParseError::Error(
@@ -1416,6 +1420,7 @@ impl<'a> AstBuilder<'a> {
             inst.src = self.make_location()?;
             self.eat_whitespace();
             if self.eat_if(&TokenMatch::Comma) {
+                self.eat_whitespace();
                 inst.dst = self.make_location()?;
             }
 
@@ -1438,43 +1443,43 @@ impl<'a> AstBuilder<'a> {
             Some(loc)
         } else if matches!(self.curr.kind, TokenKind::Literal { kind, .. }) {
             Some(Location::Const(self.make_literal()?.val))
-        } else if matches!(self.curr.kind, TokenKind::Ident) {
+        } else if matches!(self.curr.kind, TokenKind::Percent) {
+            self.eat_if(&TokenMatch::Percent);
+
             let reg = match self.input_curr() {
-                "%rax" => Location::Register(Register::RAX),
-                "%rcx" => Location::Register(Register::RCX),
-                "%rdx" => Location::Register(Register::RDX),
-                "%rbx" => Location::Register(Register::RBX),
-                "%rsp" => Location::Register(Register::RSP),
-                "%rbp" => Location::Register(Register::RBP),
-                "%rsi" => Location::Register(Register::RSI),
-                "%rdi" => Location::Register(Register::RDI),
-                "%r8" => Location::Register(Register::R8),
-                "%r9" => Location::Register(Register::R9),
-                "%r10" => Location::Register(Register::R10),
-                "%r11" => Location::Register(Register::R11),
-                "%r12" => Location::Register(Register::R12),
-                "%r13" => Location::Register(Register::R13),
-                "%r14" => Location::Register(Register::R14),
-                "%r15" => Location::Register(Register::R15),
-                "%xmm0" => Location::FloatReg(FloatRegister::XMM0),
-                "%xmm1" => Location::FloatReg(FloatRegister::XMM1),
-                "%xmm2" => Location::FloatReg(FloatRegister::XMM2),
-                "%xmm3" => Location::FloatReg(FloatRegister::XMM3),
-                "%xmm4" => Location::FloatReg(FloatRegister::XMM4),
-                "%xmm5" => Location::FloatReg(FloatRegister::XMM5),
-                "%xmm6" => Location::FloatReg(FloatRegister::XMM6),
-                "%xmm7" => Location::FloatReg(FloatRegister::XMM7),
+                "rax" => Location::Register(Register::RAX),
+                "rcx" => Location::Register(Register::RCX),
+                "rdx" => Location::Register(Register::RDX),
+                "rbx" => Location::Register(Register::RBX),
+                "rsp" => Location::Register(Register::RSP),
+                "rbp" => Location::Register(Register::RBP),
+                "rsi" => Location::Register(Register::RSI),
+                "rdi" => Location::Register(Register::RDI),
+                "r8" => Location::Register(Register::R8),
+                "r9" => Location::Register(Register::R9),
+                "r10" => Location::Register(Register::R10),
+                "r11" => Location::Register(Register::R11),
+                "r12" => Location::Register(Register::R12),
+                "r13" => Location::Register(Register::R13),
+                "r14" => Location::Register(Register::R14),
+                "r15" => Location::Register(Register::R15),
+                "xmm0" => Location::FloatReg(FloatRegister::XMM0),
+                "xmm1" => Location::FloatReg(FloatRegister::XMM1),
+                "xmm2" => Location::FloatReg(FloatRegister::XMM2),
+                "xmm3" => Location::FloatReg(FloatRegister::XMM3),
+                "xmm4" => Location::FloatReg(FloatRegister::XMM4),
+                "xmm5" => Location::FloatReg(FloatRegister::XMM5),
+                "xmm6" => Location::FloatReg(FloatRegister::XMM6),
+                "xmm7" => Location::FloatReg(FloatRegister::XMM7),
                 _ => {
-                    return Err(ParseError::Error(
-                        "invalid assembly instruction",
-                        self.curr_span(),
-                    ));
+                    return Err(ParseError::Error("no register by that name", self.curr_span()));
                 }
             };
             self.eat_if(&TokenMatch::Ident);
             Some(reg)
         } else {
-            return Err(ParseError::Error("invalid assembly instruction", self.curr_span()));
+            panic!("{:?}", self.curr);
+            return Err(ParseError::Error("invalid operand", self.curr_span()));
         })
     }
 
@@ -1893,7 +1898,45 @@ impl<'a> AstBuilder<'a> {
 
                 let key: Result<kw::Keywords, _> = text.try_into();
                 if let Ok(key) = key {
-                    todo!()
+                    if let kw::Fn = key {
+                        let start = self.input_idx;
+                        self.eat_keyword(kw::Fn);
+                        self.eat_if(&TokenMatch::OpenParen);
+
+                        let mut params = vec![];
+                        loop {
+                            self.eat_whitespace();
+                            // A no argument function call or trailing comma
+                            if self.eat_if(&TokenMatch::CloseParen) {
+                                break;
+                            }
+
+                            params.push(self.make_ty()?.val);
+                            self.eat_whitespace();
+                            if self.eat_if(&TokenMatch::Comma) {
+                                self.eat_whitespace();
+                                continue;
+                            } else {
+                                self.eat_if(&TokenMatch::CloseParen);
+                                break;
+                            }
+                        }
+                        let ret = if self.eat_if(&TokenMatch::Colon) {
+                            self.eat_whitespace();
+                            self.make_ty()?.val
+                        } else {
+                            self.eat_whitespace();
+                            ast::Ty::Void
+                        };
+                        ast::Ty::Func { ident: Ident::dummy(), params, ret: box ret }
+                            .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
+                    } else {
+                        return Err(ParseError::Expected(
+                            "invalid keyword in type",
+                            self.input_curr().to_string(),
+                            self.curr_span(),
+                        ));
+                    }
                 } else {
                     let span = self.curr_span();
                     let ty = match text {
@@ -2636,6 +2679,37 @@ fn parse_type_assign() {
 fn add() {
     let y: string = call();
     let z: bool = !x && false || !y;
+}
+"#;
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
+    parser.parse().unwrap();
+    assert_eq!(parser.items().len(), 1);
+}
+
+#[test]
+fn func_parse() {
+    let input = r#"
+fn add(cb: fn(int, char, cstr): float) {
+    cb();
+}
+"#;
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
+    parser.parse().unwrap();
+    assert_eq!(parser.items().len(), 1);
+}
+
+#[test]
+fn inline_assembly_parse() {
+    let input = r#"
+fn assembly() {
+    asm {
+        cmov 1, %rax;
+        ret;
+        leave;
+        pop %rax;
+        pushq %xmm0;
+        mov %rax, %rdi;
+    }
 }
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
