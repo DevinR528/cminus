@@ -1,7 +1,7 @@
 linked fn printf<T>(_fmt: cstr, _: T);
-linked fn signal(sig: int, handler: fn(int): int);
+linked fn signal(_sig: int, _handler: fn(int));
 
-fn sig_handle(sig: int): int {
+fn sig_handle(sig: int) {
     if (sig == 4) {
         asm {
             mov 60, %rax; // move syscall number 60 (exit) to rax

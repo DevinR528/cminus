@@ -1,0 +1,13 @@
+linked fn printf<T>(_fmt: cstr, _: T);
+
+fn callback(num: int): int {
+    return num + 2;
+}
+
+fn pass_call(cb: fn(int): int) {
+    printf("%d\n", cb(2));
+}
+
+fn main(argc: int) {
+    pass_call(callback);
+}

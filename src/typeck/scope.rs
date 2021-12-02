@@ -169,7 +169,14 @@ impl ScopeWalker {
             Ty::Path(path) => self.type_from_path(path, tctx)?,
             Ty::Ptr(t) => Ty::Ptr(box self.resolve_name(&t.val, tctx)?.into_spanned(DUMMY)),
             Ty::Ref(t) => Ty::Ref(box self.resolve_name(&t.val, tctx)?.into_spanned(DUMMY)),
-            Ty::Func { ident, ret, params } => todo!("{:?}", ty),
+            Ty::Func { ident, ret, params } => Ty::Func {
+                ident: *ident,
+                params: params
+                    .iter()
+                    .map(|t| Some(self.resolve_name(&t, tctx)?))
+                    .collect::<Option<Vec<_>>>()?,
+                ret: box self.resolve_name(&**ret, tctx)?,
+            },
             _ => ty.clone(),
         })
     }
