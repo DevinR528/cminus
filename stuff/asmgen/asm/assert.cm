@@ -1,4 +1,15 @@
 linked fn printf<T>(_fmt: cstr, _: T);
+linked fn signal(sig: int, handler: fn(int): int);
+
+fn sig_handle(sig: int): int {
+    if (sig == 4) {
+        asm {
+            mov 60, rax; // move syscall number 60 (exit) to rax
+            mov 4, rdi;  // move exit code (non zero for failure)
+            syscall;     // call it
+        };
+    }
+}
 
 fn assert(val: bool) {
     if (!val) {
@@ -8,5 +19,7 @@ fn assert(val: bool) {
 }
 
 fn main(argc: int) {
-    assert(argc == 1);
+    printf("%d\n", argc);
+    assert(argc == 1); // assert passes
+    assert(argc == 2); // assert fails
 }

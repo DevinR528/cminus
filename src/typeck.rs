@@ -1469,7 +1469,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 }
             }
             Expr::ArrayInit { items } => {
-                println!("{:?}", items);
                 for item in items {
                     self.visit_expr(item);
                 }
