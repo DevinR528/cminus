@@ -346,14 +346,47 @@ impl Expr {
             ty::Expr::Parens(expr) => Expr::Parens(box Expr::lower(tyctx, fold, *expr)),
             ty::Expr::Call { path, args, type_args } => {
                 let ident = path.segs.last().unwrap();
-                if type_args.iter().any(|arg| !arg.val.has_generics()) {}
-
-                let func = tyctx.var_func.name_func.get(ident).expect("function is defined");
+                let func = tyctx
+                    .var_func
+                    .name_func
+                    .get(ident)
+                    .map(|f| (*f).clone())
+                    .or_else(|| {
+                        tyctx.type_of_ident(path.segs[0], path.span).and_then(|ty| {
+                            use ty::Spany;
+                            if let ty::Ty::Func { params, ret, .. } = ty {
+                                Some(ty::Func {
+                                    ident: Ident::new(path.span, &format!("{}fnptr", path)),
+                                    params: params
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(idx, t)| ty::Param {
+                                            ty: crate::rawptr!(t.clone().into_spanned(DUMMY)),
+                                            ident: Ident::new(
+                                                path.span,
+                                                &format!("{}arg{}", path, idx),
+                                            ),
+                                            span: DUMMY,
+                                        })
+                                        .collect(),
+                                    ret: crate::rawptr!(ret.into_spanned(DUMMY)),
+                                    generics: vec![],
+                                    stmts: ty::Block { stmts: crate::raw_vec![], span: DUMMY },
+                                    // TODO: confirm if we are here it can only be a fn ptr
+                                    kind: ty::FuncKind::Pointer,
+                                    span: DUMMY,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                    .expect("a declared function or a function pointer as a parameter");
                 Expr::Call {
                     path,
                     args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
                     type_args: type_args.into_iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
-                    def: Func::lower_minus_body(tyctx, fold, func),
+                    def: Func::lower_minus_body(tyctx, fold, &func),
                 }
             }
             ty::Expr::TraitMeth { trait_, args, type_args } => {
@@ -373,8 +406,10 @@ impl Expr {
                     .expect("function is defined")
                     .get(&type_args.iter().map(|t| &t.val).collect::<Vec<_>>())
                     .cloned()
+                    // TODO: what was I THINKING hmmm in what way is this ok...
                     .unwrap_or(&f);
                 // .expect(&format!("types have impl {:?}", tyctx.trait_solve));
+
                 Expr::TraitMeth {
                     trait_,
                     args: args.into_iter().map(|a| Expr::lower(tyctx, fold, a)).collect(),
@@ -658,6 +693,10 @@ pub enum Ty {
         #[dbg_ignore]
         def: Enum,
     },
+    /// A function type.
+    ///
+    /// This is a function pointer, not a closure, only the passed parameters are available to it.
+    Func { ident: Ident, params: Vec<Ty>, ret: Box<Ty> },
     /// A pointer to a type.
     ///
     /// This is equivalent to indirection, for each layer of `Ty::Ptr(..)` we have
@@ -701,15 +740,16 @@ impl Ty {
                 let tag = 8_usize;
                 tag + variants
             }
-            Ty::Ptr(_)
-            | Ty::Ref(_)
-            | Ty::ConstStr(..)
+            Ty::Ptr(_)         // A pointer is 8 bytes
+            | Ty::Func { .. }  // A function pointer is 8 bytes
+            | Ty::Ref(_)       // this is just a pointer
+            | Ty::ConstStr(..) // same, pointer
             | Ty::Int
             | Ty::Char
             | Ty::Float
             | Ty::Bool => 8,
             Ty::Void => 0,
-            _ => unreachable!("generic type should be monomorphized"),
+            _ => unreachable!("generic type should be monomorphized {:?}", self),
         }
     }
 
@@ -758,6 +798,20 @@ impl fmt::Display for Ty {
                         gen.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
                     )
                 }
+            ),
+            Ty::Func { ident, params, ret } => write!(
+                f,
+                "{}({}): {}",
+                ident,
+                if params.is_empty() {
+                    "".to_owned()
+                } else {
+                    format!(
+                        "<{}>",
+                        params.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
+                    )
+                },
+                ret,
             ),
             Ty::Ptr(t) => write!(f, "&{}", t),
             Ty::Ref(t) => write!(f, "*{}", t),
@@ -1249,10 +1303,15 @@ impl Ty {
             ty::Ty::Bool => Ty::Bool,
             ty::Ty::Void => Ty::Void,
             ty::Ty::Generic { ident, bound } => Ty::Generic { ident: *ident, bound: bound.clone() },
-            ty::Ty::Path(_) => Ty::lower(tyctx, &tyctx.name_res.resolve_name(ty, tyctx).unwrap()),
-            ty::Ty::Func { .. } => {
-                todo!("pretty sure this is an error")
+            ty::Ty::Path(_) => {
+                println!("lowering path: should not happen");
+                Ty::lower(tyctx, &tyctx.name_res.resolve_name(ty, tyctx).unwrap())
             }
+            ty::Ty::Func { ident, params, ret } => Ty::Func {
+                ident: *ident,
+                params: params.iter().map(|t| Ty::lower(tyctx, t)).collect(),
+                ret: box Ty::lower(tyctx, ret),
+            },
         }
     }
 }
