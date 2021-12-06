@@ -1681,8 +1681,29 @@ impl<'ctx> CodeGen<'ctx> {
                             ty::Location::FloatReg(_) => todo!(),
                             ty::Location::NamedOffset(_) => todo!(),
                             ty::Location::Offset { amt, reg } => todo!(),
-                            ty::Location::InlineVar(_) => todo!(),
-                            ty::Location::Const(_) => todo!(),
+                            ty::Location::InlineVar(ident) => {
+                                asm_str.push_str(&format!("{}", self.vars.get(ident).unwrap(),))
+                            }
+                            ty::Location::Const(v) => asm_str.push_str(&format!(
+                                "{}",
+                                Location::Const { val: Val::lower(v.clone()) }
+                            )),
+                        }
+                        asm_str.push_str(",  ");
+                        if let Some(src) = &inst.dst {
+                            match src {
+                                ty::Location::Register(reg) => asm_str.push_str(&reg.to_string()),
+                                ty::Location::FloatReg(_) => todo!(),
+                                ty::Location::NamedOffset(_) => todo!(),
+                                ty::Location::Offset { amt, reg } => todo!(),
+                                ty::Location::InlineVar(ident) => {
+                                    asm_str.push_str(&format!("{}", self.vars.get(ident).unwrap(),))
+                                }
+                                ty::Location::Const(v) => asm_str.push_str(&format!(
+                                    "{}",
+                                    Location::Const { val: Val::lower(v.clone()) }
+                                )),
+                            }
                         }
                     }
 
