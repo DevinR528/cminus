@@ -586,7 +586,9 @@ impl TypeEquality for Ty {
             | (Ty::Bool, Ty::Bool)
             | (Ty::Void, Ty::Void) => true,
             (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => i1.eq(i2),
-            (Ty::Func { .. }, _) => unreachable!("Func type should never be checked"),
+            (Ty::Func { params: pa, ret: ra, .. }, Ty::Func { params: pb, ret: rb, .. }) => {
+                ra.is_ty_eq(rb) && pa.iter().zip(pb).all(|(a, b)| a.is_ty_eq(b))
+            }
             _ => false,
         }
     }
@@ -698,11 +700,20 @@ impl fmt::Display for MatchArm {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
+    /// A general purpose register `%rax, %rdi, %eax`.
     Register(lir::Register),
+    /// A float register `xmmN` where N is 0-7.
     FloatReg(lir::FloatRegister),
+    /// A named offset, this would be odd since you shouldn't know the names of locations in a
+    /// binary before compilation??
     NamedOffset(Ident),
+    /// A numbered offset, this would also be odd, although if less so (structs, arrays, etc.).
     Offset { amt: usize, reg: Box<Location> },
+    /// A variable referenced from the `AsmBlock`s parent scope.
+    ///
+    /// Any variable declared that is in scope where the assembly block is can be used.
     InlineVar(Ident),
+    /// A constant value `$2`, only integer and string consts are valid.
     Const(Val),
 }
 
@@ -815,10 +826,27 @@ impl Generic {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FuncKind {
+    /// Any normal function, declared in global scope.
+    ///
+    /// ```
+    /// fn foo(args: int): int {
+    ///     return args + 1;
+    /// }
+    /// ```
     Normal,
+    /// A linked function, one with no body that is linked dynamically.
     Linked,
+    // TODO: which keyword is better
+    /// Same as above
     Extern,
+    /// A trait function that is empty. This is the norm so they can be implemented in the impl
+    /// block.
     EmptyTrait,
+    /// A function pointer passed to as an argument.
+    ///
+    /// This will have the name of the parameter it was passed with but assembly needs to know not
+    /// to call it by name.
+    Pointer,
 }
 
 #[derive(Clone, Debug)]
