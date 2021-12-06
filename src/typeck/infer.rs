@@ -466,6 +466,8 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.visit_expr(arg);
                 }
 
+                // If the function is from an arguemnt we added the parameter name and fn header as
+                // new func decl for the scope of the current function
                 let func = self.tcxt.var_func.name_func.get(&path.segs[0]);
                 if let Some(func) = func {
                     if func.params.len() != args.len() {
