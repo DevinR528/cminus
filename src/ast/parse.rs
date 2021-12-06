@@ -868,7 +868,7 @@ impl<'a> AstBuilder<'a> {
 
             let op = self.make_op()?;
             (id, op)
-        } else if self.curr.kind == TokenMatch::Literal {
+        } else if matches!(self.curr.kind, TokenKind::Minus | TokenKind::Literal { .. }) {
             let start = self.input_idx;
             let ex = ast::Expr::Value(self.make_literal()?)
                 .into_spanned(ast::to_rng(start..self.input_idx, self.file_id));
@@ -1441,7 +1441,7 @@ impl<'a> AstBuilder<'a> {
             self.eat_if(&TokenMatch::CloseParen);
 
             Some(loc)
-        } else if matches!(self.curr.kind, TokenKind::Literal { kind, .. }) {
+        } else if matches!(self.curr.kind, TokenKind::Minus | TokenKind::Literal { .. }) {
             Some(Location::Const(self.make_literal()?.val))
         } else if matches!(self.curr.kind, TokenKind::Percent) {
             self.eat_if(&TokenMatch::Percent);
@@ -1645,7 +1645,7 @@ impl<'a> AstBuilder<'a> {
 
             let span = ast::to_rng(start..self.input_idx(), self.file_id);
             ast::Pat::Array { size: pats.len(), items: pats }.into_spanned(span)
-        } else if self.curr.kind == TokenMatch::Literal {
+        } else if matches!(self.curr.kind, TokenKind::Minus | TokenKind::Literal { .. }) {
             // Literal
             let span = ast::to_rng(start..self.input_idx(), self.file_id);
             ast::Pat::Bind(ast::Binding::Value(self.make_literal()?)).into_spanned(span)
@@ -1746,7 +1746,11 @@ impl<'a> AstBuilder<'a> {
     /// Parse a literal.
     fn make_literal(&mut self) -> ParseResult<ast::Value> {
         self.push_call_stack("make_literal");
+
+        let neg_ident = if self.eat_if(&TokenMatch::Minus) { -1 } else { 1 };
+
         // @copypaste
+        #[allow(clippy::wildcard_in_or_patterns)]
         Ok(match self.curr.kind {
             TokenKind::Ident => {
                 let keyword: kw::Keywords = self.input_curr().try_into()?;
@@ -1770,14 +1774,18 @@ impl<'a> AstBuilder<'a> {
 
                 let val = match kind {
                     LiteralKind::Int { base, empty_int } => Val::Int(
-                        text.parse()
-                            .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
+                        neg_ident
+                            * text
+                                .parse::<isize>()
+                                .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
                     ),
                     LiteralKind::Float { base, empty_exponent } => Val::Float(
-                        text.parse()
-                            .map_err(|_| ParseError::InvalidFloatLiteral(self.curr_span()))?,
+                        (neg_ident as f64)
+                            * text
+                                .parse::<f64>()
+                                .map_err(|_| ParseError::InvalidFloatLiteral(self.curr_span()))?,
                     ),
-                    LiteralKind::Char { terminated } => {
+                    LiteralKind::Char { terminated } if neg_ident > 0 => {
                         let end = text.len() - 1;
                         let text = &text[1..end];
                         if text.replace('\\', "").len() == 1 {
@@ -1789,7 +1797,7 @@ impl<'a> AstBuilder<'a> {
                             ));
                         }
                     }
-                    LiteralKind::Str { terminated } => {
+                    LiteralKind::Str { terminated } if neg_ident > 0 => {
                         let mut text = text.to_string();
                         // Remove the first " and pop the last "
                         text.remove(0);
@@ -1797,10 +1805,12 @@ impl<'a> AstBuilder<'a> {
 
                         Val::Str(Ident::new(self.curr_span(), &text))
                     }
+
                     LiteralKind::ByteStr { .. }
                     | LiteralKind::RawStr { .. }
                     | LiteralKind::RawByteStr { .. }
-                    | LiteralKind::Byte { .. } => todo!(),
+                    | LiteralKind::Byte { .. }
+                    | _ => todo!(),
                 };
                 self.eat_if(&TokenMatch::Literal);
                 val.into_spanned(span)
