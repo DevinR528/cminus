@@ -173,7 +173,7 @@ impl ScopeWalker {
                 ident: *ident,
                 params: params
                     .iter()
-                    .map(|t| Some(self.resolve_name(&t, tctx)?))
+                    .map(|t| self.resolve_name(t, tctx))
                     .collect::<Option<Vec<_>>>()?,
                 ret: box self.resolve_name(&**ret, tctx)?,
             },
