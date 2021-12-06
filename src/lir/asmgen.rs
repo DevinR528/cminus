@@ -594,8 +594,6 @@ impl<'ctx> CodeGen<'ctx> {
                     });
                 }
             } else if let Ty::Float = ty {
-                float_flag = true;
-
                 if matches!(val, Location::Const { .. }) {
                     self.used_float_regs.insert(FloatRegister::XMM0);
                     let register = self.free_float_reg();
@@ -644,6 +642,17 @@ impl<'ctx> CodeGen<'ctx> {
                         dst: Location::FloatReg(FloatRegister::XMM0),
                     }]);
                 }
+            } else if let Ty::Func { .. } = ty {
+                self.asm_buf.push(Instruction::SizedMov {
+                    src: if let Location::Label(s) = val {
+                        // When we are moving a function ptr we refer to it like a value 🤷
+                        Location::Label(format!("${}", s))
+                    } else {
+                        val
+                    },
+                    dst: Location::Register(ARG_REGS[idx]),
+                    size: arg.type_of().size(),
+                });
             } else {
                 self.asm_buf.push(Instruction::SizedMov {
                     src: val,
@@ -654,12 +663,25 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         self.asm_buf.push(Instruction::Mov {
-            src: if float_flag { ONE } else { ZERO },
+            src: if called_with_float { ONE } else { ZERO },
             dst: RAX,
             comment: "set float flag",
         });
 
-        let ident = if type_args.is_empty() || matches!(kind, FuncKind::Linked | FuncKind::Extern) {
+        let ident = if matches!(kind, FuncKind::Pointer) {
+            if let Some(offset) = self.vars.get(&path.segs[0]).cloned() {
+                let reg = self.free_reg_except(Register::RAX);
+                self.asm_buf.push(Instruction::Mov {
+                    src: offset,
+                    dst: Location::Register(reg),
+                    comment: "move fn ptr to register",
+                });
+
+                format!("*{}", reg)
+            } else {
+                unreachable!()
+            }
+        } else if type_args.is_empty() || matches!(kind, FuncKind::Linked | FuncKind::Extern) {
             path.to_string()
         } else {
             format!(
@@ -1850,12 +1872,14 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                     },
                 );
             }
-            Ty::Void => unreachable!(),
+            Ty::Func { .. } | Ty::Void => unreachable!(),
         };
         self.vars.insert(var.ident, Location::NamedOffset(name));
     }
 
     fn visit_func(&mut self, func: &'ast Func) {
+        let function_name = func.ident.name().to_string();
+        self.vars.insert(func.ident, Location::Label(function_name.clone()));
         if func.stmts.is_empty()
             || matches!(func.kind, FuncKind::Linked | FuncKind::EmptyTrait | FuncKind::Extern)
         {
@@ -1867,7 +1891,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                 ".global {name}\n.type {name},@function\n",
                 name = func.ident
             )),
-            Instruction::Label(func.ident.name().to_string()),
+            Instruction::Label(function_name),
             Instruction::Push { loc: RBP, size: 8, comment: "" },
             Instruction::Mov { src: RSP, dst: RBP, comment: "" },
         ]);
