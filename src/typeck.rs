@@ -223,6 +223,7 @@ impl<'input> TyCheckRes<'_, 'input> {
         old
     }
 
+    // TODO: this should use the stuff from scope not a mix of `var_func`, `globals` etc.
     /// Find the `Type` of this identifier AND mark it as used.
     crate fn type_of_ident(&self, id: Ident, span: Range) -> Option<Ty> {
         self.var_func
@@ -352,6 +353,10 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
         // Stabilize order which I'm not sure how it gets unordered
         funcs.sort_by(|a, b| a.span.start.cmp(&b.span.start));
         for func in funcs {
+            // Storage space for function pointers passed as params
+            //
+            let mut fn_ptr_storage = vec![];
+
             self.curr_fn = Some(func.ident);
             self.name_res
                 .add_to_scope_stack(Scope::Func { file: func.span.file_id, func: func.ident });
@@ -361,6 +366,36 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 let resolved = self.name_res.resolve_name(&param.ty.get().val, self);
                 if let Some(res) = resolved {
                     param.ty.set(res.into_spanned(param.ty.get().span));
+                }
+
+                // Add this to the global function scope for the duration of this functions scope
+                // (the one we are in now)
+                if let Ty::Func { ident, params, ret } = &param.ty.get().val {
+                    let idx = fn_ptr_storage.len();
+                    fn_ptr_storage.push(Func {
+                        ident: Ident::new(param.ident.span(), &format!("{}fnptr", param.ident)),
+                        params: params
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, t)| Param {
+                                ty: crate::rawptr!(t.clone().into_spanned(DUMMY)),
+                                ident: Ident::new(
+                                    param.span,
+                                    &format!("{}arg{}", param.ident, idx),
+                                ),
+                                span: DUMMY,
+                            })
+                            .collect(),
+                        ret: crate::rawptr!(ret.clone().into_spanned(DUMMY)),
+                        generics: vec![],
+                        stmts: Block { stmts: crate::raw_vec![], span: DUMMY },
+                        kind: FuncKind::Normal,
+                        span: DUMMY,
+                    });
+
+                    self.var_func
+                        .name_func
+                        .insert(param.ident, unsafe { std::mem::transmute(&fn_ptr_storage[idx]) });
                 }
             }
             // Resolve the return value (if struct or enum or type)
@@ -422,6 +457,16 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         func.ret.get().val
                     ),
                 ));
+            }
+
+            // Remove any functions we added from the params
+            for param in &func.params {
+                if let Ty::Func { ident, params, ret } = &param.ty.get().val {
+                    self.var_func
+                        .name_func
+                        .remove(&param.ident)
+                        .expect("if we added it it must still be there");
+                }
             }
 
             self.name_res.pop_scope_stack();
@@ -559,6 +604,12 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     &Ty::Func {
                         ident: func.ident,
                         ret: box func.ret.get().val.clone(),
+                        // TODO: this is a HACK: we should NOT do this weird special case thing with
+                        // the `Ty::Func` where we fill the params with generic parameters.
+                        //
+                        // If we pass the actual parameter types the method panics, we could just
+                        // not panic but it will need more investigation
+                        // 12/5/21
                         params: func
                             .generics
                             .iter()
@@ -597,6 +648,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     func.span,
                     &format!("multiple function declaration `{}`", func.ident),
                 ));
+            } else {
+                // Finally add this to the global namespace since it is a usable identifier now
+                self.global.insert(
+                    func.ident,
+                    // TODO: this is the correct usage of this `Ty` (see above TODO about
+                    // `GenericResolver::collect_generic_params`)
+                    Ty::Func {
+                        ident: func.ident,
+                        ret: box func.ret.get().val.clone(),
+                        params: func.params.iter().map(|p| p.ty.get().val.clone()).collect(),
+                    },
+                );
             }
         } else {
             self.errors.push_error(Error::error_with_span(
@@ -1093,6 +1156,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
             Expr::Call { path, args, type_args } => {
                 let ident = path.segs.last().unwrap();
+
+                // TODO: this is also kinda a HACK (similar to above from same commit)
+                // If this is a function pointer record it's use
+                if let Some(f) = self.var_func.get_fn_by_span(expr.span) {
+                    if let Some((_, b)) = self.var_func.unsed_vars.get(&ScopedName::func_scope(
+                        f,
+                        *ident,
+                        expr.span.file_id,
+                    )) {
+                        b.set(true);
+                    }
+                }
 
                 for arg in args {
                     self.visit_expr(arg);

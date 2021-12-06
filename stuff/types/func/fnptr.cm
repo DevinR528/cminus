@@ -5,9 +5,10 @@ fn callback(num: int): int {
 }
 
 fn pass_call(cb: fn(int): int) {
-    printf("%d\n", cb(2));
+    let num = cb(2);
+    printf("%d\n", num);
 }
 
-fn main(argc: int) {
+fn main() {
     pass_call(callback);
 }
