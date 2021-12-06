@@ -527,6 +527,8 @@ impl<'ctx> CodeGen<'ctx> {
         type_args: &[Ty],
         can_clear: CanClearRegs,
     ) -> Location {
+        let called_with_float = args.iter().any(|ex| matches!(ex.type_of(), Ty::Float));
+
         let mut pushed_to_align_float_stack = false;
         if (self.total_stack % 16 != 0 || self.total_stack == 0) {
             self.asm_buf.push(Instruction::Math {
@@ -542,7 +544,6 @@ impl<'ctx> CodeGen<'ctx> {
             pushed_to_align_float_stack = true;
         }
 
-        let mut float_flag = false;
         let mut spilled = vec![];
         for (idx, arg) in args.iter().enumerate() {
             if self.used_regs.contains(&ARG_REGS[idx]) {
@@ -555,7 +556,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             self.use_reg(ARG_REGS[idx]);
 
-            let val = self.build_value(arg, None, can_clear).unwrap();
+            let val = self.build_value(arg, None, can_clear).unwrap_or_else(|| panic!("{:?}", arg));
 
             let ty = arg.type_of();
 
@@ -821,7 +822,7 @@ impl<'ctx> CodeGen<'ctx> {
                 let lhs_ty = lhs.type_of();
 
                 if let Some(Location::NumberedOffset { offset, reg }) = left_loc {
-                    let accessor = construct_field_offset_lvalue(self, &rhs, offset, reg, def)?;
+                    let accessor = construct_field_offset_lvalue(self, rhs, offset, reg, def)?;
                     if matches!(lhs_ty, Ty::Ptr(..)) {
                         let register = self.free_reg();
                         self.asm_buf.extend_from_slice(&[Instruction::Mov {
@@ -1159,17 +1160,18 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
             Expr::Call { path, args, type_args, def } => {
                 let mut spilled = false;
-                if !matches!(def.ret, Ty::Void) {
-                    if self.used_regs.contains(&Register::RAX) {
-                        spilled = true;
-                        self.asm_buf.push(Instruction::Push {
-                            loc: RAX,
-                            size: 8,
-                            comment: "had to spill reg for call",
-                        });
-                    }
+                if !matches!(def.ret, Ty::Void) && self.used_regs.contains(&Register::RAX) {
+                    spilled = true;
+                    self.asm_buf.push(Instruction::Push {
+                        loc: RAX,
+                        size: 8,
+                        comment: "had to spill rax for call",
+                    });
                 }
+
+                // Generate the argument passing and calling the label or ptr
                 let ret_loc = self.gen_call_expr(path, def.kind, args, type_args, can_clear);
+
                 if spilled {
                     let reg = self.free_reg();
                     self.asm_buf.extend_from_slice(&[
@@ -1811,7 +1813,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                     Global::Array {
                         name: name.clone(),
                         content: if let Expr::ArrayInit { items, .. } = &var.init {
-                            items.iter().map(|e| convert_to_const(e)).collect()
+                            items.iter().map(convert_to_const).collect()
                         } else {
                             unreachable!("non const string value used in constant")
                         },
