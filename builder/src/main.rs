@@ -87,7 +87,9 @@ fn main() {
                     "./stuff/asmgen/while/sort.cm", // same as above with ints
                     "./stuff/asmgen/args/args.cm",  // test getting argc and argv in main
                     "./stuff/types/dynarr/field.cm", // test passing struct pointer and mutating
-                    
+                    "./stuff/types/func/fnptr.cm",
+                    "./stuff/asmgen/asm/assert.cm",
+                    "./stuff/asmgen/asm/asm.cm",
                     // "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
                 ],
                 "-as",
