@@ -144,7 +144,7 @@ impl fmt::Display for Location {
                 }
                 Val::Str(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
             },
-            Location::Label(label) => label.fmt(f),
+            Location::Label(label) => write!(f, "{:>width$}", label),
             Location::NamedOffset(label) => {
                 write!(f, "{:>width$}", format!("{}(%rip)", label), width = width)
             }
