@@ -58,6 +58,8 @@ impl fmt::Display for Register {
 
 use FloatRegister::*;
 
+pub const ARG_FLOAT_REGS: [FloatRegister; 7] = [XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6];
+
 lazy_static::lazy_static! { pub static ref USABLE_FLOAT_REGS: HashSet<FloatRegister> =
     vec![XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7]
         .into_iter()

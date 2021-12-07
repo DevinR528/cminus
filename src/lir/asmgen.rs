@@ -26,6 +26,8 @@ use crate::{
 crate mod inst;
 use inst::{Global, Instruction, Location, Register, ARG_REGS, USABLE_REGS};
 
+use self::inst::ARG_FLOAT_REGS;
+
 const STATIC_PREAMBLE: &str = r#"
 .text
 
@@ -40,6 +42,8 @@ const RAX: Location = Location::Register(Register::RAX);
 const RSP: Location = Location::Register(Register::RSP);
 const RBP: Location = Location::Register(Register::RBP);
 const RDX: Location = Location::Register(Register::RDX);
+
+const XMM0: Location = Location::FloatReg(FloatRegister::XMM0);
 
 #[derive(Clone, Copy, Debug)]
 enum CanClearRegs {
@@ -523,6 +527,7 @@ impl<'ctx> CodeGen<'ctx> {
         &mut self,
         path: &ty::Path,
         kind: FuncKind,
+        ret_ty: &Ty,
         args: &'ctx [Expr],
         type_args: &[Ty],
         can_clear: CanClearRegs,
@@ -638,7 +643,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Instruction::Pop { loc: val, size: 8, comment: "remove tmp from stack" },
                     ]);
                 } else {
-                    self.asm_buf.extend_from_slice(&[Instruction::Cvt {
+                    self.asm_buf.extend_from_slice(&[Instruction::FloatMov {
                         src: val,
                         dst: Location::FloatReg(FloatRegister::XMM0),
                     }]);
@@ -711,7 +716,11 @@ impl<'ctx> CodeGen<'ctx> {
             });
         }
 
-        RAX
+        if matches!(ret_ty, Ty::Float) {
+            XMM0
+        } else {
+            RAX
+        }
     }
 
     fn push_stack(&mut self, ty: &Ty) {
@@ -781,11 +790,21 @@ impl<'ctx> CodeGen<'ctx> {
 
         let ref_loc = Location::NumberedOffset { offset: self.current_stack, reg: Register::RBP };
 
-        self.asm_buf.extend_from_slice(&[Instruction::Push {
-            loc: Location::Register(ARG_REGS[count]),
-            size,
-            comment: "",
-        }]);
+        if matches!(ty, Ty::Float) {
+            self.asm_buf.extend_from_slice(&[
+                Instruction::Push { loc: ZERO, size, comment: "push/mov float arg" },
+                Instruction::FloatMov {
+                    src: Location::FloatReg(ARG_FLOAT_REGS[0]),
+                    dst: ref_loc.clone(),
+                },
+            ]);
+        } else {
+            self.asm_buf.push(Instruction::Push {
+                loc: Location::Register(ARG_REGS[count]),
+                size,
+                comment: "push argument to stack",
+            });
+        }
 
         self.vars.insert(name, ref_loc.clone());
         ref_loc
@@ -798,11 +817,11 @@ impl<'ctx> CodeGen<'ctx> {
                 let loc = self.get_pointer(&**expr)?;
                 let register = self.free_reg();
                 if loc.is_stack_offset() {
-                    self.asm_buf.extend_from_slice(&[Instruction::Mov {
+                    self.asm_buf.push(Instruction::Mov {
                         src: loc,
                         dst: Location::Register(register),
                         comment: "deref",
-                    }]);
+                    });
                     Location::NumberedOffset { offset: 0, reg: register }
                 } else {
                     todo!("pretty sure this is an error {:?}", loc)
@@ -1170,7 +1189,8 @@ impl<'ctx> CodeGen<'ctx> {
                 }
 
                 // Generate the argument passing and calling the label or ptr
-                let ret_loc = self.gen_call_expr(path, def.kind, args, type_args, can_clear);
+                let ret_loc =
+                    self.gen_call_expr(path, def.kind, &def.ret, args, type_args, can_clear);
 
                 if spilled {
                     let reg = self.free_reg();
@@ -1187,9 +1207,14 @@ impl<'ctx> CodeGen<'ctx> {
                     ret_loc
                 }
             }
-            Expr::TraitMeth { trait_, args, type_args, def } => {
-                self.gen_call_expr(trait_, def.method.kind, args, type_args, can_clear)
-            }
+            Expr::TraitMeth { trait_, args, type_args, def } => self.gen_call_expr(
+                trait_,
+                def.method.kind,
+                &def.method.ret,
+                args,
+                type_args,
+                can_clear,
+            ),
             Expr::FieldAccess { lhs, rhs, def } => {
                 let lval = self.vars.get(&lhs.as_ident()).cloned();
                 if let Some(Location::NumberedOffset { offset, reg }) = &lval {
@@ -1571,9 +1596,9 @@ impl<'ctx> CodeGen<'ctx> {
             Stmt::Call { expr: CallExpr { path, args, type_args }, def } => {
                 // TODO: if we return something check rax is free
 
-                self.gen_call_expr(path, def.kind, args, type_args, CanClearRegs::No);
+                self.gen_call_expr(path, def.kind, &def.ret, args, type_args, CanClearRegs::No);
 
-                self.clear_float_regs_except(None, CanClearRegs::Yes);
+                self.clear_float_regs_except(Some(&XMM0), CanClearRegs::Yes);
                 self.clear_regs_except(Some(&RAX), CanClearRegs::Yes);
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
@@ -1661,14 +1686,22 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.asm_buf.push(Instruction::Label(match_merge));
             }
-            Stmt::Ret(expr, _ty) => {
+            Stmt::Ret(expr, ty) => {
                 let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
-                if matches!(val, RAX) {
+                if matches!(ty, Ty::Float) {
+                    if !matches!(val, XMM0) {
+                        self.asm_buf.push(
+                            // return value is stored in %rax
+                            Instruction::FloatMov { src: val, dst: XMM0 },
+                        );
+                    }
                 } else {
-                    self.asm_buf.extend_from_slice(&[
-                        // return value is stored in %rax
-                        Instruction::Mov { src: val, dst: RAX, comment: "" },
-                    ]);
+                    if !matches!(val, RAX) {
+                        self.asm_buf.push(
+                            // return value is stored in %rax
+                            Instruction::Mov { src: val, dst: RAX, comment: "" },
+                        );
+                    }
                 }
             }
             Stmt::Exit => {}
@@ -1680,7 +1713,7 @@ impl<'ctx> CodeGen<'ctx> {
                     if let Some(src) = &inst.src {
                         match src {
                             ty::Location::Register(reg) => asm_str.push_str(&reg.to_string()),
-                            ty::Location::FloatReg(_) => todo!(),
+                            ty::Location::FloatReg(reg) => asm_str.push_str(&reg.to_string()),
                             ty::Location::NamedOffset(_) => todo!(),
                             ty::Location::Offset { amt, reg } => todo!(),
                             ty::Location::InlineVar(ident) => {
@@ -1695,7 +1728,7 @@ impl<'ctx> CodeGen<'ctx> {
                         if let Some(src) = &inst.dst {
                             match src {
                                 ty::Location::Register(reg) => asm_str.push_str(&reg.to_string()),
-                                ty::Location::FloatReg(_) => todo!(),
+                                ty::Location::FloatReg(reg) => asm_str.push_str(&reg.to_string()),
                                 ty::Location::NamedOffset(_) => todo!(),
                                 ty::Location::Offset { amt, reg } => todo!(),
                                 ty::Location::InlineVar(ident) => {
