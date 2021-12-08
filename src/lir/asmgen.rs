@@ -162,7 +162,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Instruction::Math { src, dst, op, cmt } => {
                 format!(
-                    "    {}{:a$},{:b$}{:c$}# {}",
+                    "    {}q{:a$},{:b$}{:c$}# {}",
                     op.as_instruction(),
                     src,
                     dst,
@@ -550,6 +550,8 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         let mut spilled = vec![];
+        // number of float arguments
+        let mut float_count = 0;
         for (idx, arg) in args.iter().enumerate() {
             if self.used_regs.contains(&ARG_REGS[idx]) {
                 spilled.push(ARG_REGS[idx]);
@@ -601,26 +603,15 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             } else if let Ty::Float = ty {
                 if matches!(val, Location::Const { .. }) {
-                    self.used_float_regs.insert(FloatRegister::XMM0);
-                    let register = self.free_float_reg();
+                    self.used_float_regs.insert(ARG_FLOAT_REGS[float_count]);
                     self.clear_float_regs_except(None, can_clear);
 
                     self.asm_buf.extend_from_slice(&[
                         // From stack pointer
                         Instruction::Push { loc: val, size: 8, comment: "" },
-                        // To xmm? to store as float
-                        Instruction::FloatMov {
-                            src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                            dst: Location::FloatReg(register),
-                        },
-                        // FIXME: this may be redundant because of above and below instructions
-                        Instruction::FloatMov {
-                            src: Location::FloatReg(register),
-                            dst: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                        },
                         Instruction::Cvt {
                             src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                            dst: Location::FloatReg(FloatRegister::XMM0),
+                            dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
                         },
                         Instruction::Math {
                             src: Location::Const { val: Val::Int(8) },
@@ -629,7 +620,7 @@ impl<'ctx> CodeGen<'ctx> {
                             cmt: "fix above push",
                         },
                     ]);
-                } else if let Location::Register(reg) = &val {
+                } else if matches!(val, Location::Register(..)) {
                     self.asm_buf.extend_from_slice(&[
                         Instruction::Push {
                             loc: val.clone(),
@@ -638,16 +629,23 @@ impl<'ctx> CodeGen<'ctx> {
                         },
                         Instruction::Cvt {
                             src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                            dst: Location::FloatReg(FloatRegister::XMM0),
+                            dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
                         },
                         Instruction::Pop { loc: val, size: 8, comment: "remove tmp from stack" },
                     ]);
-                } else {
+                } else if matches!(val, Location::NumberedOffset { .. }) {
+                    self.asm_buf.extend_from_slice(&[Instruction::Cvt {
+                        src: val,
+                        dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
+                    }]);
+                } else if val != Location::FloatReg(ARG_FLOAT_REGS[float_count]) {
                     self.asm_buf.extend_from_slice(&[Instruction::FloatMov {
                         src: val,
-                        dst: Location::FloatReg(FloatRegister::XMM0),
+                        dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
                     }]);
                 }
+                // use next float register
+                float_count += 1;
             } else if let Ty::Func { .. } = ty {
                 self.asm_buf.push(Instruction::SizedMov {
                     src: if let Location::Label(s) = val {
@@ -722,8 +720,10 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         if matches!(ret_ty, Ty::Float) {
+            self.use_float_reg(FloatRegister::XMM0);
             XMM0
         } else {
+            self.use_reg(Register::RAX);
             RAX
         }
     }
@@ -1184,7 +1184,9 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
             Expr::Call { path, args, type_args, def } => {
                 let mut spilled = false;
-                if !matches!(def.ret, Ty::Void) && self.used_regs.contains(&Register::RAX) {
+                if !matches!(def.ret, Ty::Void | Ty::Float)
+                    && self.used_regs.contains(&Register::RAX)
+                {
                     spilled = true;
                     self.asm_buf.push(Instruction::Push {
                         loc: RAX,
@@ -1451,10 +1453,8 @@ impl<'ctx> CodeGen<'ctx> {
                         self.clear_float_regs_except(Some(&lloc), CanClearRegs::Yes);
 
                         self.asm_buf.extend_from_slice(&[
-                            // From stack pointer
-                            Instruction::Push { loc: rloc, size: 8, comment: "" },
-                            // To xmm? to store as float
-                            Instruction::FloatMov {
+                            Instruction::Push { loc: rloc, size: 8, comment: "const to stack" },
+                            Instruction::Cvt {
                                 src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
                                 dst: Location::FloatReg(register),
                             },
@@ -1469,6 +1469,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 cmt: "even out after push",
                             },
                         ]);
+
                     // Promote any non float register to float
                     // TODO: REMOVE
                     } else if matches!(
@@ -1481,7 +1482,7 @@ impl<'ctx> CodeGen<'ctx> {
                             Instruction::Push {
                                 loc: rloc,
                                 size: 8,
-                                comment: "we are promoting an int to float",
+                                comment: "FIXME look at this we are promoting an int to float",
                             },
                             Instruction::FloatMov {
                                 src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
@@ -1699,10 +1700,22 @@ impl<'ctx> CodeGen<'ctx> {
                 let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
                 if matches!(ty, Ty::Float) {
                     if !matches!(val, XMM0) {
-                        self.asm_buf.push(
-                            // return value is stored in %rax
-                            Instruction::FloatMov { src: val, dst: XMM0 },
-                        );
+                        if matches!(val, Location::Const { .. }) {
+                            self.asm_buf.extend_from_slice(&[
+                                Instruction::Push { loc: val, size: 8, comment: "float return" },
+                                Instruction::Cvt {
+                                    src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
+                                    dst: XMM0,
+                                },
+                            ]);
+                        } else if matches!(val, Location::NumberedOffset { .. }) {
+                            self.asm_buf.push(Instruction::Cvt { src: val, dst: XMM0 });
+                        } else {
+                            self.asm_buf.push(
+                                // return value is stored in %xmmN
+                                Instruction::FloatMov { src: val, dst: XMM0 },
+                            );
+                        }
                     }
                 } else {
                     if !matches!(val, RAX) {
