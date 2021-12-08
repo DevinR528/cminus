@@ -23,7 +23,11 @@ impl<'ast, 'b> VisitMut<'ast> for GenSubstitution<'ast, 'b> {
     fn visit_func(&mut self, func: &'ast mut ty::Func) {
         // TODO: this is REALLY bad since we lock anytime we do something like this, and making a
         // bunch of thrown away allocations to the interner isn't ideal
-        func.ident = Ident::new(func.ident.span(), &format!("{}{}", func.ident.name(), self.ty));
+        func.ident = Ident::new(
+            func.ident.span(),
+            // TODO: @name-cleanup
+            &format!("{}{}", func.ident.name(), self.ty.to_string().replace(" ", "")),
+        );
         crate::visit::walk_mut_func(self, func);
     }
 
@@ -36,6 +40,8 @@ impl<'ast, 'b> VisitMut<'ast> for GenSubstitution<'ast, 'b> {
         if let Some(t) = self.tcxt.expr_ty.get(expr) {
             if t.has_generics() && t.generics().contains(&&self.generic.ident) {
                 self.tcxt.mono_expr_ty.borrow_mut().insert(expr.clone(), self.ty.clone());
+            } else if let ty::Expr::Builtin(ty::Builtin::SizeOf(t)) = &mut expr.val {
+                t.set(self.ty.clone().into_spanned(DUMMY));
             }
         }
         crate::visit::walk_mut_expr(self, expr);
@@ -70,6 +76,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'ast, 'a> {
                 for arg in args2 {
                     self.visit_expr(arg);
                 }
+                // TODO: @name-cleanup
                 let ident = format!(
                     "{}{}",
                     trait_,
@@ -122,12 +129,17 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'ast, 'a> {
                     // Incase there is a function/trait method call as an argument
                     self.visit_expr(arg);
                 }
+                // TODO: @name-cleanup
                 let ident = Ident::new(
                     DUMMY,
                     &format!(
                         "{}{}",
                         trait_,
-                        self.type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+                        self.type_args
+                            .iter()
+                            .map(|t| t.to_string().replace(" ", ""))
+                            .collect::<Vec<_>>()
+                            .join("0"),
                     ),
                 );
                 x = Some(ty::Expr::Call {
@@ -214,6 +226,7 @@ fn sub_mono_generic(
             let mut subs = GenSubstitution { generic: &gen_param, ty: &gen.ty, tcxt };
             subs.visit_func(&mut functions[idx]);
 
+            // TODO: @name-cleanup
             // @cleanup: build the string then make a new ident so we aren't doing many little
             // allocs
             if i != generics.len() - 1 {
