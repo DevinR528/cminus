@@ -1586,6 +1586,9 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::Value(val) => {
                 // inference collects these
             }
+            Expr::Builtin(..) => {
+                // inference collects these also
+            }
         }
         // We do NOT call walk_expr here since we recursively walk the exprs
         // when ever found so we have folded the expr types depth first
@@ -1764,6 +1767,7 @@ fn check_dereference(tcxt: &mut TyCheckRes<'_, '_>, expr: &Expression) {
         | Expr::StructInit { .. }
         | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
+        | Expr::Builtin(..)
         | Expr::Value(_) => todo!(),
     }
 }
