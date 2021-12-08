@@ -786,14 +786,14 @@ pub enum Builtin {
     Bottom,
     // TODO: these will have to be expr's also then
     /// The type of operator
-    TypeOf,
+    SizeOf(RawPtr<Type>),
 }
 
 impl fmt::Display for Builtin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Builtin::Bottom => "@bottom".fmt(f),
-            Builtin::TypeOf => "@typeOf".fmt(f),
+            Builtin::SizeOf(t) => write!(f, "size_of::<{}>", t.get().val),
         }
     }
 }
@@ -802,7 +802,7 @@ impl Builtin {
     crate fn type_of(&self) -> Ty {
         match self {
             Builtin::Bottom => Ty::Bottom,
-            Builtin::TypeOf => todo!(),
+            Builtin::SizeOf(..) => Ty::Int,
         }
     }
 }
@@ -851,9 +851,12 @@ impl Stmt {
             Stmt::While { cond, blk } => cond.val.has_bottom_type(),
             Stmt::Match { expr, arms } => expr.val.has_bottom_type(),
             Stmt::Ret(ex) => ex.val.has_bottom_type(),
-            Stmt::Builtin(_) => true,
-
-            Stmt::InlineAsm(_) | Stmt::Exit | Stmt::Const(_) | Stmt::Block(_) => false,
+            Stmt::Builtin(Builtin::Bottom) => true,
+            Stmt::InlineAsm(_)
+            | Stmt::Exit
+            | Stmt::Const(_)
+            | Stmt::Block(_)
+            | Stmt::Builtin(_) => false,
         }
     }
 }
