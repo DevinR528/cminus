@@ -1,0 +1,21 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+fn cvti2f(_from: int): float {
+    asm {
+        cvtsi2ssq (_from), %xmm0;
+        leave;
+        ret;
+    }
+    return @bottom;
+}
+
+// const c: int = 0;
+
+fn b(x: int, y: int, z: float) {
+    z = cvti2f(x + y);
+    printf("%f\n", z);
+}
+
+fn main() {
+  b(1,1,3.0);
+}

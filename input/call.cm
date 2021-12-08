@@ -1,0 +1,14 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+fn decls(): int {
+    return 7;
+}
+
+fn foo(): float {
+    return 7.3;
+}
+
+fn main() {
+    printf("%d\n", decls());
+    printf("%f\n", foo());
+}

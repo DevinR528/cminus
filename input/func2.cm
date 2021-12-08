@@ -1,0 +1,26 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+fn cvtf2i(_from: float): int {
+    asm {
+        movsd (_from), %xmm7;
+        cvttsd2siq %xmm7, %rax;
+        leave;
+        ret;
+    }
+    return @bottom;
+}
+
+const mut c: int = 0;
+
+fn b(x: int, y: int, z: float): int {
+    let a = cvtf2i(z);
+    let tmp = a + x + y;
+    printf("%d\n", a);
+
+    return tmp;
+}
+
+fn main() {
+    c = b(1, 1, 2.0);
+    printf("%d\n", c);
+}

@@ -1,0 +1,64 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+const mut A: int = 0;
+const mut B: int = 0;
+const mut C: int = 0;
+const mut D: int = 0;
+
+
+fn b4(a: int): int {
+    printf("%d\n", 4);
+    printf("%d\n", a+1);
+    return a+1;
+}
+
+fn d2(b: int): float {
+    let tmp = 0;
+    printf("%d\n", b);
+    printf("%d\n", A);
+    tmp=A;
+    A=b;
+    b=tmp;
+
+    return 1.0;
+}
+
+fn d3(a: int, b: int, c: int): int {
+	a=a+1;
+	b=b+2;
+	c=c+3;
+	D=D;
+
+	return c;
+}
+
+fn d1(): int {
+    let b = 0;
+
+	// b = A * 200;
+	printf("%d\n", A);
+    printf("%d\n", b);
+    printf("%d\n", C);
+    printf("D = %d\n", D);
+
+    let f = d2(b);
+	printf("float val = %f\n", f);
+
+	printf("%d\n", A); printf("%d\n", b); printf("%d\n", C); printf("%d\n", D);
+	printf("%d\n", d3(A,b,C));
+	printf("%d\n", A); printf("%d\n", b); printf("%d\n", C); printf("%d\n", D);
+
+	return b;
+}
+
+fn main(): void {
+	A = 1; B = 2; C = 3; D = 4;
+
+
+	A = 2;
+	printf("%d\n", b4(A));
+	printf("%d\n", d1());
+	A = 1;
+	printf("%d\n", b4(A));
+	exit;
+}

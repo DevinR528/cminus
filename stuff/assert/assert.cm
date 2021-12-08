@@ -1,0 +1,79 @@
+linked fn printf<T>(_fmt: cstr, _: T);
+linked fn signal(_sig: int, _handler: fn(int));
+
+fn sig_handle(sig: int) {
+    if (sig == 4) {
+        asm {
+            mov 60, %rax; // move syscall number 60 (exit) to rax
+            mov 4, %rdi;  // move exit code
+            syscall;     // call it
+        };
+    }
+}
+
+fn cvti2f(_from: int): float {
+    asm {
+        cvtsi2ssq (_from), %xmm0;
+        leave;
+        ret;
+    }
+    return @bottom;
+}
+
+fn cvtf2i(_from: float): int {
+    asm {
+        movsd (_from), %xmm7;
+        cvttsd2siq %xmm7, %rax;
+        leave;
+        ret;
+    }
+    return @bottom;
+}
+
+fn assert(val: bool) {
+    if (!val) {
+        printf("assert failed oops: file [todo] line [todo]\n", 0);
+        asm { ud2; }
+    }
+}
+
+fn gcd(x: int, y: int): int {
+    if (y == 0) {
+        return x;
+    } else {
+        let t = x;
+        x = y;
+        y = t - y * (t / y);
+        return gcd(x,y);
+    }
+}
+
+fn decls(): int {
+    return 7;
+}
+
+fn foo(): float {
+    return 7.3;
+}
+
+fn main() {
+    signal(4, sig_handle)
+    assert(decls() == 7);
+
+    // this checks that we are returning the actual float or we div by zero
+    let f = foo() / foo(); // TODO: gets weird when param (probably because return val + div)
+    let fi = cvtf2i(f);
+    assert(1 == fi);
+
+    let a = 100;
+    let x = 10;
+    let z = 5;
+    let y = a / x / z;
+    assert(2 == y);               // 2
+    assert(5 == (a / 2 / 2 / 5));   // 5
+    assert(6 == (30 / z));          // 6
+    let b = a / y / y / 5;
+    assert(5 == b);               // 5
+
+    assert(gcd(25, 5) == 5);
+}

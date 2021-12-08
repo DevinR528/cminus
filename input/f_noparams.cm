@@ -1,0 +1,26 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+fn b1(): int {
+	printf("%d\n", 1);
+	return 1;
+}
+
+fn b2(): int {
+	printf("%d\n", 2);
+	return b1();
+}
+
+fn b3(): int {
+	printf("%d\n", 3);
+	return b1()+b2();
+}
+
+fn b4(): int {
+	printf("%d\n", 4);
+	return b1()+b2()+b3();
+}
+
+fn main() {
+    let all = b1()+b2()+b3()+b4();
+	printf("%d\n", all);
+}

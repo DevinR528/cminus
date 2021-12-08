@@ -23,11 +23,11 @@ fn main() {
     scanf("%d", &y);
     printf("this is from a scan: %d\n", y);
 
-    let f = 0.0;
+    let f = 1.1;
     scanf("%f", &f);
     printf("this is float from a scan: %f\n", f);
 
     let b = false;
     scanf("%d", &b);
-    printf("this is a bool from a scan: %s\n", b);
+    printf("this is a bool from a scan: %d\n", b);
 }
