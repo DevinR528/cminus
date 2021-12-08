@@ -217,6 +217,15 @@ impl FieldInit {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Builtin {
+    /// The bottom type which is covariant over all types.
+    Bottom,
+    // TODO: these will have to be expr's also then
+    /// The type of operator
+    SizeOf(Ty),
+}
+
 #[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Expr {
     /// Access a named variable `a`.
@@ -278,7 +287,7 @@ pub enum Expr {
     /// A literal value `1, "hello", true`
     Value(Val),
     /// A builtin used in expression position.
-    Builtin(ty::Builtin),
+    Builtin(Builtin),
 }
 
 impl Expr {
@@ -287,6 +296,9 @@ impl Expr {
             // HACK: pass the return value to lower via `type_args` see `TraitRes::visit_expr`
             ty::Expr::Call { path: _, args: _, type_args } => type_args.remove(0).val,
             ty::Expr::TraitMeth { trait_: _, args: _, type_args } => type_args.remove(0).val,
+            // TODO: HACK: DANGER: ok so, when we mutate the inner type of `size_of::<T>` we
+            // invalidate it's entry in the hashmap without removing it
+            ty::Expr::Builtin(ty::Builtin::SizeOf(..)) => ty::Ty::Int,
             ex => unreachable!("only trait impl calls and function calls are replaced {:?}", ex),
         });
 
@@ -447,7 +459,10 @@ impl Expr {
                 ty,
             },
             ty::Expr::Value(v) => Expr::Value(Val::lower(v.val)),
-            ty::Expr::Builtin(b) => Expr::Builtin(b),
+            ty::Expr::Builtin(b) => Expr::Builtin(match b {
+                ty::Builtin::Bottom => Builtin::Bottom,
+                ty::Builtin::SizeOf(t) => Builtin::SizeOf(Ty::lower(tyctx, &t.get().val)),
+            }),
         };
         // Evaluate any constant expressions, since this is the lowered Expr we don't have to worry
         // about destroying spans or hashes since we gather types for everything
@@ -480,8 +495,8 @@ impl Expr {
             Expr::ArrayInit { items: _, ty } => ty.clone(),
             Expr::Value(v) => v.type_of(),
             Expr::Builtin(b) => match b {
-                ty::Builtin::Bottom => Ty::Bottom,
-                _ => todo!(),
+                Builtin::Bottom => Ty::Bottom,
+                Builtin::SizeOf(..) => Ty::Int,
             },
         }
     }
@@ -734,6 +749,47 @@ pub enum Ty {
 }
 
 impl Ty {
+    fn lower(tyctx: &TyCheckRes<'_, '_>, ty: &ty::Ty) -> Self {
+        match ty {
+            ty::Ty::Array { size, ty: t } => {
+                Ty::Array { ty: box Ty::lower(tyctx, &t.val), size: *size }
+            }
+            ty::Ty::Struct { ident, gen } => Ty::Struct {
+                ident: *ident,
+                gen: gen.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
+                def: tyctx
+                    .name_struct
+                    .get(ident)
+                    .map(|e| Struct::lower(tyctx, (*e).clone()))
+                    .unwrap(),
+            },
+            ty::Ty::Enum { ident, gen } => Ty::Enum {
+                ident: *ident,
+                gen: gen.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
+                def: tyctx.name_enum.get(ident).map(|e| Enum::lower(tyctx, (*e).clone())).unwrap(),
+            },
+            ty::Ty::Ptr(t) => Ty::Ptr(box Ty::lower(tyctx, &t.val)),
+            ty::Ty::Ref(t) => Ty::Ref(box Ty::lower(tyctx, &t.val)),
+            ty::Ty::ConstStr(size) => Ty::ConstStr(*size),
+            ty::Ty::Int => Ty::Int,
+            ty::Ty::Char => Ty::Char,
+            ty::Ty::Float => Ty::Float,
+            ty::Ty::Bool => Ty::Bool,
+            ty::Ty::Void => Ty::Void,
+            ty::Ty::Generic { ident, bound } => Ty::Generic { ident: *ident, bound: bound.clone() },
+            ty::Ty::Path(_) => {
+                println!("lowering path: should not happen");
+                Ty::lower(tyctx, &tyctx.name_res.resolve_name(ty, tyctx).unwrap())
+            }
+            ty::Ty::Func { ident, params, ret } => Ty::Func {
+                ident: *ident,
+                params: params.iter().map(|t| Ty::lower(tyctx, t)).collect(),
+                ret: box Ty::lower(tyctx, ret),
+            },
+            ty::Ty::Bottom => Ty::Bottom,
+        }
+    }
+
     crate fn size(&self) -> usize {
         match self {
             Ty::Array { size, ty } => ty.size() * size,
@@ -1290,49 +1346,6 @@ pub enum Item {
     Const(Const),
 }
 
-impl Ty {
-    fn lower(tyctx: &TyCheckRes<'_, '_>, ty: &ty::Ty) -> Self {
-        match ty {
-            ty::Ty::Array { size, ty: t } => {
-                Ty::Array { ty: box Ty::lower(tyctx, &t.val), size: *size }
-            }
-            ty::Ty::Struct { ident, gen } => Ty::Struct {
-                ident: *ident,
-                gen: gen.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
-                def: tyctx
-                    .name_struct
-                    .get(ident)
-                    .map(|e| Struct::lower(tyctx, (*e).clone()))
-                    .unwrap(),
-            },
-            ty::Ty::Enum { ident, gen } => Ty::Enum {
-                ident: *ident,
-                gen: gen.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
-                def: tyctx.name_enum.get(ident).map(|e| Enum::lower(tyctx, (*e).clone())).unwrap(),
-            },
-            ty::Ty::Ptr(t) => Ty::Ptr(box Ty::lower(tyctx, &t.val)),
-            ty::Ty::Ref(t) => Ty::Ref(box Ty::lower(tyctx, &t.val)),
-            ty::Ty::ConstStr(size) => Ty::ConstStr(*size),
-            ty::Ty::Int => Ty::Int,
-            ty::Ty::Char => Ty::Char,
-            ty::Ty::Float => Ty::Float,
-            ty::Ty::Bool => Ty::Bool,
-            ty::Ty::Void => Ty::Void,
-            ty::Ty::Generic { ident, bound } => Ty::Generic { ident: *ident, bound: bound.clone() },
-            ty::Ty::Path(_) => {
-                println!("lowering path: should not happen");
-                Ty::lower(tyctx, &tyctx.name_res.resolve_name(ty, tyctx).unwrap())
-            }
-            ty::Ty::Func { ident, params, ret } => Ty::Func {
-                ident: *ident,
-                params: params.iter().map(|t| Ty::lower(tyctx, t)).collect(),
-                ret: box Ty::lower(tyctx, ret),
-            },
-            ty::Ty::Bottom => Ty::Bottom,
-        }
-    }
-}
-
 fn lower_item(
     item: &ty::Declaration,
     tyctx: &TyCheckRes<'_, '_>,
@@ -1353,6 +1366,7 @@ fn lower_item(
         }
         ty::Decl::Impl(i) => {
             let mut specialized = i.method.clone();
+            // TODO: @name-cleanup
             specialized.ident = Ident::new(
                 i.method.ident.span(),
                 &format!(
