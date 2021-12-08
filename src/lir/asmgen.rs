@@ -1396,6 +1396,7 @@ impl<'ctx> CodeGen<'ctx> {
                     Location::NamedOffset(x.name().to_string())
                 }
             },
+            Expr::Builtin(b) => unreachable!("should be something else by now"),
         });
         val
     }
@@ -1745,6 +1746,9 @@ impl<'ctx> CodeGen<'ctx> {
                     self.asm_buf.push(Instruction::Meta(asm_str));
                 }
             }
+            Stmt::Builtin(b) => {
+                self.asm_buf.push(Instruction::Meta(format!(" # a builtin was replaced {}", b)));
+            }
         }
     }
 
@@ -1928,7 +1932,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                     },
                 );
             }
-            Ty::Func { .. } | Ty::Void => unreachable!(),
+            Ty::Func { .. } | Ty::Void | Ty::Bottom => unreachable!(),
         };
         self.vars.insert(var.ident, Location::NamedOffset(name));
     }
