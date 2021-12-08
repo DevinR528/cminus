@@ -1,0 +1,20 @@
+linked fn printf<T>(_fmt: cstr, _: T);
+
+fn size_of_val<T>(_: T): int {
+    return @size_of::<T>;
+}
+
+struct foo {
+    x: int, y: int
+}
+
+fn main() {
+    let x = @size_of::<char>;
+    printf("%d\n", x);
+
+    let y = size_of_val(10);
+    printf("%d\n", y);
+
+    let z = @size_of::<foo>;
+    printf("%d\n", z);
+}
