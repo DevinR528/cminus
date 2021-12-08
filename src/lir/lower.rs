@@ -277,6 +277,8 @@ pub enum Expr {
     ArrayInit { items: Vec<Expr>, ty: Ty },
     /// A literal value `1, "hello", true`
     Value(Val),
+    /// A builtin used in expression position.
+    Builtin(ty::Builtin),
 }
 
 impl Expr {
@@ -445,6 +447,7 @@ impl Expr {
                 ty,
             },
             ty::Expr::Value(v) => Expr::Value(Val::lower(v.val)),
+            ty::Expr::Builtin(b) => Expr::Builtin(b),
         };
         // Evaluate any constant expressions, since this is the lowered Expr we don't have to worry
         // about destroying spans or hashes since we gather types for everything
@@ -476,6 +479,10 @@ impl Expr {
             },
             Expr::ArrayInit { items: _, ty } => ty.clone(),
             Expr::Value(v) => v.type_of(),
+            Expr::Builtin(b) => match b {
+                ty::Builtin::Bottom => Ty::Bottom,
+                _ => todo!(),
+            },
         }
     }
 
@@ -722,6 +729,8 @@ pub enum Ty {
     Bool,
     /// The empty/never/uninhabited type.
     Void,
+    /// The never/uninhabited type.
+    Bottom,
 }
 
 impl Ty {
@@ -821,6 +830,7 @@ impl fmt::Display for Ty {
             Ty::Float => write!(f, "float"),
             Ty::Bool => write!(f, "bool"),
             Ty::Void => write!(f, "void"),
+            Ty::Bottom => write!(f, "!"),
         }
     }
 }
@@ -962,10 +972,15 @@ pub enum Stmt {
     Block(Block),
     /// A block of inline assembly.
     InlineAsm(ty::AsmBlock),
+    /// A builtin used in statement position.
+    Builtin(ty::Builtin),
 }
 
 impl Stmt {
     fn lower(tyctx: &TyCheckRes<'_, '_>, fold: &Folder, mut statement: ty::Statement) -> Self {
+        if statement.val.has_bottom_type() {
+            return Stmt::Builtin(ty::Builtin::Bottom);
+        }
         match statement.val.clone() {
             ty::Stmt::Const(var) => Stmt::Const(Const {
                 ty: Ty::lower(tyctx, &var.ty.val),
@@ -1080,6 +1095,7 @@ impl Stmt {
                 }
             }
             ty::Stmt::InlineAsm(asm) => Stmt::InlineAsm(asm),
+            ty::Stmt::Builtin(btin) => Stmt::Builtin(btin),
         }
     }
 }
@@ -1312,6 +1328,7 @@ impl Ty {
                 params: params.iter().map(|t| Ty::lower(tyctx, t)).collect(),
                 ret: box Ty::lower(tyctx, ret),
             },
+            ty::Ty::Bottom => Ty::Bottom,
         }
     }
 }
