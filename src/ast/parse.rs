@@ -719,9 +719,16 @@ impl<'a> AstBuilder<'a> {
                     self.eat_if(&TokenMatch::Ident);
                     ast::Expr::Builtin(ast::Builtin::Bottom)
                 }
-                "type_of" => {
+                "size_of" => {
                     self.eat_if(&TokenMatch::Ident);
-                    ast::Expr::Builtin(ast::Builtin::TypeOf)
+                    let mut ty = self.make_type_args()?;
+                    if ty.len() != 1 {
+                        return Err(ParseError::Error(
+                            "@size_of takes one type argument",
+                            self.curr_span(),
+                        ));
+                    }
+                    ast::Expr::Builtin(ast::Builtin::SizeOf(crate::rawptr!(ty.remove(0))))
                 }
                 _ => {
                     return Err(ParseError::Error("builtin", self.curr_span()));
@@ -1305,9 +1312,16 @@ impl<'a> AstBuilder<'a> {
                     self.eat_if(&TokenMatch::Ident);
                     ast::Stmt::Builtin(ast::Builtin::Bottom)
                 }
-                "type_of" => {
+                "size_of" => {
                     self.eat_if(&TokenMatch::Ident);
-                    ast::Stmt::Builtin(ast::Builtin::TypeOf)
+                    let mut ty = self.make_type_args()?;
+                    if ty.len() != 1 {
+                        return Err(ParseError::Error(
+                            "@size_of takes one type argument",
+                            self.curr_span(),
+                        ));
+                    }
+                    ast::Stmt::Builtin(ast::Builtin::SizeOf(crate::rawptr!(ty.remove(0))))
                 }
                 _ => {
                     return Err(ParseError::Error("builtin", self.curr_span()));

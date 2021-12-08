@@ -57,12 +57,11 @@ macro_rules! keywords {
 // After modifying this list adjust `is_special`, `is_used_keyword`/`is_unused_keyword`,
 // this should be rarely necessary though if the keywords are kept in alphabetic order.
 keywords! {
-    // Special reserved identifiers used internally for elided lifetimes,
-    // unnamed method parameters, crate root module, error recovery etc.
     Empty:              "",
-    PathRoot:           "{{root}}",
-    DollarCrate:        "$crate",
     Underscore:         "_",
+
+    SizeOf:             "size_of",
+    Bottom:             "bottom",
 
     As:                 "as",
     Asm:                 "asm",
