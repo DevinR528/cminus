@@ -161,6 +161,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
             }
         }
         Stmt::InlineAsm(..) => {}
+        Stmt::Builtin(..) => {}
     }
 }
 
@@ -221,5 +222,6 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expr) {
         Expr::Value(_) => {
             // visit.visit_value(val);
         }
+        Expr::Builtin(b) => {}
     }
 }
