@@ -717,7 +717,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 self.tcxt.expr_ty.insert(expr, val.val.to_type());
             }
             Expr::Builtin(b) => {
-                self.tcxt.expr_ty.insert(expr, Ty::Bottom);
+                self.tcxt.expr_ty.insert(expr, b.type_of());
             }
         }
     }

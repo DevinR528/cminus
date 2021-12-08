@@ -32,6 +32,7 @@ crate enum Node {
     Trait(Ident),
     Enum(Ident),
     Struct(Ident),
+    Builtin(Ident),
 }
 
 impl Node {
@@ -41,6 +42,7 @@ impl Node {
             Node::Trait(s) => *s,
             Node::Enum(s) => *s,
             Node::Struct(s) => *s,
+            Node::Builtin(s) => *s,
         }
     }
 }

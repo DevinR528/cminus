@@ -52,10 +52,10 @@ use crate::{
     ast::{
         parse::{symbol::Ident, ParseResult, ParsedBlob},
         types::{
-            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
-            Field, FieldInit, Func, FuncKind, Generic, Impl, MatchArm, Param, Pat, Path, Range,
-            Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant,
-            DUMMY,
+            to_rng, Adt, BinOp, Binding, Block, Builtin, Const, Decl, Declaration, Enum, Expr,
+            Expression, Field, FieldInit, Func, FuncKind, Generic, Impl, MatchArm, Param, Pat,
+            Path, Range, Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val,
+            Variant, DUMMY,
         },
     },
     error::{Error, ErrorReport},
@@ -432,6 +432,15 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             if let Some(res) = resolved {
                                 *ty_arg = res;
                             }
+                        }
+                    } else if let Expr::Builtin(Builtin::SizeOf(ty)) = &expr.val {
+                        if !matches!(ty.get().val, Ty::Path(..)) {
+                            return;
+                        }
+                        let resolved =
+                            self.tcxt.patch_generic_from_path(ty.get(), &self.func.generics);
+                        if let Some(res) = resolved {
+                            ty.set(res);
                         }
                     }
                 }
@@ -1586,8 +1595,20 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             Expr::Value(val) => {
                 // inference collects these
             }
-            Expr::Builtin(..) => {
-                // inference collects these also
+            Expr::Builtin(bin) => {
+                if let Builtin::SizeOf(t) = bin {
+                    if t.get().val.has_generics() {
+                        let mut stack =
+                            build_stack(self, Node::Builtin(Ident::new(expr.span, "size_of")));
+                        self.generic_res.collect_generic_usage(
+                            &t.get().val,
+                            self.unique_id(),
+                            0,
+                            &[TyRegion::Expr(&expr.val)],
+                            &mut stack,
+                        );
+                    }
+                }
             }
         }
         // We do NOT call walk_expr here since we recursively walk the exprs
