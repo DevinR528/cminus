@@ -97,7 +97,7 @@ impl Expr {
                     expr.const_fold(tcxt);
                 }
             }
-            Expr::Value(_) | Expr::FieldAccess { .. } => {}
+            Expr::Value(_) | Expr::Builtin(..) | Expr::FieldAccess { .. } => {}
         }
     }
 }
