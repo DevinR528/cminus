@@ -14,19 +14,19 @@ use crate::{
     },
     data_struc::str_help::StripEscape,
     lir::{
-        asmgen::inst::{CondFlag, FloatRegister, JmpCond, USABLE_FLOAT_REGS},
+        asmgen::inst::{
+            CondFlag, FloatRegister, Global, Instruction, JmpCond, Location, Register,
+            ARG_FLOAT_REGS, ARG_REGS, USABLE_FLOAT_REGS, USABLE_REGS,
+        },
         lower::{
-            BinOp, Binding, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat, Stmt,
-            Struct, Ty, UnOp, Val,
+            BinOp, Binding, Builtin, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat,
+            Stmt, Struct, Ty, UnOp, Val,
         },
         visit::Visit,
     },
 };
 
 crate mod inst;
-use inst::{Global, Instruction, Location, Register, ARG_REGS, USABLE_REGS};
-
-use self::inst::ARG_FLOAT_REGS;
 
 const STATIC_PREAMBLE: &str = r#"
 .text
@@ -690,10 +690,15 @@ impl<'ctx> CodeGen<'ctx> {
         } else if type_args.is_empty() || matches!(kind, FuncKind::Linked | FuncKind::Extern) {
             path.to_string()
         } else {
+            // TODO: @name-cleanup
             format!(
                 "{}{}",
                 path,
-                type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join("0"),
+                type_args
+                    .iter()
+                    .map(|t| t.to_string().replace(" ", ""))
+                    .collect::<Vec<_>>()
+                    .join("0"),
             )
         };
 
@@ -1396,7 +1401,10 @@ impl<'ctx> CodeGen<'ctx> {
                     Location::NamedOffset(x.name().to_string())
                 }
             },
-            Expr::Builtin(b) => unreachable!("should be something else by now"),
+            Expr::Builtin(Builtin::SizeOf(ty)) => {
+                Location::Const { val: Val::Int(ty.size() as isize) }
+            }
+            Expr::Builtin(..) => unreachable!("should be something else by now"),
         });
         val
     }
