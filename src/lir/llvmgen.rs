@@ -445,6 +445,7 @@ impl<'ctx> LLVMGen<'ctx> {
                     ),
                 ),
             },
+            Expr::Builtin(b) => todo!(),
         })
     }
 
@@ -538,6 +539,7 @@ impl<'ctx> LLVMGen<'ctx> {
             }
             Stmt::Block(_) => todo!(),
             Stmt::InlineAsm(asm) => {}
+            Stmt::Builtin(bin) => {}
         }
     }
 
