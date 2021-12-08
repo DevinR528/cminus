@@ -185,6 +185,9 @@ pub enum Expr {
     ArrayInit { items: Vec<Expression> },
     /// A literal value `1, "hello", true`
     Value(Value),
+    // FIXME: no builtins
+    /// A builtin compiler implemented thing.
+    Builtin(Builtin),
 }
 
 impl Spany for Expr {}
@@ -216,6 +219,7 @@ impl Expr {
             | Expr::Binary { .. }
             | Expr::Parens(..)
             | Expr::ArrayInit { .. }
+            | Expr::Builtin(..)
             | Expr::Value(..) => Ident::new(DUMMY, "invalid expression identifier"),
         }
     }
@@ -241,6 +245,7 @@ impl Expr {
             | Expr::Binary { .. }
             | Expr::Parens(..)
             | Expr::ArrayInit { .. }
+            | Expr::Builtin(..)
             | Expr::Value(..) => todo!(),
         }
     }
@@ -268,6 +273,34 @@ impl Expr {
             }),
             Expr::Value(v) => Some(v.val.to_type()),
             _ => None,
+        }
+    }
+
+    crate fn has_bottom_type(&self) -> bool {
+        match self {
+            Expr::Deref { indir, expr } => expr.val.has_bottom_type(),
+            Expr::AddrOf(expr) => expr.val.has_bottom_type(),
+            Expr::Array { ident, exprs } => exprs.iter().any(|e| e.val.has_bottom_type()),
+            Expr::Urnary { op, expr } => expr.val.has_bottom_type(),
+            Expr::Binary { op, lhs, rhs } => lhs.val.has_bottom_type() || rhs.val.has_bottom_type(),
+            Expr::Parens(expr) => expr.val.has_bottom_type(),
+            Expr::Call { path, args, type_args } => args.iter().any(|e| e.val.has_bottom_type()),
+            Expr::TraitMeth { trait_, args, type_args } => {
+                args.iter().any(|e| e.val.has_bottom_type())
+            }
+            Expr::FieldAccess { lhs, rhs } => {
+                // TODO: the lhs can't really be the @bottom thing
+                lhs.val.has_bottom_type() || rhs.val.has_bottom_type()
+            }
+            Expr::StructInit { path, fields } => {
+                fields.iter().any(|f| f.init.val.has_bottom_type())
+            }
+            Expr::EnumInit { path, variant, items } => {
+                items.iter().any(|e| e.val.has_bottom_type())
+            }
+            Expr::ArrayInit { items } => items.iter().any(|e| e.val.has_bottom_type()),
+            Expr::Builtin(Builtin::Bottom) => true,
+            Expr::Value(..) | Expr::Ident(..) | Expr::Builtin(..) => false,
         }
     }
 }
@@ -354,8 +387,10 @@ pub enum Ty {
     Float,
     /// A single bit representing true and false.
     Bool,
-    /// The empty/never/uninhabited type.
+    /// The empty type.
     Void,
+    /// The never/uninhabited type.
+    Bottom,
     /// This type is only used in resolving rank-1 polymorphism.
     Func { ident: Ident, ret: Box<Ty>, params: Vec<Ty> },
 }
@@ -386,7 +421,13 @@ impl Ty {
                 params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
             }
             Ty::Path(p) => todo!("{}", p),
-            Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
+            Ty::ConstStr(..)
+            | Ty::Int
+            | Ty::Char
+            | Ty::Float
+            | Ty::Bool
+            | Ty::Void
+            | Ty::Bottom => {
                 vec![]
             }
         }
@@ -405,7 +446,13 @@ impl Ty {
                 ret.has_generics() | params.iter().any(|t| t.has_generics())
             }
             Ty::Path(_) => false,
-            Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => false,
+            Ty::ConstStr(..)
+            | Ty::Int
+            | Ty::Char
+            | Ty::Float
+            | Ty::Bool
+            | Ty::Void
+            | Ty::Bottom => false,
         }
     }
 
@@ -551,6 +598,7 @@ impl fmt::Display for Ty {
             Ty::Float => write!(f, "float"),
             Ty::Bool => write!(f, "bool"),
             Ty::Void => write!(f, "void"),
+            Ty::Bottom => write!(f, "!"),
             Ty::Func { ident, ret, params } => write!(
                 f,
                 "func {}({}) -> {}",
@@ -584,7 +632,9 @@ impl TypeEquality for Ty {
             | (Ty::Char, Ty::Char)
             | (Ty::Float, Ty::Float)
             | (Ty::Bool, Ty::Bool)
-            | (Ty::Void, Ty::Void) => true,
+            | (Ty::Void, Ty::Void)
+            | (Ty::Bottom, _)
+            | (_, Ty::Bottom) => true,
             (Ty::Generic { ident: i1, .. }, Ty::Generic { ident: i2, .. }) => i1.eq(i2),
             (Ty::Func { params: pa, ret: ra, .. }, Ty::Func { params: pb, ret: rb, .. }) => {
                 ra.is_ty_eq(rb) && pa.iter().zip(pb).all(|(a, b)| a.is_ty_eq(b))
@@ -730,6 +780,33 @@ pub struct AsmBlock {
     pub span: Range,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Builtin {
+    /// The bottom type which is covariant over all types.
+    Bottom,
+    // TODO: these will have to be expr's also then
+    /// The type of operator
+    TypeOf,
+}
+
+impl fmt::Display for Builtin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Builtin::Bottom => "@bottom".fmt(f),
+            Builtin::TypeOf => "@typeOf".fmt(f),
+        }
+    }
+}
+
+impl Builtin {
+    crate fn type_of(&self) -> Ty {
+        match self {
+            Builtin::Bottom => Ty::Bottom,
+            Builtin::TypeOf => todo!(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
@@ -756,8 +833,29 @@ pub enum Stmt {
     ///
     /// A void return.
     Exit,
+    // FIXME: no builtins
+    /// A builtin compiler implemented thing.
+    Builtin(Builtin),
     /// A block of statements `{ stmts }`
     Block(Block),
+}
+
+impl Stmt {
+    crate fn has_bottom_type(&self) -> bool {
+        match self {
+            Stmt::Assign { lval, rval, ty, is_let } => rval.val.has_bottom_type(),
+            Stmt::AssignOp { lval, rval, op } => rval.val.has_bottom_type(),
+            Stmt::Call(call) => call.val.has_bottom_type(),
+            Stmt::TraitMeth(call) => call.val.has_bottom_type(),
+            Stmt::If { cond, blk, els } => cond.val.has_bottom_type(),
+            Stmt::While { cond, blk } => cond.val.has_bottom_type(),
+            Stmt::Match { expr, arms } => expr.val.has_bottom_type(),
+            Stmt::Ret(ex) => ex.val.has_bottom_type(),
+            Stmt::Builtin(_) => true,
+
+            Stmt::InlineAsm(_) | Stmt::Exit | Stmt::Const(_) | Stmt::Block(_) => false,
+        }
+    }
 }
 
 impl Spany for Stmt {}
