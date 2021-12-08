@@ -710,6 +710,24 @@ impl<'a> AstBuilder<'a> {
 
             let span = ast::to_rng(start..self.input_idx, self.file_id);
             Ok(ast::Expr::TraitMeth { trait_, type_args, args }.into_spanned(span))
+        } else if self.curr.kind == TokenMatch::At {
+            let start = self.input_idx;
+
+            self.eat_if(&TokenMatch::At);
+            Ok(match self.input_curr() {
+                "bottom" => {
+                    self.eat_if(&TokenMatch::Ident);
+                    ast::Expr::Builtin(ast::Builtin::Bottom)
+                }
+                "type_of" => {
+                    self.eat_if(&TokenMatch::Ident);
+                    ast::Expr::Builtin(ast::Builtin::TypeOf)
+                }
+                _ => {
+                    return Err(ParseError::Error("builtin", self.curr_span()));
+                }
+            }
+            .into_spanned(ast::to_rng(start..self.input_idx, self.file_id)))
         } else if matches!(
             self.curr.kind,
             TokenKind::Ident
@@ -1281,6 +1299,20 @@ impl<'a> AstBuilder<'a> {
         } else if self.eat_if_kw(kw::Exit) {
             self.eat_whitespace();
             ast::Stmt::Exit
+        } else if self.eat_if(&TokenMatch::At) {
+            match self.input_curr() {
+                "bottom" => {
+                    self.eat_if(&TokenMatch::Ident);
+                    ast::Stmt::Builtin(ast::Builtin::Bottom)
+                }
+                "type_of" => {
+                    self.eat_if(&TokenMatch::Ident);
+                    ast::Stmt::Builtin(ast::Builtin::TypeOf)
+                }
+                _ => {
+                    return Err(ParseError::Error("builtin", self.curr_span()));
+                }
+            }
         } else {
             self.make_expr_stmt()?
         };
@@ -1510,6 +1542,7 @@ impl<'a> AstBuilder<'a> {
                 | ast::Expr::StructInit { .. }
                 | ast::Expr::EnumInit { .. }
                 | ast::Expr::ArrayInit { .. }
+                | ast::Expr::Builtin(..)
                 | ast::Expr::Value(_) => {
                     return Err(ParseError::Error(
                         "invalid left hand side of statement",
