@@ -226,6 +226,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
             | Expr::StructInit { .. }
             | Expr::EnumInit { .. }
             | Expr::ArrayInit { .. }
+            | Expr::Builtin(..)
             | Expr::Value(_) => {
                 self.tcxt.errors.push_error(
                     Error::error_with_span(self.tcxt, parent.span, "[E0i] invalid lValue")
@@ -382,6 +383,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Stmt::InlineAsm(..) => {
+                // TODO: we could type check the ident in here
+            }
+            Stmt::Builtin(..) => {
                 // TODO: we could type check the ident in here
             }
         }
@@ -711,6 +715,9 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Expr::Value(val) => {
                 self.tcxt.expr_ty.insert(expr, val.val.to_type());
+            }
+            Expr::Builtin(b) => {
+                self.tcxt.expr_ty.insert(expr, Ty::Bottom);
             }
         }
     }

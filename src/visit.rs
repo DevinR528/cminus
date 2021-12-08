@@ -189,6 +189,7 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
             visit.visit_expr(rval);
         }
         Stmt::InlineAsm(asm) => {}
+        Stmt::Builtin(builtin) => {}
     }
 }
 
@@ -249,6 +250,7 @@ crate fn walk_expr<'ast, V: Visit<'ast>>(visit: &mut V, expr: &'ast Expression) 
         Expr::Value(_) => {
             // visit.visit_value(val);
         }
+        Expr::Builtin(..) => {}
     }
 }
 
@@ -437,6 +439,7 @@ crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut S
             visit.visit_expr(rval);
         }
         Stmt::InlineAsm(asm) => {}
+        Stmt::Builtin(builtin) => {}
     }
 }
 
@@ -497,6 +500,7 @@ crate fn walk_mut_expr<'ast, V: VisitMut<'ast>>(visit: &mut V, expr: &'ast mut E
         Expr::Value(_) => {
             // visit.visit_value(val);
         }
+        Expr::Builtin(..) => {}
     }
 }
 

@@ -334,6 +334,9 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
             Stmt::InlineAsm(..) => {
                 // TODO: we could type check the ident in here
             }
+            Stmt::Builtin(..) => {
+                // TODO: we could type check the ident in here
+            }
         }
     }
 }
@@ -694,6 +697,7 @@ crate fn resolve_ty(tcxt: &TyCheckRes<'_, '_>, expr: &Expression, ty: Option<&Ty
         | Expr::StructInit { .. }
         | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
+        | Expr::Builtin(..)
         | Expr::Value(_) => ty.cloned(),
     }
 }
@@ -762,6 +766,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
         | Expr::StructInit { .. }
         | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
+        | Expr::Builtin(..)
         | Expr::Value(_) => {
             panic!(
                 "{}",
@@ -841,6 +846,7 @@ fn walk_field_access(
         | Expr::StructInit { .. }
         | Expr::EnumInit { .. }
         | Expr::ArrayInit { .. }
+        | Expr::Builtin(..)
         | Expr::Value(_) => {
             tcxt.errors.push_error(
                 Error::error_with_span(tcxt, expr.span, "[E0tc] invalid lValue")
