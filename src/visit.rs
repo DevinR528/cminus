@@ -1,6 +1,6 @@
 use crate::ast::types::{
-    Adt, Block, Const, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func, Generic,
-    Impl, MatchArm, Param, Statement, Stmt, Struct, Trait, Type, Variant,
+    Adt, Block, Builtin, Const, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func,
+    Generic, Impl, MatchArm, Param, Statement, Stmt, Struct, Trait, Type, Variant,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -439,7 +439,10 @@ crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut S
             visit.visit_expr(rval);
         }
         Stmt::InlineAsm(asm) => {}
-        Stmt::Builtin(builtin) => {}
+        Stmt::Builtin(builtin) => match builtin {
+            Builtin::Bottom => {}
+            Builtin::SizeOf(t) => visit.visit_ty(t.get_mut()),
+        },
     }
 }
 
