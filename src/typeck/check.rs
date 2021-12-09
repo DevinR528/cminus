@@ -71,8 +71,6 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
             &rval.val,
         );
 
-        coercion(lval_ty.as_ref(), rval_ty.as_mut());
-
         if self.tcxt.errors.is_poisoned() {
             return;
         }
@@ -293,9 +291,6 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     &expr.val,
                 );
 
-                // TODO: REMOVE coercion...
-                // coercion(func_ret_ty.as_ref(), ret_ty.as_mut());
-
                 if !ret_ty.as_ref().is_ty_eq(&func_ret_ty.as_ref()) {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
@@ -351,60 +346,6 @@ crate fn is_truthy(ty: Option<&Ty>) -> bool {
     } else {
         false
     }
-}
-
-crate fn coercion(lhs: Option<&Ty>, rhs: Option<&mut Ty>) -> Option<()> {
-    match lhs? {
-        Ty::Int => match rhs? {
-            r @ Ty::Float => {
-                *r = Ty::Int;
-            }
-            r @ Ty::Bool => {
-                *r = Ty::Int;
-            }
-            r @ Ty::Ptr(..) => {
-                *r = Ty::Int;
-            }
-            _ => return None,
-        },
-        Ty::Float => match rhs? {
-            r @ Ty::Int => {
-                *r = Ty::Float;
-            }
-            r @ Ty::Bool => {
-                *r = Ty::Float;
-            }
-            _ => return None,
-        },
-        Ty::Bool => match rhs? {
-            _r @ Ty::Int => {
-                // anything but 0 is true ..
-            }
-            _r @ Ty::Float => {
-                // anything but 0 is true ..
-            }
-            _ => return None,
-        },
-        Ty::Ptr(inner) => match rhs? {
-            r @ Ty::Int => {
-                // *r = Ty::Ptr(inner.clone());
-            }
-            _ => return None,
-        },
-        Ty::Ref(_) => match rhs? {
-            _r @ Ty::Int => {
-                todo!("");
-            }
-            r => {
-                return None;
-            }
-        },
-        Ty::Generic { ident: _, bound: _ } => return None,
-        // TODO: char has no coercion as of now
-        // array has no coercion
-        _ => return None,
-    }
-    Some(())
 }
 
 /// Fill the unused generic types if a variant is missing some.

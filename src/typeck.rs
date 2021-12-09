@@ -60,7 +60,7 @@ use crate::{
     },
     error::{Error, ErrorReport},
     typeck::{
-        check::{coercion, is_truthy, resolve_ty, StmtCheck},
+        check::{is_truthy, resolve_ty, StmtCheck},
         generic::TyRegion,
         infer::TypeInfer,
     },
@@ -1250,9 +1250,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     {
                         param_ty = Some(ty_arg);
                     }
-
-                    // TODO: remove
-                    coercion(param_ty.as_ref(), arg_ty.as_mut());
 
                     if !param_ty.as_ref().is_ty_eq(&arg_ty.as_ref()) {
                         self.errors.push_error(Error::error_with_span(
