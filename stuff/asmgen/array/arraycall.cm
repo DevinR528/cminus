@@ -1,8 +1,13 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn get_idx(idx: int, y: [3; int]): int {
+    let x = y[idx];
+    return x;
+}
+
+fn get_ptr(idx: int, y: [3; int]): *int {
     // TODO: this returns a ptr some times and other the value wtf
-    return y[idx];
+    return &y[idx];
 }
 
 fn main() {
@@ -15,4 +20,7 @@ fn main() {
 
     let c = get_idx(2, x);
     printf("%d\n", c);
+
+    let d = get_ptr(2, x);
+    printf("%d\n", d);
 }

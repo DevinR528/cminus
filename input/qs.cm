@@ -25,38 +25,38 @@ fn  readarray()
     }
 }
 
-fn  writearray()
+fn  writearray(B: [21; int])
 {
     printf("A:", NULL);
-
   let i = 0;
   while (i <= 20)
     {
-      printf("%d\n", A[i]);
+      printf("%d\n", B[i]);
       i = i + 1;
     }
 }
 
 fn partition(B: [21; int], p: int, r: int): int {
   let x = B[p];
+  printf("xxx %d\n", x);
   let i = p - 1;
   let j = r + 1;
   while (1)
     {
       j = j-1;
-      while (A[j] > x)
+      while (B[j] > x)
         {
           j = j-1;
         }
       i = i+1;
-      while (A[i] < x)
+      while (B[i] < x)
         {
           i = i+1;
         }
       if (i < j) {
-            let t = A[i];
-            A[i] = A[j];
-            A[j] = t;
+            let t = B[i];
+            B[i] = B[j];
+            B[j] = t;
       }
       else {
           return j;
@@ -77,9 +77,10 @@ fn quicksort(Z: [21; int], p: int, r: int): int
 
 fn main()
 {
-  A[0] = 0; A[20] = 100;
-  readarray();
-  printf("After read", NULL);
-  quicksort(A,1,19);
-  writearray();
+//   A[0] = 0; A[20] = 100;
+//   readarray();
+    let a = [0; 21]
+  printf("After read %d\n", a[0]);
+  quicksort(a,1,19);
+  writearray(a);
 }

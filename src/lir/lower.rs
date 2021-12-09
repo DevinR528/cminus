@@ -475,7 +475,9 @@ impl Expr {
             Expr::Ident { ident: _, ty } => ty.clone(),
             Expr::Deref { indir: _, expr: _, ty } => ty.clone(),
             Expr::AddrOf(expr) => Ty::Ptr(box expr.type_of()),
-            Expr::Array { ident: _, exprs, ty } => ty.clone(),
+            Expr::Array { ident: _, exprs, ty } => {
+                Ty::Array { size: exprs.len(), ty: box ty.clone() }
+            }
             Expr::Urnary { op: _, expr: _, ty } => ty.clone(),
             Expr::Binary { op: _, lhs: _, rhs: _, ty } => ty.clone(),
             Expr::Parens(expr) => expr.type_of(),
