@@ -573,7 +573,7 @@ impl<'ctx> CodeGen<'ctx> {
                     dst: Location::Register(ARG_REGS[idx]),
                     size: ty.size(),
                 });
-            } else if let Ty::Bool = ty {
+            } else if matches!(ty, Ty::Bool) {
                 if let Location::Const { val: Val::Bool(b) } = val {
                     self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
                         src: if b { ONE } else { ZERO },
@@ -601,7 +601,7 @@ impl<'ctx> CodeGen<'ctx> {
                         size: ty.size(),
                     });
                 }
-            } else if let Ty::Float = ty {
+            } else if matches!(ty, Ty::Float) {
                 if matches!(val, Location::Const { .. }) {
                     self.used_float_regs.insert(ARG_FLOAT_REGS[float_count]);
                     self.clear_float_regs_except(None, can_clear);
@@ -620,29 +620,19 @@ impl<'ctx> CodeGen<'ctx> {
                             cmt: "fix above push",
                         },
                     ]);
-                } else if matches!(val, Location::Register(..)) {
-                    self.asm_buf.extend_from_slice(&[
-                        Instruction::Push {
-                            loc: val.clone(),
-                            size: 8,
-                            comment: "register is not valid cvtss2sd loc",
-                        },
-                        Instruction::Cvt {
-                            src: Location::NumberedOffset { offset: 0, reg: Register::RSP },
-                            dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
-                        },
-                        Instruction::Pop { loc: val, size: 8, comment: "remove tmp from stack" },
-                    ]);
-                } else if matches!(val, Location::NumberedOffset { .. }) {
-                    self.asm_buf.extend_from_slice(&[Instruction::Cvt {
+                    // TODO: verify that these are ok, I know numbered offset is a-OK,
+                    // Location::Register is questionable
+                } else if matches!(val, Location::NumberedOffset { .. } | Location::Register(..)) {
+                    self.asm_buf.push(Instruction::SizedMov {
                         src: val,
                         dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
-                    }]);
+                        size: ty.size(),
+                    });
                 } else if val != Location::FloatReg(ARG_FLOAT_REGS[float_count]) {
-                    self.asm_buf.extend_from_slice(&[Instruction::FloatMov {
+                    self.asm_buf.push(Instruction::FloatMov {
                         src: val,
                         dst: Location::FloatReg(ARG_FLOAT_REGS[float_count]),
-                    }]);
+                    });
                 }
                 // use next float register
                 float_count += 1;
@@ -783,7 +773,7 @@ impl<'ctx> CodeGen<'ctx> {
         ref_loc
     }
 
-    fn alloc_arg(&mut self, count: usize, name: Ident, ty: &Ty) -> Location {
+    fn alloc_arg(&mut self, count: usize, f_count: &mut usize, name: Ident, ty: &Ty) -> Location {
         let size = match ty {
             // An array is converted to a pointer like thing
             Ty::Array { .. } => 8,
@@ -799,10 +789,11 @@ impl<'ctx> CodeGen<'ctx> {
             self.asm_buf.extend_from_slice(&[
                 Instruction::Push { loc: ZERO, size, comment: "push/mov float arg" },
                 Instruction::FloatMov {
-                    src: Location::FloatReg(ARG_FLOAT_REGS[0]),
+                    src: Location::FloatReg(ARG_FLOAT_REGS[*f_count]),
                     dst: ref_loc.clone(),
                 },
             ]);
+            *f_count += 1;
         } else {
             self.asm_buf.push(Instruction::Push {
                 loc: Location::Register(ARG_REGS[count]),
@@ -1979,8 +1970,10 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         // self.current_stack = 8;
         // self.total_stack = 8;
 
+        // TODO: make this better
+        let mut float_count = 0;
         for (i, arg) in func.params.iter().enumerate() {
-            let alloca = self.alloc_arg(i, arg.ident, &arg.ty);
+            let alloca = self.alloc_arg(i, &mut float_count, arg.ident, &arg.ty);
             self.vars.insert(arg.ident, alloca);
         }
 
