@@ -13,11 +13,7 @@ fn cvtf2i(_from: float): int {
 const mut c: int = 0;
 
 fn b(x: int, y: int, z: float): int {
-    let a = cvtf2i(z);
-    let tmp = a + x + y;
-    printf("%d\n", a);
-
-    return tmp;
+    return cvtf2i(z) + x + y;
 }
 
 fn main() {
