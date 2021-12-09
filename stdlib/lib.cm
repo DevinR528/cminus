@@ -1,0 +1,45 @@
+linked fn printf<T>(_fmt: cstr, _: T);
+linked fn signal(_sig: int, _handler: fn(int));
+
+// TODO: handle all cases we want to
+/// Our main function always handle certain abort signals.
+fn sig_handle(sig: int) {
+    if (sig == 4) {
+        asm {
+            mov 60, %rax; // move syscall number 60 (exit) to rax
+            mov 4, %rdi;  // move exit code
+            syscall;     // call it
+        };
+    }
+}
+
+/// Convert an integer to a floating point number.
+fn cvti2f(_from: int): float {
+    asm {
+        cvtsi2sd (_from), %xmm0;
+        leave;
+        ret;
+    }
+    return @bottom;
+}
+
+/// Convert a floating point number to an integer.
+///
+/// This is a truncating conversion.
+fn cvtf2i(_from: float): int {
+    asm {
+        movsd (_from), %xmm7;
+        cvttsd2siq %xmm7, %rax;
+        leave;
+        ret;
+    }
+    return @bottom;
+}
+
+/// Assert that a condition is true.
+fn assert(val: bool) {
+    if (!val) {
+        printf("assert failed oops: file [todo] line [todo]\n", 0);
+        asm { ud2; }
+    }
+}

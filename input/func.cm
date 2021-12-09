@@ -2,7 +2,7 @@ linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn cvti2f(_from: int): float {
     asm {
-        cvtsi2ssq (_from), %xmm0;
+        cvtsi2sd (_from), %xmm0;
         leave;
         ret;
     }
@@ -11,6 +11,7 @@ fn cvti2f(_from: int): float {
 
 // const c: float = 4.0;
 
+/// hey
 fn b(x: float)
   {
     printf("%f\n", x);

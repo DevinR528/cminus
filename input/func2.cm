@@ -1,5 +1,6 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
+// This is a truncating conversion.
 fn cvtf2i(_from: float): int {
     asm {
         movsd (_from), %xmm7;

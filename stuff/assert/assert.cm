@@ -13,13 +13,14 @@ fn sig_handle(sig: int) {
 
 fn cvti2f(_from: int): float {
     asm {
-        cvtsi2ssq (_from), %xmm0;
+        cvtsi2sd (_from), %xmm0;
         leave;
         ret;
     }
     return @bottom;
 }
 
+// This is a truncating conversion.
 fn cvtf2i(_from: float): int {
     asm {
         movsd (_from), %xmm7;
