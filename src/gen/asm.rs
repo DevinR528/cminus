@@ -13,11 +13,11 @@ use crate::{
         types::{self as ty, FuncKind},
     },
     data_struc::str_help::StripEscape,
+    gen::asm::inst::{
+        CondFlag, FloatRegister, Global, Instruction, JmpCond, Location, Register, ARG_FLOAT_REGS,
+        ARG_REGS, USABLE_FLOAT_REGS, USABLE_REGS,
+    },
     lir::{
-        asmgen::inst::{
-            CondFlag, FloatRegister, Global, Instruction, JmpCond, Location, Register,
-            ARG_FLOAT_REGS, ARG_REGS, USABLE_FLOAT_REGS, USABLE_REGS,
-        },
         lower::{
             BinOp, Binding, Builtin, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat,
             Stmt, Struct, Ty, UnOp, Val,

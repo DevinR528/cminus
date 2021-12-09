@@ -18,12 +18,10 @@ use inkwell::{
 use crate::{
     ast::parse::symbol::Ident,
     lir::{
-        lower::{BinOp, CallExpr, Expr, Func, LValue, Stmt, Ty, Val},
+        lower::{BinOp, CallExpr, Const, Expr, Func, LValue, Stmt, Ty, Val},
         visit::Visit,
     },
 };
-
-use super::lower::Const;
 
 impl Ty {
     fn as_llvm_type<'ctx>(&self, context: &'ctx Context) -> BasicTypeEnum<'ctx> {

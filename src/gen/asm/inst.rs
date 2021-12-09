@@ -2,9 +2,9 @@ use std::fmt;
 
 use rustc_hash::FxHashSet as HashSet;
 
-use crate::lir::{
-    asmgen::{CodeGen, ZERO},
-    lower::{BinOp, Val},
+use crate::{
+    gen::asm::{CodeGen, ZERO},
+    lir::lower::{BinOp, Val},
 };
 
 use Register::*;

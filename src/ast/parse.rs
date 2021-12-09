@@ -19,7 +19,7 @@ use crate::{
         },
     },
     data_struc::{rawvec::RawVec, str_help::StripEscape},
-    lir::{FloatRegister, Register},
+    gen::asm::inst::{FloatRegister, Register},
     typeck::scope::hash_file,
 };
 

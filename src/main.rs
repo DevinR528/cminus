@@ -36,6 +36,7 @@ mod alloc;
 mod ast;
 mod data_struc;
 mod error;
+mod gen;
 mod lir;
 mod typeck;
 mod visit;
@@ -119,14 +120,14 @@ fn process_file<'a>(
 
     if backend == Some("llvm") {
         // let ctxt = inkwell::context::Context::create();
-        // let mut gen = lir::llvmgen::LLVMGen::new(&ctxt, Path::new(path));
+        // let mut gen = gen::llvm::LLVMGen::new(&ctxt, Path::new(path));
     }
 
     let out = if let Some(out) = output { Path::new(out) } else { Path::new(path) };
 
     let mut gen_mem = Region::new(GLOBAL);
     let gen_time = Instant::now();
-    let mut gen = lir::asmgen::CodeGen::new(out);
+    let mut gen = gen::asm::CodeGen::new(out);
     gen.visit_prog(&lowered);
     gen.dump_asm()?;
 

@@ -8,7 +8,7 @@ use crate::{
     ast::parse::symbol::Ident,
     data_struc::{rawptr::RawPtr, rawvec::RawVec},
     error::Error,
-    lir,
+    gen::asm::inst as asm,
     typeck::{check::fold_ty, TyCheckRes},
 };
 
@@ -751,9 +751,9 @@ impl fmt::Display for MatchArm {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Location {
     /// A general purpose register `%rax, %rdi, %eax`.
-    Register(lir::Register),
+    Register(asm::Register),
     /// A float register `xmmN` where N is 0-7.
-    FloatReg(lir::FloatRegister),
+    FloatReg(asm::FloatRegister),
     /// A named offset, this would be odd since you shouldn't know the names of locations in a
     /// binary before compilation??
     NamedOffset(Ident),
