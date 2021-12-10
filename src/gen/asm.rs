@@ -399,8 +399,6 @@ impl<'ctx> CodeGen<'ctx> {
         ele_size: usize,
         is_lvalue: bool,
     ) -> Option<Location> {
-        println!("{}", is_lvalue);
-
         let mov_or_load = |array_reg| {
             if is_lvalue {
                 Instruction::Load {
@@ -551,7 +549,6 @@ impl<'ctx> CodeGen<'ctx> {
             let ty = arg.type_of();
 
             if let Ty::Array { size: _, ty } = ty {
-                println!("{:?}", arg);
                 if matches!(arg, Expr::Array { .. }) {
                     let val = self
                         .build_value(arg, None, can_clear, true)
@@ -1429,7 +1426,6 @@ impl<'ctx> CodeGen<'ctx> {
     fn gen_statement(&mut self, stmt: &'ctx Stmt) {
         match stmt {
             Stmt::Const(var) => {
-                panic!("{:?}", var);
                 // TODO: deal with initializer
                 self.alloc_stack(var.ident, &var.ty);
             }
@@ -1458,9 +1454,39 @@ impl<'ctx> CodeGen<'ctx> {
                     t => t.size(),
                 };
 
-                // if matches!(rval.type_of(), Ty::Array { .. }) {
-                //     panic!("{:?} {:?}", rval, rval.type_of());
-                // }
+                if matches!(rval.type_of(), Ty::Array { .. }) {
+                    // If the left hand side is something other than an array
+                    if !matches!(ty, Ty::Array { .. }) {
+                        if let Location::Register(reg) = rloc {
+                            if lloc.is_stack_offset() {
+                                let tmp = self.free_reg();
+                                self.asm_buf.extend_from_slice(&[
+                                    Instruction::SizedMov {
+                                        src: Location::NumberedOffset { offset: 0, reg },
+                                        dst: Location::Register(tmp),
+                                        size: ty.size(),
+                                    },
+                                    Instruction::SizedMov {
+                                        src: Location::Register(tmp),
+                                        dst: lloc,
+                                        size: ty.size(),
+                                    },
+                                ]);
+                            } else {
+                                self.asm_buf.push(Instruction::SizedMov {
+                                    src: Location::NumberedOffset { offset: 0, reg },
+                                    dst: lloc,
+                                    size: ty.size(),
+                                });
+                            }
+                        } else {
+                            todo!()
+                        }
+                    } else {
+                    }
+
+                    return;
+                }
 
                 if matches!(ty, Ty::Float) {
                     if rloc.is_float_reg() {

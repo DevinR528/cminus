@@ -4,15 +4,17 @@ fn main() {
     let i = 0; let j = 0; let t = 0; let least = 0;
 
     let a = [32, 11, 111, 88, 11, 44, 33, 33, 22, 77, 45, 65, 76, 87, 34];
-    while (i<14) {
+    while (i < 15) {
         least = i;
         j = i + 1;
-        while (j<15) {
+
+        while (j < 15) {
             if (a[j] < a[least]) {
                 least = j;
             }
             j = j + 1;
         }
+
         t = a[i];
         a[i] = a[least];
         a[least] = t;
@@ -21,7 +23,7 @@ fn main() {
 
     i = 0;
     printf("%s", "[");
-    while (i<15) {
+    while (i < 15) {
         printf("%d,", a[i]);
         i = i + 1;
     }
