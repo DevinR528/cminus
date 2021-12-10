@@ -90,6 +90,8 @@ fn main() {
                     "./stuff/types/func/fnptr.cm",
                     "./stuff/asmgen/asm/assert.cm",
                     "./stuff/asmgen/asm/asm.cm",
+                    "./stuff/asmgen/float/floats.cm",
+                    "./stuff/assert/assert.cm",
                     "./stuff/types/size_of/size.cm",
                     // "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
                 ],

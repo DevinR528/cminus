@@ -16,6 +16,8 @@ fn main () {
         }
 
         let t = a[i];
+        printf("foooololooo %d\n", i);
+
         a[i] = a[least];
         a[least] = t;
         i += 1;
