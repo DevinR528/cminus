@@ -1,26 +1,25 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn get_idx(idx: int, y: [3; int]): int {
-    let x = y[idx];
-    return x;
+    return y[idx];
 }
 
-fn get_ptr(idx: int, y: [3; int]): *int {
-    // TODO: this returns a ptr some times and other the value wtf
-    return &y[idx];
-}
+// fn get_ptr(idx: int, y: [3; int]): *int {
+//     // TODO: this returns a ptr some times and other the value wtf
+//     return &y[idx];
+// }
 
 fn main() {
     let x = [2, 1, 3];
     let a = get_idx(0, x);
     printf("%d\n", a);
 
-    let b = get_idx(1, x);
-    printf("%d\n", b);
+    // let b = get_idx(1, x);
+    // printf("%d\n", b);
 
-    let c = get_idx(2, x);
-    printf("%d\n", c);
+    // let c = get_idx(2, x);
+    // printf("%d\n", c);
 
-    let d = get_ptr(2, x);
-    printf("%d\n", d);
+    // let d = get_ptr(2, x);
+    // printf("%d\n", d);
 }
