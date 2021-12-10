@@ -1131,9 +1131,14 @@ impl Stmt {
                 }
             }
             ty::Stmt::Ret(ex) => {
+                let ty = tyctx
+                    .var_func
+                    .get_fn_by_span(ex.span)
+                    .and_then(|f| tyctx.var_func.name_func.get(&f).map(|f| &f.ret.get().val))
+                    .unwrap();
                 let expr = Expr::lower(tyctx, fold, ex);
-                let ty = expr.type_of();
-                Stmt::Ret(expr, ty)
+
+                Stmt::Ret(expr, Ty::lower(tyctx, ty))
             }
             ty::Stmt::Exit => Stmt::Exit,
             ty::Stmt::Block(ty::Block { stmts, .. }) => Stmt::Block(Block {

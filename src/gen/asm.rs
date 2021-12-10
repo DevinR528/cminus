@@ -391,13 +391,32 @@ impl<'ctx> CodeGen<'ctx> {
     #[allow(dead_code)]
     fn deref_to_value(&self, _ptr: Location, _ty: &Ty) {}
 
-    /// The will ALWAYS return the address to the indexed value in the array.
+    /// This will ALWAYS return the address to the indexed value in the array.
     fn index_arr(
         &mut self,
         arr: Location,
         exprs: &'ctx [Expr],
         ele_size: usize,
+        is_lvalue: bool,
     ) -> Option<Location> {
+        println!("{}", is_lvalue);
+
+        let mov_or_load = |array_reg| {
+            if is_lvalue {
+                Instruction::Load {
+                    src: arr.clone(),
+                    dst: Location::Register(array_reg),
+                    size: ele_size,
+                }
+            } else {
+                Instruction::SizedMov {
+                    src: arr.clone(),
+                    dst: Location::Register(array_reg),
+                    size: ele_size,
+                }
+            }
+        };
+
         Some(if let Location::NumberedOffset { offset, reg } = arr {
             // Const indexing
             if let Expr::Value(Val::Int(idx)) = exprs[0] {
@@ -413,8 +432,8 @@ impl<'ctx> CodeGen<'ctx> {
             // TODO: add bounds checking maybe
             // Dynamic indexing
             } else if exprs.len() == 1 {
-                let index_val = self.build_value(&exprs[0], None, CanClearRegs::No)?;
-                println!("{:?}", index_val);
+                let index_val = self.build_value(&exprs[0], None, CanClearRegs::No, false)?;
+
                 let tmpidx = self.free_reg();
                 let array_reg = self.free_reg();
                 self.asm_buf.extend_from_slice(&[
@@ -429,11 +448,7 @@ impl<'ctx> CodeGen<'ctx> {
                         op: BinOp::Mul,
                         cmt: "array index * ele size number",
                     },
-                    Instruction::Load {
-                        src: arr,
-                        dst: Location::Register(array_reg),
-                        size: ele_size,
-                    },
+                    mov_or_load(array_reg),
                     Instruction::Math {
                         src: Location::Register(tmpidx),
                         dst: Location::Register(array_reg),
@@ -459,7 +474,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // TODO: add bounds checking maybe
                 // Dynamic indexing
             } else if exprs.len() == 1 {
-                let index_val = self.build_value(&exprs[0], None, CanClearRegs::No)?;
+                let index_val = self.build_value(&exprs[0], None, CanClearRegs::No, false)?;
 
                 let tmpidx = self.free_reg();
                 let array_reg = self.free_reg();
@@ -475,11 +490,7 @@ impl<'ctx> CodeGen<'ctx> {
                         op: BinOp::Mul,
                         cmt: "array index * ele size named",
                     },
-                    Instruction::Load {
-                        src: arr,
-                        dst: Location::Register(array_reg),
-                        size: ele_size,
-                    },
+                    mov_or_load(array_reg),
                     Instruction::Math {
                         src: Location::Register(tmpidx),
                         dst: Location::Register(array_reg),
@@ -537,18 +548,32 @@ impl<'ctx> CodeGen<'ctx> {
             }
             self.use_reg(ARG_REGS[idx]);
 
-            let val = self.build_value(arg, None, can_clear).unwrap_or_else(|| panic!("{:?}", arg));
-
             let ty = arg.type_of();
 
             if let Ty::Array { size: _, ty } = ty {
+                println!("{:?}", arg);
                 if matches!(arg, Expr::Array { .. }) {
-                    self.asm_buf.push(Instruction::SizedMov {
-                        src: val,
-                        dst: Location::Register(ARG_REGS[idx]),
-                        size: ty.size(),
-                    });
+                    let val = self
+                        .build_value(arg, None, can_clear, true)
+                        .unwrap_or_else(|| panic!("{:?}", arg));
+                    if let Location::Register(reg) = val {
+                        self.asm_buf.push(Instruction::SizedMov {
+                            src: Location::NumberedOffset { offset: 0, reg },
+                            dst: Location::Register(ARG_REGS[idx]),
+                            size: ty.size(),
+                        });
+                    } else {
+                        self.asm_buf.push(Instruction::SizedMov {
+                            src: val,
+                            dst: Location::Register(ARG_REGS[idx]),
+                            size: ty.size(),
+                        });
+                    }
                 } else {
+                    let val = self
+                        .build_value(arg, None, can_clear, false)
+                        .unwrap_or_else(|| panic!("{:?}", arg));
+
                     // TODO: do we always want to move by ref for arrays
                     self.asm_buf.push(Instruction::Load {
                         src: val,
@@ -556,7 +581,14 @@ impl<'ctx> CodeGen<'ctx> {
                         size: ty.size(),
                     });
                 }
-            } else if matches!(ty, Ty::Ptr(..)) {
+                continue;
+            }
+
+            let val = self
+                .build_value(arg, None, can_clear, false)
+                .unwrap_or_else(|| panic!("{:?}", arg));
+
+            if matches!(ty, Ty::Ptr(..)) {
                 // TODO: this should be ok since `CodeGen::build_value` deals with the load?
                 self.asm_buf.push(Instruction::SizedMov {
                     src: val,
@@ -820,7 +852,7 @@ impl<'ctx> CodeGen<'ctx> {
                 } else {
                     unreachable!("array type must be array")
                 };
-                self.index_arr(arr, exprs, ele_size)?
+                self.index_arr(arr, exprs, ele_size, true)?
             }
             LValue::FieldAccess { lhs, def, rhs, field_idx } => {
                 let left_loc = self.vars.get(&lhs.as_ident().unwrap()).cloned();
@@ -851,6 +883,7 @@ impl<'ctx> CodeGen<'ctx> {
         expr: &'ctx Expr,
         assigned: Option<Ident>,
         can_clear: CanClearRegs,
+        is_lvalue: bool,
     ) -> Option<Location> {
         let val = Some(match expr {
             Expr::Ident { ident, ty: _ } => {
@@ -858,7 +891,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.vars.get(ident)?.clone()
             }
             Expr::Deref { indir, expr: ex, ty } => {
-                let loc = self.build_value(ex, assigned, can_clear)?;
+                let loc = self.build_value(ex, assigned, can_clear, is_lvalue)?;
                 let register = self.free_reg();
                 if loc.is_stack_offset() {
                     self.asm_buf.extend_from_slice(&[Instruction::Mov {
@@ -872,7 +905,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::AddrOf(ex) => {
-                let loc = self.build_value(ex, assigned, can_clear)?;
+                let loc = self.build_value(ex, assigned, can_clear, is_lvalue)?;
                 let register = self.free_reg();
                 if loc.is_stack_offset() {
                     self.asm_buf.push(Instruction::Load {
@@ -888,10 +921,10 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
-                self.index_arr(arr, exprs, ele_size)?
+                self.index_arr(arr, exprs, ele_size, is_lvalue)?
             }
             Expr::Urnary { op, expr, ty } => {
-                let val = self.build_value(expr, None, can_clear)?;
+                let val = self.build_value(expr, None, can_clear, is_lvalue)?;
 
                 let register = self.free_reg();
                 let val = if val.is_stack_offset() {
@@ -944,8 +977,8 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Binary { op, lhs, rhs, ty } => {
-                let mut lloc = self.build_value(lhs, None, CanClearRegs::No)?;
-                let mut rloc = self.build_value(rhs, None, CanClearRegs::No)?;
+                let mut lloc = self.build_value(lhs, None, CanClearRegs::No, true)?;
+                let mut rloc = self.build_value(rhs, None, CanClearRegs::No, false)?;
 
                 self.order_operands(&mut lloc, &mut rloc, op, ty);
 
@@ -1162,7 +1195,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
-            Expr::Parens(ex) => self.build_value(ex, assigned, can_clear)?,
+            Expr::Parens(ex) => self.build_value(ex, assigned, can_clear, is_lvalue)?,
             Expr::Call { path, args, type_args, def } => {
                 let mut spilled = false;
                 if !matches!(def.ret, Ty::Void | Ty::Float)
@@ -1239,7 +1272,8 @@ impl<'ctx> CodeGen<'ctx> {
                 if let Some(Location::NumberedOffset { offset, reg }) = &lval {
                     let mut running_offset = *offset;
                     for expr in fields.iter().flat_map(flatten_struct_init) {
-                        let mut rval = self.build_value(expr, assigned, can_clear).unwrap();
+                        let mut rval =
+                            self.build_value(expr, assigned, can_clear, is_lvalue).unwrap();
 
                         let ele_size = expr.type_of().size();
 
@@ -1311,7 +1345,7 @@ impl<'ctx> CodeGen<'ctx> {
                         todo!("not sure")
                     };
                 for item in items.iter() {
-                    let rval = self.build_value(item, None, can_clear).unwrap();
+                    let rval = self.build_value(item, None, can_clear, is_lvalue).unwrap();
 
                     let ele_size = item.type_of().size();
 
@@ -1343,7 +1377,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
                 for (idx, item) in items.iter().enumerate() {
-                    let rval = self.build_value(item, None, can_clear).unwrap();
+                    let rval = self.build_value(item, None, can_clear, is_lvalue).unwrap();
 
                     if let Some(Location::NumberedOffset { offset, reg }) = lval {
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
@@ -1407,7 +1441,8 @@ impl<'ctx> CodeGen<'ctx> {
                     self.get_pointer(lval).unwrap()
                 };
 
-                let mut rloc = self.build_value(rval, lval.as_ident(), CanClearRegs::Yes).unwrap();
+                let mut rloc =
+                    self.build_value(rval, lval.as_ident(), CanClearRegs::Yes, false).unwrap();
 
                 if let Location::Const { .. } = lloc {
                     unreachable!("ICE: assign to a constant {:?}", lloc);
@@ -1598,7 +1633,7 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Stmt::TraitMeth { expr: _, def: _ } => todo!(),
             Stmt::If { cond, blk, els } => {
-                let cond_val = self.build_value(cond, None, CanClearRegs::Yes).unwrap();
+                let cond_val = self.build_value(cond, None, CanClearRegs::Yes, false).unwrap();
                 // Check if true
                 self.asm_buf.push(Instruction::Cmp {
                     src: Location::Const { val: Val::Int(1) },
@@ -1646,7 +1681,7 @@ impl<'ctx> CodeGen<'ctx> {
                 if cond.is_const_true() {
                     self.asm_buf.push(Instruction::Jmp(loop_body));
                 } else {
-                    let cond_val = self.build_value(cond, None, CanClearRegs::Yes).unwrap();
+                    let cond_val = self.build_value(cond, None, CanClearRegs::Yes, false).unwrap();
                     // Check if true
                     self.asm_buf.push(Instruction::Cmp {
                         src: Location::Const { val: Val::Int(1) },
@@ -1657,7 +1692,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Stmt::Match { expr, arms, ty } => {
-                let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
+                let val = self.build_value(expr, None, CanClearRegs::Yes, false).unwrap();
 
                 let match_merge = format!(".matchmerge{}", self.asm_buf.len());
                 let mut jump_stream = vec![];
@@ -1682,7 +1717,9 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::Label(match_merge));
             }
             Stmt::Ret(expr, ty) => {
-                let val = self.build_value(expr, None, CanClearRegs::Yes).unwrap();
+                let expr_ty = expr.type_of();
+
+                let val = self.build_value(expr, None, CanClearRegs::Yes, *ty == expr_ty).unwrap();
                 if matches!(ty, Ty::Float) {
                     if !matches!(val, XMM0) {
                         if matches!(val, Location::Const { .. }) {
@@ -1704,7 +1741,8 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 } else {
                     if !matches!(val, RAX) {
-                        if matches!(expr.type_of(), Ty::Array { .. }) {
+                        // println!("{:?}", ty);
+                        if matches!(expr_ty, Ty::Array { .. }) {
                             if let Location::Register(reg) = val {
                                 self.asm_buf.push(Instruction::SizedMov {
                                     src: Location::NumberedOffset { offset: 0, reg },
@@ -2032,7 +2070,7 @@ fn construct_field_offset_lvalue<'a>(
                     let arr = Location::NumberedOffset { offset: offset - count, reg };
                     let ele_size =
                         if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
-                    return gen.index_arr(arr, exprs, ele_size);
+                    return gen.index_arr(arr, exprs, ele_size, true);
                 }
                 count += f.ty.size();
             }
@@ -2095,7 +2133,7 @@ fn construct_field_offset<'a>(
                     let arr = Location::NumberedOffset { offset: offset - count, reg };
                     let ele_size =
                         if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
-                    return gen.index_arr(arr, exprs, ele_size);
+                    return gen.index_arr(arr, exprs, ele_size, false);
                 }
                 count += f.ty.size();
             }
