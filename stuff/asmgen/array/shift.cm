@@ -1,24 +1,18 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn main() {
-    let i = 0; let j = 0; let t = 0; let least = 0;
+    let i = 0;
 
     let a = [32, 11, 111, 88, 11, 44, 33, 33, 22, 77, 45, 65, 76, 87, 34];
     while (i < 15) {
-        least = i;
-        j = i + 1;
-
-        while (j < 15) {
-            if (a[j] < a[least]) {
-                least = j;
-            }
-            j = j + 1;
+        let next = i + 1;
+        if (a[i] > a[next]) {
+            printf("%s\n", "swap");
+            let tmp = a[i];
+            a[i] = a[next];
+            a[next] = tmp;
         }
-
-        t = a[i];
-        a[i] = a[least];
-        a[least] = t;
-        i= i + 1;
+        i += 1;
     }
 
     i = 0;

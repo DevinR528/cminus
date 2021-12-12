@@ -1,0 +1,24 @@
+linked fn printf<T>(_fmt: cstr, _val: T);
+
+fn main () {
+    let a = [0, 1, 2, 3, 4];
+    let i = 0;
+
+    if (a[0] > a[1]) {
+        printf("%s\n", "false");
+    } else {
+        printf("%s\n", "correct");
+    }
+
+    if (a[0] < a[1]) {
+        printf("%s\n", "correct");
+    } else {
+        printf("%s\n", "false");
+    }
+
+    if (a[2] > a[i]) {
+        printf("%s\n", "correct");
+    } else {
+        printf("%s\n", "false");
+    }
+}

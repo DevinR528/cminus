@@ -1,7 +1,4 @@
-linked fn write<T>(_: T);
-
-// TODO: this will not work because rax is not an arg register :(
-// linked fn printf<T>(fmt: string, val: T, rax: int);
+linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn main() {
     let cost = [0; 400]; // TODO: flip this? so it's [400; 0] 400 zeros
@@ -16,8 +13,6 @@ fn main() {
         cost[n] = n;
         n = n + 1;
     }
-
-    write::<string>("here");
 
     let m = 0;
     while (target[m+1] != 0) {
@@ -48,10 +43,11 @@ fn main() {
         }
         i = i + 1;
     }
-    write::<string>("here");
 
-    write::<int>(m);
-    write::<int>(size);
-    write::<int>(n);
-    write::<int>(cost[m*size+n]);
+    printf("%d\n", "here");
+
+    printf("%d\n", m);
+    printf("%d\n", size);
+    printf("%d\n", n);
+    printf("%d\n", cost[m*size+n]);
 }

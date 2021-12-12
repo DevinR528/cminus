@@ -75,6 +75,8 @@ fn main() {
                     "./stuff/asmgen/add/sub.cm",
                     "./stuff/asmgen/array/arraycall.cm",
                     "./stuff/asmgen/array/arrayinit.cm",
+                    "./stuff/asmgen/array/sem.cm",
+                    "./stuff/asmgen/while/cmp.cm",
                     "./stuff/asmgen/bool/print.cm",
                     "./stuff/asmgen/call/call_obj.cm",
                     "./stuff/asmgen/call/call.cm",
