@@ -513,7 +513,7 @@ impl Expr {
             Expr::FieldAccess { lhs, def, rhs } => todo!(),
             Expr::StructInit { path, fields, def } => todo!(),
             Expr::EnumInit { path, variant, items, def } => todo!(),
-            _ => panic!("attempted to get ident of expression with no ident"),
+            _ => panic!("attempted to get ident of expression with no ident {:?}", self),
         }
     }
 
