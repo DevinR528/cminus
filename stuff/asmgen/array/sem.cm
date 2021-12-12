@@ -1,23 +1,32 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
-// fn rval(arr: [5; int]): int {
-//     return arr[2];
-// }
+fn rval(arr: [5; int], idx: int): int {
+    let x = arr[idx];
+    printf("%d\n", x);
+    return x;
+}
 
-// // TODO this is illegal memory wise
-// fn lval(arr: [5; int]): *int {
-//     return &arr[2];
-// }
+fn pass(arr: [5; int]): int {
+    let x = rval(arr, 4);
+    return x;
+}
 
 fn main() {
     let x = 3;
     let a = [1, 0, 9, 11, 15];
 
-    // a[0] = 10;
-    // printf("%d\n", a[0]);
-    // a[1] = a[0];
-    // printf("%d\n", a[1]);
+    a[0] = 10;
+    printf("%d\n", a[0]);
+
+    a[1] = a[3];
+    printf("%d\n", a[1]);
 
     a[x] = 12;
     printf("%d\n", a[x]);
+
+    let b = rval(a, 2);
+    printf("%d\n", b);
+
+    let c = pass(a);
+    printf("%d\n", c);
 }
