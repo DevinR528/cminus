@@ -388,11 +388,6 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
-    fn promote_to_float(&mut self, _lval: &mut Location, _rval: &mut Location) {}
-
-    #[allow(dead_code)]
-    fn deref_to_value(&self, _ptr: Location, _ty: &Ty) {}
-
     /// This will ALWAYS return the address to the indexed value in the array.
     fn index_arr(
         &mut self,
@@ -401,6 +396,8 @@ impl<'ctx> CodeGen<'ctx> {
         ele_size: usize,
         is_addr: bool,
     ) -> Option<Location> {
+        println!("{}", is_addr);
+
         let mov_or_load = |array_reg| {
             if is_addr {
                 Instruction::Load {
@@ -1007,10 +1004,12 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Binary { op, lhs, rhs, ty } => {
-                let mut lloc = self.build_value(lhs, None, CanClearRegs::No, is_addr && matches!(&**lhs,
+                // For `is_addr` we want it to be true when we have a local array and false if the
+                // array comes from an arguemnt.
+                let mut lloc = self.build_value(lhs, None, CanClearRegs::No, !matches!(&**lhs,
                     Expr::Array { .. } | Expr::Ident { ty: Ty::Array{..}, ..} if self.current_fn_params.contains(&lhs.as_ident())
                 ))?;
-                let mut rloc = self.build_value(rhs, None, CanClearRegs::No, is_addr && matches!(&**rhs,
+                let mut rloc = self.build_value(rhs, None, CanClearRegs::No, !matches!(&**rhs,
                     Expr::Array { .. } | Expr::Ident { ty: Ty::Array{..}, ..} if self.current_fn_params.contains(&rhs.as_ident())
                 ))?;
 
@@ -1049,10 +1048,6 @@ impl<'ctx> CodeGen<'ctx> {
                         rloc
                     };
 
-                    // Do type conversion
-                    // TODO: REMOVE
-                    self.promote_to_float(&mut lfloatloc, &mut rfloatloc);
-
                     self.asm_buf.extend_from_slice(&[Instruction::from_binop_float(
                         lfloatloc,
                         rfloatloc.clone(),
@@ -1073,6 +1068,46 @@ impl<'ctx> CodeGen<'ctx> {
 
                     rfloatloc
                 } else {
+                    // TODO: remove this is hacky
+                    if matches!(
+                        &**lhs,
+                        Expr::Array { .. } | Expr::Ident { ty: Ty::Array { .. }, .. }
+                    ) {
+                        let tmp = self.free_reg();
+                        let lreg = match lloc {
+                            Location::Register(lreg) => lreg,
+                            _ => todo!(),
+                        };
+                        self.asm_buf.push(
+                            Instruction::Mov {
+                                // Move the value on the right hand side of the `= here`
+                                src: Location::NumberedOffset { offset: 0, reg: lreg },
+                                // to the left hand side of `here =`
+                                dst: Location::Register(tmp),
+                                comment: "mov array index for binop",
+                            });
+                        lloc = Location::Register(tmp);
+                    }
+                    if matches!(
+                        &**rhs,
+                        Expr::Array { .. } | Expr::Ident { ty: Ty::Array { .. }, .. }
+                    ) {
+                        let tmp = self.free_reg();
+                        let rreg = match rloc {
+                            Location::Register(rreg) => rreg,
+                            _ => todo!(),
+                        };
+                        self.asm_buf.push(
+                            Instruction::Mov {
+                                // Move the value on the right hand side of the `= here`
+                                src: Location::NumberedOffset { offset: 0, reg: rreg },
+                                // to the left hand side of `here =`
+                                dst: Location::Register(tmp),
+                                comment: "mov array index for binop",
+                            }
+                        );
+                        rloc = Location::Register(tmp);
+                    }
                     if let Location::NumberedOffset { .. } = &rloc {
                         let new_reg = self.free_reg();
 
@@ -1522,6 +1557,8 @@ impl<'ctx> CodeGen<'ctx> {
                             todo!()
                         }
                     } else {
+                        // @copypaste look at code around bin_cmp stuff
+                        // We want to swap values not addrs
                         if !*is_let {
                             self.clear_regs_except(Some(&lloc), CanClearRegs::Yes);
                             let tmp = self.free_reg();
