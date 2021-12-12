@@ -59,6 +59,7 @@ crate struct CodeGen<'ctx> {
     used_float_regs: HashSet<FloatRegister>,
     current_stack: usize,
     total_stack: usize,
+    current_fn_params: HashSet<Ident>,
     vars: HashMap<Ident, Location>,
     path: &'ctx Path,
 }
@@ -72,6 +73,7 @@ impl<'ctx> CodeGen<'ctx> {
             used_float_regs: HashSet::default(),
             current_stack: 0,
             total_stack: 0,
+            current_fn_params: HashSet::default(),
             vars: HashMap::default(),
             path,
         }
@@ -397,10 +399,10 @@ impl<'ctx> CodeGen<'ctx> {
         arr: Location,
         exprs: &'ctx [Expr],
         ele_size: usize,
-        is_lvalue: bool,
+        is_addr: bool,
     ) -> Option<Location> {
         let mov_or_load = |array_reg| {
-            if is_lvalue {
+            if is_addr {
                 Instruction::Load {
                     src: arr.clone(),
                     dst: Location::Register(array_reg),
@@ -416,14 +418,20 @@ impl<'ctx> CodeGen<'ctx> {
         };
 
         Some(if let Location::NumberedOffset { offset, reg } = arr {
-            // Const indexing
             if let Expr::Value(Val::Int(idx)) = exprs[0] {
                 if exprs.len() == 1 {
-                    Location::Indexable {
-                        reg,
-                        end: offset,
-                        ele_pos: offset - ((idx as usize) * ele_size),
-                    }
+                    let tmpidx = self.free_reg();
+                    let array_reg = self.free_reg();
+                    self.asm_buf.extend_from_slice(&[
+                        mov_or_load(array_reg),
+                        Instruction::Math {
+                            src: Location::Const { val: Val::Int((ele_size as isize) * idx) },
+                            dst: Location::Register(array_reg),
+                            op: BinOp::Add,
+                            cmt: "array index + idx * ele size",
+                        },
+                    ]);
+                    Location::Register(array_reg)
                 } else {
                     todo!("multidim arrays")
                 }
@@ -462,15 +470,23 @@ impl<'ctx> CodeGen<'ctx> {
         } else if let Location::NamedOffset(name) = &arr {
             if let Expr::Value(Val::Int(idx)) = exprs[0] {
                 if exprs.len() == 1 {
-                    Location::NamedOffsetIndex {
-                        name: name.clone(),
-                        plus: (idx as usize) * ele_size,
-                    }
+                    let tmpidx = self.free_reg();
+                    let array_reg = self.free_reg();
+                    self.asm_buf.extend_from_slice(&[
+                        mov_or_load(array_reg),
+                        Instruction::Math {
+                            src: Location::Const { val: Val::Int((ele_size as isize) * idx) },
+                            dst: Location::Register(array_reg),
+                            op: BinOp::Add,
+                            cmt: "array index + idx * ele size",
+                        },
+                    ]);
+                    Location::Register(array_reg)
                 } else {
                     todo!("multidim arrays")
                 }
-                // TODO: add bounds checking maybe
-                // Dynamic indexing
+            // TODO: add bounds checking maybe
+            // Dynamic indexing
             } else if exprs.len() == 1 {
                 let index_val = self.build_value(&exprs[0], None, CanClearRegs::No, false)?;
 
@@ -566,6 +582,15 @@ impl<'ctx> CodeGen<'ctx> {
                             size: ty.size(),
                         });
                     }
+                } else if self.current_fn_params.contains(&arg.as_ident()) {
+                    let val = self
+                        .build_value(arg, None, can_clear, false)
+                        .unwrap_or_else(|| panic!("{:?}", arg));
+                    self.asm_buf.push(Instruction::SizedMov {
+                        src: val,
+                        dst: Location::Register(ARG_REGS[idx]),
+                        size: ty.size(),
+                    });
                 } else {
                     let val = self
                         .build_value(arg, None, can_clear, false)
@@ -880,7 +905,7 @@ impl<'ctx> CodeGen<'ctx> {
         expr: &'ctx Expr,
         assigned: Option<Ident>,
         can_clear: CanClearRegs,
-        is_lvalue: bool,
+        is_addr: bool,
     ) -> Option<Location> {
         let val = Some(match expr {
             Expr::Ident { ident, ty: _ } => {
@@ -888,7 +913,7 @@ impl<'ctx> CodeGen<'ctx> {
                 self.vars.get(ident)?.clone()
             }
             Expr::Deref { indir, expr: ex, ty } => {
-                let loc = self.build_value(ex, assigned, can_clear, is_lvalue)?;
+                let loc = self.build_value(ex, assigned, can_clear, is_addr)?;
                 let register = self.free_reg();
                 if loc.is_stack_offset() {
                     self.asm_buf.extend_from_slice(&[Instruction::Mov {
@@ -902,7 +927,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::AddrOf(ex) => {
-                let loc = self.build_value(ex, assigned, can_clear, is_lvalue)?;
+                let loc = self.build_value(ex, assigned, can_clear, is_addr)?;
                 let register = self.free_reg();
                 if loc.is_stack_offset() {
                     self.asm_buf.push(Instruction::Load {
@@ -918,10 +943,18 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Array { ident, exprs, ty } => {
                 let arr = self.vars.get(ident)?.clone();
                 let ele_size = if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
-                self.index_arr(arr, exprs, ele_size, is_lvalue)?
+
+                // TODO: my thinking, proven out by `stuff/asmgen/array/sem.cm` is that any array
+                // arg is treated as an address (since it is already)
+                self.index_arr(
+                    arr,
+                    exprs,
+                    ele_size,
+                    is_addr && !self.current_fn_params.contains(ident),
+                )?
             }
             Expr::Urnary { op, expr, ty } => {
-                let val = self.build_value(expr, None, can_clear, is_lvalue)?;
+                let val = self.build_value(expr, None, can_clear, is_addr)?;
 
                 let register = self.free_reg();
                 let val = if val.is_stack_offset() {
@@ -974,8 +1007,12 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Binary { op, lhs, rhs, ty } => {
-                let mut lloc = self.build_value(lhs, None, CanClearRegs::No, true)?;
-                let mut rloc = self.build_value(rhs, None, CanClearRegs::No, false)?;
+                let mut lloc = self.build_value(lhs, None, CanClearRegs::No, is_addr && matches!(&**lhs,
+                    Expr::Array { .. } | Expr::Ident { ty: Ty::Array{..}, ..} if self.current_fn_params.contains(&lhs.as_ident())
+                ))?;
+                let mut rloc = self.build_value(rhs, None, CanClearRegs::No, is_addr && matches!(&**rhs,
+                    Expr::Array { .. } | Expr::Ident { ty: Ty::Array{..}, ..} if self.current_fn_params.contains(&rhs.as_ident())
+                ))?;
 
                 self.order_operands(&mut lloc, &mut rloc, op, ty);
 
@@ -1192,7 +1229,7 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
             }
-            Expr::Parens(ex) => self.build_value(ex, assigned, can_clear, is_lvalue)?,
+            Expr::Parens(ex) => self.build_value(ex, assigned, can_clear, is_addr)?,
             Expr::Call { path, args, type_args, def } => {
                 let mut spilled = false;
                 if !matches!(def.ret, Ty::Void | Ty::Float)
@@ -1270,7 +1307,7 @@ impl<'ctx> CodeGen<'ctx> {
                     let mut running_offset = *offset;
                     for expr in fields.iter().flat_map(flatten_struct_init) {
                         let mut rval =
-                            self.build_value(expr, assigned, can_clear, is_lvalue).unwrap();
+                            self.build_value(expr, assigned, can_clear, is_addr).unwrap();
 
                         let ele_size = expr.type_of().size();
 
@@ -1342,7 +1379,7 @@ impl<'ctx> CodeGen<'ctx> {
                         todo!("not sure")
                     };
                 for item in items.iter() {
-                    let rval = self.build_value(item, None, can_clear, is_lvalue).unwrap();
+                    let rval = self.build_value(item, None, can_clear, is_addr).unwrap();
 
                     let ele_size = item.type_of().size();
 
@@ -1374,7 +1411,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 // @cleanup: This is REALLY BAD don't push/movq for every ele of array at least once
                 for (idx, item) in items.iter().enumerate() {
-                    let rval = self.build_value(item, None, can_clear, is_lvalue).unwrap();
+                    let rval = self.build_value(item, None, can_clear, is_addr).unwrap();
 
                     if let Some(Location::NumberedOffset { offset, reg }) = lval {
                         self.asm_buf.extend_from_slice(&[Instruction::SizedMov {
@@ -1438,12 +1475,14 @@ impl<'ctx> CodeGen<'ctx> {
                 };
 
                 let mut rloc =
-                    self.build_value(rval, lval.as_ident(), CanClearRegs::Yes, false).unwrap();
+                    self.build_value(rval, lval.as_ident(), CanClearRegs::Yes, true).unwrap();
 
                 if let Location::Const { .. } = lloc {
                     unreachable!("ICE: assign to a constant {:?}", lloc);
                 }
 
+                // TODO: really this should check type, scalar values can be skipped but array,
+                // struct, etc access cannot
                 if lloc == rloc {
                     return;
                 }
@@ -1483,6 +1522,32 @@ impl<'ctx> CodeGen<'ctx> {
                             todo!()
                         }
                     } else {
+                        if !*is_let {
+                            self.clear_regs_except(Some(&lloc), CanClearRegs::Yes);
+                            let tmp = self.free_reg();
+                            let (lreg, rreg) = match (lloc, rloc) {
+                                (Location::Register(lreg), Location::Register(rreg)) => {
+                                    (lreg, rreg)
+                                }
+                                _ => todo!(),
+                            };
+                            self.asm_buf.extend_from_slice(&[
+                                Instruction::Mov {
+                                    // Move the value on the right hand side of the `= here`
+                                    src: Location::NumberedOffset { offset: 0, reg: rreg },
+                                    // to the left hand side of `here =`
+                                    dst: Location::Register(tmp),
+                                    comment: "stuff",
+                                },
+                                Instruction::Mov {
+                                    // Move the value on the right hand side of the `= here`
+                                    src: Location::Register(tmp),
+                                    // to the left hand side of `here =`
+                                    dst: Location::NumberedOffset { offset: 0, reg: lreg },
+                                    comment: "stuff",
+                                },
+                            ]);
+                        }
                     }
 
                     return;
@@ -2035,8 +2100,9 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
             Instruction::Push { loc: RBP, size: 8, comment: "" },
             Instruction::Mov { src: RSP, dst: RBP, comment: "" },
         ]);
-        // self.current_stack = 8;
-        // self.total_stack = 8;
+
+        self.current_fn_params.clear();
+        self.current_fn_params = func.params.iter().map(|p| p.ident).collect();
 
         // TODO: make this better
         let mut float_count = 0;
