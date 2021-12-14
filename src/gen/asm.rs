@@ -1910,17 +1910,16 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                 }
                 self.asm_buf.extend_from_slice(&[
-                    Instruction::Math {
-                        src: Location::Const { val: Val::Int(self.current_stack as isize) },
-                        dst: RSP,
-                        op: BinOp::Add,
-                        cmt: "fix stack size",
-                    },
-                    Instruction::Pop { loc: RBP, size: 8, comment: "leave function" },
+                    Instruction::Leave,
                     Instruction::Ret,
                 ]);
             }
-            Stmt::Exit => {}
+            Stmt::Exit => {
+                self.asm_buf.extend_from_slice(&[
+                    Instruction::Leave,
+                    Instruction::Ret,
+                ]);
+            }
             Stmt::Block(_) => todo!(),
             Stmt::InlineAsm(asm) => {
                 for inst in &asm.assembly {
@@ -2152,6 +2151,8 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         self.vars.insert(var.ident, Location::NamedOffset(name));
     }
 
+    // TODO: we double the `leave; ret;` instructions for functions that actually return
+    // TODO: we double the `leave; ret;` instructions for functions that actually return
     // TODO: we double the `leave; ret;` instructions for functions that actually return
     fn visit_func(&mut self, func: &'ast Func) {
         let function_name = func.ident.name().to_string();
