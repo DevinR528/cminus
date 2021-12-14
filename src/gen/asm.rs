@@ -362,17 +362,29 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     // FIXME: passing in a LOT of info hmmm
-    fn order_operands(&mut self, lval: &mut Location, rval: &mut Location, op: &BinOp, ty: &Ty) {
+    fn order_operands(
+        &mut self,
+        lval: &mut Location,
+        rval: &mut Location,
+        op: &BinOp,
+        ty: &Ty,
+    ) -> bool {
+        let mut swapped = false;
         // TODO: audit for consistency i.e. idiv may needs some flip flops too
-        // YAY I made math work UGH!!
+        //
+        // So this flips any sub operation and the match below flips them back...
         if matches!(op, BinOp::Sub) || matches!((ty, op), (Ty::Float, BinOp::Div | BinOp::Rem)) {
             std::mem::swap(lval, rval);
+            swapped = true;
         }
         match (lval, rval) {
             // Only if operation is commutative
             (_, rval @ Location::Const { .. })
                 if matches!(op, BinOp::Sub | BinOp::Div | BinOp::Rem) =>
             {
+                // TODO: fails for subtraction
+                // assert!(!swapped);
+                swapped = true;
                 let reg = self.free_reg();
                 self.asm_buf.push(Instruction::SizedMov {
                     src: rval.clone(),
@@ -382,10 +394,13 @@ impl<'ctx> CodeGen<'ctx> {
                 *rval = Location::Register(reg);
             }
             (lval, rval @ Location::Const { .. }) => {
+                assert!(!swapped);
+                swapped = true;
                 std::mem::swap(lval, rval);
             }
             _ => {}
-        }
+        };
+        swapped
     }
 
     /// This will ALWAYS return the address to the indexed value in the array.
@@ -396,7 +411,7 @@ impl<'ctx> CodeGen<'ctx> {
         ele_size: usize,
         is_addr: bool,
     ) -> Option<Location> {
-        println!("{}", is_addr);
+        // println!("{}", is_addr);
 
         let mov_or_load = |array_reg| {
             if is_addr {
@@ -1013,7 +1028,9 @@ impl<'ctx> CodeGen<'ctx> {
                     Expr::Array { .. } | Expr::Ident { ty: Ty::Array{..}, ..} if self.current_fn_params.contains(&rhs.as_ident())
                 ))?;
 
-                self.order_operands(&mut lloc, &mut rloc, op, ty);
+                // For operations where ordering doesn't matter we move consts around
+                // if it matters we load it into a register.
+                let swapped = self.order_operands(&mut lloc, &mut rloc, op, ty);
 
                 if matches!(ty, Ty::Float) {
                     let register = self.free_float_reg();
@@ -1068,46 +1085,53 @@ impl<'ctx> CodeGen<'ctx> {
 
                     rfloatloc
                 } else {
+                    // println!("{:?} {:?} {} {}", lhs, rloc, is_addr, swapped);
                     // TODO: remove this is hacky
                     if matches!(
                         &**lhs,
                         Expr::Array { .. } | Expr::Ident { ty: Ty::Array { .. }, .. }
                     ) {
-                        let tmp = self.free_reg();
-                        let lreg = match lloc {
-                            Location::Register(lreg) => lreg,
-                            _ => todo!(),
+                        let loc = if swapped { &mut rloc } else { &mut lloc };
+                        match loc {
+                            Location::Register(reg) => {
+                                let tmp = self.free_reg();
+                                self.asm_buf.push(Instruction::Mov {
+                                    // Move the value on the right hand side of the `= here`
+                                    src: Location::NumberedOffset { offset: 0, reg: *reg },
+                                    // to the left hand side of `here =`
+                                    dst: Location::Register(tmp),
+                                    comment: "mov array index for binop",
+                                });
+                                *loc = Location::Register(tmp);
+                            }
+                            _ => {
+                                println!("left {:?} {:?} {:?}", lhs, rhs, lloc)
+                            }
                         };
-                        self.asm_buf.push(
-                            Instruction::Mov {
-                                // Move the value on the right hand side of the `= here`
-                                src: Location::NumberedOffset { offset: 0, reg: lreg },
-                                // to the left hand side of `here =`
-                                dst: Location::Register(tmp),
-                                comment: "mov array index for binop",
-                            });
-                        lloc = Location::Register(tmp);
                     }
                     if matches!(
                         &**rhs,
                         Expr::Array { .. } | Expr::Ident { ty: Ty::Array { .. }, .. }
                     ) {
-                        let tmp = self.free_reg();
-                        let rreg = match rloc {
-                            Location::Register(rreg) => rreg,
-                            _ => todo!(),
-                        };
-                        self.asm_buf.push(
-                            Instruction::Mov {
-                                // Move the value on the right hand side of the `= here`
-                                src: Location::NumberedOffset { offset: 0, reg: rreg },
-                                // to the left hand side of `here =`
-                                dst: Location::Register(tmp),
-                                comment: "mov array index for binop",
+                        let mut loc = if swapped { &mut lloc } else { &mut rloc };
+                        match loc {
+                            Location::Register(reg) => {
+                                let tmp = self.free_reg();
+                                self.asm_buf.push(Instruction::Mov {
+                                    // Move the value on the right hand side of the `= here`
+                                    src: Location::NumberedOffset { offset: 0, reg: *reg },
+                                    // to the left hand side of `here =`
+                                    dst: Location::Register(tmp),
+                                    comment: "mov array index for binop",
+                                });
+                                *loc = Location::Register(tmp);
                             }
-                        );
-                        rloc = Location::Register(tmp);
+                            _ => {
+                                println!("right {:?} {:?} {:?}", lhs, rhs, lloc)
+                            }
+                        };
                     }
+
                     if let Location::NumberedOffset { .. } = &rloc {
                         let new_reg = self.free_reg();
 
@@ -1844,6 +1868,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.asm_buf.push(Instruction::Label(match_merge));
             }
+            // TODO: we double the `leave; ret;` instructions for functions that actually return
             Stmt::Ret(expr, ty) => {
                 let expr_ty = expr.type_of();
 
@@ -1867,25 +1892,33 @@ impl<'ctx> CodeGen<'ctx> {
                             );
                         }
                     }
-                } else {
-                    if !matches!(val, RAX) {
-                        // println!("{:?}", ty);
-                        if matches!(expr_ty, Ty::Array { .. }) {
-                            if let Location::Register(reg) = val {
-                                self.asm_buf.push(Instruction::SizedMov {
-                                    src: Location::NumberedOffset { offset: 0, reg },
-                                    dst: RAX,
-                                    size: ty.size(),
-                                });
-                            }
-                        } else {
-                            self.asm_buf.push(
-                                // return value is stored in %rax
-                                Instruction::Mov { src: val, dst: RAX, comment: "" },
-                            );
+                } else if !matches!(val, RAX) {
+                    // println!("{:?}", ty);
+                    if matches!(expr_ty, Ty::Array { .. }) {
+                        if let Location::Register(reg) = val {
+                            self.asm_buf.push(Instruction::SizedMov {
+                                src: Location::NumberedOffset { offset: 0, reg },
+                                dst: RAX,
+                                size: ty.size(),
+                            });
                         }
+                    } else {
+                        self.asm_buf.push(
+                            // return value is stored in %rax
+                            Instruction::Mov { src: val, dst: RAX, comment: "" },
+                        );
                     }
                 }
+                self.asm_buf.extend_from_slice(&[
+                    Instruction::Math {
+                        src: Location::Const { val: Val::Int(self.current_stack as isize) },
+                        dst: RSP,
+                        op: BinOp::Add,
+                        cmt: "fix stack size",
+                    },
+                    Instruction::Pop { loc: RBP, size: 8, comment: "leave function" },
+                    Instruction::Ret,
+                ]);
             }
             Stmt::Exit => {}
             Stmt::Block(_) => todo!(),
@@ -2119,6 +2152,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         self.vars.insert(var.ident, Location::NamedOffset(name));
     }
 
+    // TODO: we double the `leave; ret;` instructions for functions that actually return
     fn visit_func(&mut self, func: &'ast Func) {
         let function_name = func.ident.name().to_string();
         self.vars.insert(func.ident, Location::Label(function_name.clone()));
