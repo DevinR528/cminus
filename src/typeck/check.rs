@@ -681,7 +681,7 @@ fn lvalue_type(tcxt: &mut TyCheckRes<'_, '_>, lval: &Expression, stmt_span: Rang
             if let Some(Ty::Struct { ident, .. }) = tcxt.expr_ty.get(&**lhs).map(|t| {
                 field_resolve(t)
             }) {
-                let fields = tcxt.name_struct.get(&ident).map(|s| s.fields.clone()).unwrap_or_default();
+                let fields = tcxt.name_struct.get(ident).map(|s| s.fields.clone()).unwrap_or_default();
 
                 walk_field_access(tcxt, &fields, rhs)
             } else {
@@ -762,10 +762,10 @@ fn walk_field_access(
         Expr::FieldAccess { lhs, rhs } => {
             // We know this `lhs` is a valid identifier
             // let id = lhs.val.as_ident();
-            if let Some(Ty::Struct { ident: name, .. }) = tcxt.expr_ty.get(&**lhs).map(|t| field_resolve(t)) {
+            if let Some(Ty::Struct { ident: name, .. }) = tcxt.expr_ty.get(&**lhs).map(field_resolve) {
                 // TODO: this is kinda ugly because of the clone but it complains about tcxt otherwise
                 // or default not being impl'ed \o/
-                let fields = tcxt.name_struct.get(&name).map(|s| s.fields.clone()).unwrap_or_default();
+                let fields = tcxt.name_struct.get(name).map(|s| s.fields.clone()).unwrap_or_default();
                 walk_field_access(tcxt, &fields, rhs)
             } else {
                 tcxt.errors.push_error(Error::error_with_span(

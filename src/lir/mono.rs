@@ -26,7 +26,7 @@ impl<'ast, 'b> VisitMut<'ast> for GenSubstitution<'ast, 'b> {
         func.ident = Ident::new(
             func.ident.span(),
             // TODO: @name-cleanup
-            &format!("{}{}", func.ident.name(), self.ty.to_string().replace(" ", "")),
+            &format!("{}{}", func.ident.name(), self.ty.to_string().replace(' ', "")),
         );
         crate::visit::walk_mut_func(self, func);
     }
@@ -137,7 +137,7 @@ impl<'ast, 'a> VisitMut<'ast> for TraitRes<'ast, 'a> {
                         trait_,
                         self.type_args
                             .iter()
-                            .map(|t| t.to_string().replace(" ", ""))
+                            .map(|t| t.to_string().replace(' ', ""))
                             .collect::<Vec<_>>()
                             .join("0"),
                     ),
