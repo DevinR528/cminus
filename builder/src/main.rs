@@ -5,12 +5,42 @@ use std::{
     fs::OpenOptions,
     io::{self, Read, Write},
     os::unix::prelude::FileExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use termcolor::{BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
 
 use xshell::cmd;
+
+static TEST_FILES: &[&str] = &[
+    "./stuff/asmgen/add/add.cm",
+    "./stuff/asmgen/add/div.cm",
+    "./stuff/asmgen/add/sub.cm",
+    "./stuff/asmgen/array/arraycall.cm",
+    "./stuff/asmgen/array/arrayinit.cm",
+    "./stuff/asmgen/array/sem.cm",
+    "./stuff/asmgen/array/cmp.cm",
+    "./stuff/asmgen/array/shift.cm",
+    "./stuff/asmgen/while/cmp.cm",
+    "./stuff/asmgen/bool/print.cm",
+    "./stuff/asmgen/call/call_obj.cm",
+    "./stuff/asmgen/call/call.cm",
+    "./stuff/asmgen/enum/two.cm",
+    "./stuff/asmgen/gen/gen.cm",
+    "./stuff/types/string/string.cm",
+    "./stuff/asmgen/ifs/simp.cm",
+    "./stuff/asmgen/while/bubble.cm",
+    "./stuff/asmgen/while/sort.cm",
+    "./stuff/asmgen/args/args.cm",
+    "./stuff/types/dynarr/field.cm",
+    "./stuff/types/func/fnptr.cm",
+    "./stuff/asmgen/asm/assert.cm",
+    "./stuff/asmgen/asm/asm.cm",
+    "./stuff/asmgen/float/floats.cm",
+    "./stuff/assert/assert.cm",
+    "./stuff/types/size_of/size.cm",
+    // "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
+];
 
 const ENUMC_DEBUG: &str = "./target/debug/enumc";
 // const ENUMC_RELEASE: &str = "./target/release/enumc";
@@ -35,9 +65,11 @@ fn main() {
             }
         }
         ["asm" | "a", more @ ..] => {
-            if let Err(e) = build_files(more, "-a") {
-                writeln_red("Error: ", &e.to_string()).unwrap();
-                std::process::exit(1);
+            for file in more {
+                if let Err(e) = build_run_asm(Path::new(file)) {
+                    writeln_red("Error: ", &e.to_string()).unwrap();
+                    std::process::exit(1);
+                }
             }
         }
         ["fuzz" | "f", more @ ..] => {
@@ -68,43 +100,36 @@ fn main() {
             cmd!("cargo b").run().unwrap();
 
             #[rustfmt::skip]
-            if let Err(e) = build_files(
-                &[
-                    "./stuff/asmgen/add/add.cm",
-                    "./stuff/asmgen/add/div.cm",
-                    "./stuff/asmgen/add/sub.cm",
-                    "./stuff/asmgen/array/arraycall.cm",
-                    "./stuff/asmgen/array/arrayinit.cm",
-                    "./stuff/asmgen/array/sem.cm",
-                    "./stuff/asmgen/while/cmp.cm",
-                    "./stuff/asmgen/bool/print.cm",
-                    "./stuff/asmgen/call/call_obj.cm",
-                    "./stuff/asmgen/call/call.cm",
-                    "./stuff/asmgen/enum/two.cm",
-                    "./stuff/asmgen/gen/gen.cm", // fairly complex generic arguments
-                    "./stuff/types/string/string.cm", // test all kinds of printf/scanf types
-                    "./stuff/asmgen/ifs/simp.cm", // test if/else blocks
-                    "./stuff/asmgen/while/bubble.cm", /* test while loops and creating variable
-                                                  * in blocks */
-                    "./stuff/asmgen/while/sort.cm", // same as above with ints
-                    "./stuff/asmgen/args/args.cm",  // test getting argc and argv in main
-                    "./stuff/types/dynarr/field.cm", // test passing struct pointer and mutating
-                    "./stuff/types/func/fnptr.cm",
-                    "./stuff/asmgen/asm/assert.cm",
-                    "./stuff/asmgen/asm/asm.cm",
-                    "./stuff/asmgen/float/floats.cm",
-                    "./stuff/assert/assert.cm",
-                    "./stuff/types/size_of/size.cm",
-                    // "./stuff/types/dynarr/field_ptr.cm", // field that is pointer
-                ],
-                "-as",
-            ) {
+            if let Err(e) = build_files(TEST_FILES, "-as") {
                 writeln_red("Error: ", &e.to_string()).unwrap();
                 std::process::exit(1);
             }
         }
         [..] => {}
     }
+}
+
+fn build_run_asm(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut build_dir = path.to_path_buf();
+    let file = build_dir
+        .file_name()
+        .ok_or_else::<Box<dyn std::error::Error>, _>(|| "file not found".into())?
+        .to_os_string();
+    build_dir.pop();
+    build_dir.push("build");
+    build_dir.push(file);
+
+    let mut asm = build_dir.clone();
+    asm.set_extension("s");
+
+    let mut out = build_dir.clone();
+    out.set_extension("");
+
+    cmd!("gcc -no-pie {asm} -o {out}").run()?;
+    if cmd!("{out}").read_stderr()?.contains("SEG") {
+        return Err("SIGSEGV assembly crashed with segmentation fault".into());
+    };
+    Ok(())
 }
 
 fn build_files(files: &[&str], args: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -121,25 +146,7 @@ fn build_files(files: &[&str], args: &str) -> Result<(), Box<dyn std::error::Err
         }
 
         if args.contains('a') {
-            let mut build_dir = path.clone();
-            let file = build_dir
-                .file_name()
-                .ok_or_else::<Box<dyn std::error::Error>, _>(|| "file not found".into())?
-                .to_os_string();
-            build_dir.pop();
-            build_dir.push("build");
-            build_dir.push(file);
-
-            let mut asm = build_dir.clone();
-            asm.set_extension("s");
-
-            let mut out = build_dir.clone();
-            out.set_extension("");
-
-            cmd!("gcc -no-pie {asm} -o {out}").run()?;
-            if cmd!("{out}").read_stderr()?.contains("SEG") {
-                return Err("SIGSEGV assembly crashed with segmentation fault".into());
-            };
+            build_run_asm(&path)?;
         }
     }
     Ok(())
@@ -206,25 +213,7 @@ fn ui_test_run(files: &[&str], args: &str) -> Result<(), Box<dyn std::error::Err
         }
 
         if args.contains('a') {
-            let mut build_dir = path.clone();
-            let file = build_dir
-                .file_name()
-                .ok_or_else::<Box<dyn std::error::Error>, _>(|| "file not found".into())?
-                .to_os_string();
-            build_dir.pop();
-            build_dir.push("build");
-            build_dir.push(file);
-
-            let mut asm = build_dir.clone();
-            asm.set_extension("s");
-
-            let mut out = build_dir.clone();
-            out.set_extension("");
-
-            cmd!("gcc -no-pie {asm} -o {out}").run()?;
-            if cmd!("{out}").read_stderr()?.contains("SEG") {
-                return Err("SIGSEGV assembly crashed with segmentation fault".into());
-            };
+            build_run_asm(&path)?;
         }
     }
     Ok(())
