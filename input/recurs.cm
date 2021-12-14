@@ -6,29 +6,28 @@ const mut b: int = 0;
 const NULL: int = 0;
 
 fn decls(): int {
-  printf("%d\n", a);
-  if (a > 0) {
-    a = a - 1;
-    return decls();
-  }
-  else {
-    a = 0;
-    return a;
-  }
+    printf("%d\n", a);
+    if (a > 0) {
+        a = a - 1;
+        return decls();
+    } else {
+        a = 0;
+        return a;
+    }
 }
 
 fn foo(): float {
-  printf("%d\n", a);
-  printf("%d\n", b);
+    printf("%d\n", a);
+    printf("%d\n", b);
 
-  return 7.3;
+    return 7.3;
 }
 
-fn main() {
+fn main(): int {
     printf("Number of times to recurse: ", NULL);
-  scanf("%d", &a);
-  printf("%d\n", decls());
-  b = 10;
-  printf("%f\n", foo());
-	exit;
+    scanf("%d", &a);
+    printf("%d\n", decls());
+    b = 10;
+    printf("%f\n", foo());
+    return 0;
 }

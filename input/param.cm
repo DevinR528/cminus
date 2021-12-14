@@ -51,7 +51,7 @@ fn d1(): int {
 	return b;
 }
 
-fn main(): void {
+fn main(): int {
 	A = 1; B = 2; C = 3; D = 4;
 
 
@@ -60,5 +60,5 @@ fn main(): void {
 	printf("%d\n", d1());
 	A = 1;
 	printf("%d\n", b4(A));
-	exit;
+	return 0;
 }
