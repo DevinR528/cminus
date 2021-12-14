@@ -12,77 +12,68 @@ const NULL: int = 0;
 // const mut A: [21; int] = [0; 21];
 
 fn readarray(b: [21; int]) {
-  printf("A?", NULL);
-  let i = 1;
-  let tmp = 0;
-  while (i < 20) {
-    printf("%d\n", i);
-    scanf("%d", &tmp);
-    b[i] = tmp;
-    i += 1;
-  }
+    printf("A?", NULL);
+    let i = 1;
+    let tmp = 0;
+    while (i < 20) {
+        printf("%d\n", i);
+        scanf("%d", &tmp);
+        b[i] = tmp;
+        i += 1;
+    }
 }
 
 fn writearray(b: [21; int]) {
-  printf("A:", NULL);
-  let i = 0;
-  while (i <= 20) {
-    printf("%d\n", b[i]);
-    i += 1;
-  }
+    printf("A:", NULL);
+    let i = 0;
+    while (i <= 20) {
+        printf("%d\n", b[i]);
+        i += 1;
+    }
 }
 
 fn partition(b: [21; int], p: int, r: int): int {
-  printf("p: %d\n", p);
+    let x = b[p];
+    let i = p - 1;
+    let j = r + 1;
+    let t = 0;
+    while true {
+        j -= 1;
 
-  let x = b[p];
-  let i = p - 1;
-  let j = r + 1;
+        while (b[j] > x) {
+            j -= 1;
+        }
 
-  let t = 0;
+        i += 1;
+        while (b[i] < x) {
+            i += 1;
+        }
 
-  printf("x: %d\n", x);
-  printf("r: %d\n", r);
-  printf("j: %d\n", r + 1);
-  printf("b[20]: %d\n", b[r + 1]);
-
-  while (1) {
-    j -= 1;
-    while (b[j] > x) {
-      j -= 1;
+        if (i < j) {
+            t = b[i];
+            b[i] = b[j];
+            b[j] = t;
+        } else {
+            return j;
+        }
     }
-
-    i += 1;
-
-    while (b[i] < x) {
-      i += 1;
-    }
-
-    if (i < j) {
-      t = b[i];
-      b[i] = b[j];
-      b[j] = t;
-    } else {
-      return j;
-    }
-  }
 }
 
 fn quicksort(z: [21; int], p: int, r: int): int {
-  if (p < r) {
-    let q = partition(z, p, r);
-    r = quicksort(z, p, q);
-    r = quicksort(z, q + 1, r);
-  }
+    if (p < r) {
+        let q = partition(z, p, r);
+        r = quicksort(z, p, q);
+        r = quicksort(z, q + 1, r);
+    }
 
-  return 0;
+    return 0;
 }
 
 fn main() {
-  //   A[0] = 0; A[20] = 100;
-  //   readarray();
-  let a = [0, 5, 6, 3, 1, 4, 7, 8, 10, 20, 11, 13, 12, 15, 14, 16, 17, 18, 19, 0, 100];
-  printf("After read %d\n", a[0]);
-  quicksort(a, 1, 19);
-  writearray(a);
+    //   A[0] = 0; A[20] = 100;
+    //   readarray();
+    let a = [0, 5, 6, 3, 1, 4, 7, 8, 10, 20, 11, 13, 12, 15, 14, 16, 17, 18, 19, 0, 100];
+    printf("After read %d\n", a[0]);
+    quicksort(a, 1, 19);
+    writearray(a);
 }

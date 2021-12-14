@@ -1,0 +1,38 @@
+linked fn printf<T>(_fmt: cstr, _: T);
+
+fn main() {
+    let x = 3;
+    let a = [1, 0, 9, 11, 15];
+
+    if a[x] != 0 {
+        printf("%s\n", "a[x] != 0");
+    }
+
+    let sub = x - 2;
+    let y = a[0] + a[2];
+
+    if a[1] != 0 {
+        printf("%s\n", "failed");
+    }
+
+    if (sub < y) {
+        printf("%s\n", "sub < y = true");
+    }
+
+    if (sub > y) {
+        printf("%s\n", "failed");
+    }
+
+    if a[1] < 1 {
+        printf("%s\n", "a[1] < 1 = true");
+    }
+
+    x = 0;
+    while a[x] != 15 {
+        printf("%d\n", a[x]);
+        if a[x] == 11 {
+            printf("%d\n", a[x + 1]);
+        }
+        x += 1;
+    }
+}
