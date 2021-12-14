@@ -1532,7 +1532,7 @@ impl<'a> AstBuilder<'a> {
     fn make_expr_stmt(&mut self) -> ParseResult<ast::Stmt> {
         self.push_call_stack("make_expr_stmt");
         // @copypaste We are sort of taking this from `advance_to_op` but limiting the choices to
-        // just calls and trait method calls
+        // just calls, trait method calls and blocks
         Ok(if matches!(self.curr.kind, TokenKind::Ident | TokenKind::Star) {
             let expr = self.make_lh_expr()?;
             self.eat_whitespace();
@@ -1863,8 +1863,8 @@ impl<'a> AstBuilder<'a> {
                 val.into_spanned(span)
             }
             tkn => {
-                todo!("{:?}", tkn)
-                // return Err(Error::IncorrectToken);
+                // todo!("{:?}", tkn)
+                return Err(ParseError::Error("literal", self.curr_span()));
             }
         })
     }
@@ -2766,6 +2766,43 @@ fn assembly() {
         pop %rax;
         pushq %xmm0;
         mov %rax, %rdi;
+    }
+}
+"#;
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
+    parser.parse().unwrap();
+    assert_eq!(parser.items().len(), 1);
+}
+
+#[test]
+#[ignore = "todo -> conditional expr with no `(cond)`"]
+fn non_paren_cond_parse() {
+    // TODO: make this work
+    let input = r#"
+fn while_loops() {
+    while true {
+        j -= 1;
+
+        while b[j] > x {
+            j -= 1;
+        }
+
+        i += 1;
+        while b[i] < x {
+            i += 1;
+        }
+
+        printf("j: %d\n", j);
+
+        printf("i: %d\n", i);
+
+        if i < j {
+            t = b[i];
+            b[i] = b[j];
+            b[j] = t;
+        } else {
+            return j;
+        }
     }
 }
 "#;
