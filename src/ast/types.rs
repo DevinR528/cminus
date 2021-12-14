@@ -413,12 +413,12 @@ impl Ty {
         match self {
             Ty::Generic { ident, .. } => vec![ident],
             Ty::Array { ty, .. } => ty.val.generics(),
-            Ty::Struct { gen, .. } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
-            Ty::Enum { gen, .. } => gen.iter().map(|t| t.val.generics()).flatten().collect(),
+            Ty::Struct { gen, .. } => gen.iter().flat_map(|t| t.val.generics()).collect(),
+            Ty::Enum { gen, .. } => gen.iter().flat_map(|t| t.val.generics()).collect(),
             Ty::Ptr(ty) => ty.val.generics(),
             Ty::Ref(ty) => ty.val.generics(),
             Ty::Func { ret, params, .. } => {
-                params.iter().map(|p| p.generics()).flatten().chain(ret.generics()).collect()
+                params.iter().flat_map(|p| p.generics()).chain(ret.generics()).collect()
             }
             Ty::Path(p) => todo!("{}", p),
             Ty::ConstStr(..)

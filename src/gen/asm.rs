@@ -179,7 +179,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // HACK: ewww fix
                 let mut ops = op.as_instruction().to_string();
                 if ops == "imul" {
-                    ops = ops.replace("i", "");
+                    ops = ops.replace('i', "");
                 }
                 format!("    {}ss{:a$},{:b$}", ops, src, dst, a = FIRST, b = SECOND)
             }
@@ -740,7 +740,7 @@ impl<'ctx> CodeGen<'ctx> {
                 path,
                 type_args
                     .iter()
-                    .map(|t| t.to_string().replace(" ", ""))
+                    .map(|t| t.to_string().replace(' ', ""))
                     .collect::<Vec<_>>()
                     .join("0"),
             )
@@ -1909,16 +1909,10 @@ impl<'ctx> CodeGen<'ctx> {
                         );
                     }
                 }
-                self.asm_buf.extend_from_slice(&[
-                    Instruction::Leave,
-                    Instruction::Ret,
-                ]);
+                self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
             }
             Stmt::Exit => {
-                self.asm_buf.extend_from_slice(&[
-                    Instruction::Leave,
-                    Instruction::Ret,
-                ]);
+                self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
             }
             Stmt::Block(_) => todo!(),
             Stmt::InlineAsm(asm) => {
@@ -2196,7 +2190,6 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         if func.ident.name() == "main" {
             self.asm_buf.push(Instruction::SizedMov { src: ZERO, dst: RAX, size: 8 });
         }
-
         self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
     }
 }

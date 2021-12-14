@@ -137,7 +137,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         parent.span,
-                        &format!("[E0i] could not infer type of deref expression"),
+                        &"[E0i] could not infer type of deref expression".to_string(),
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
@@ -158,7 +158,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         parent.span,
-                        &format!("[E0i] could not infer type of deref expression"),
+                        &"[E0i] could not infer type of deref expression".to_string(),
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
@@ -211,7 +211,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         inner.span,
-                        &format!("[E0i] tried to access field of non struct"),
+                        &"[E0i] tried to access field of non struct".to_string(),
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
@@ -735,7 +735,7 @@ fn fetch_fields<'a>(lhs_ty: &Ty, span: Range, tcxt: &mut TyCheckRes<'a, '_>) -> 
             tcxt.errors.push_error(Error::error_with_span(
                 tcxt,
                 span,
-                &format!("[E0tc] invalid field accessor target"),
+                &"[E0tc] invalid field accessor target".to_string(),
             ));
             tcxt.errors.poisoned(true);
             None

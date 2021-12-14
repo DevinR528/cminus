@@ -926,7 +926,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self.errors.push_error(Error::error_with_span(
                                 self,
                                 var.span,
-                                &format!("type and expression do not agree"),
+                                &"type and expression do not agree".to_string(),
                             ));
                             return;
                         },
@@ -938,7 +938,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.errors.push_error(Error::error_with_span(
                     self,
                     var.init.span,
-                    &format!("invalid const expression"),
+                    &"invalid const expression".to_string(),
                 ));
             }
         }
@@ -1666,7 +1666,7 @@ crate fn check_field_access<'ast>(
     let lhs_ty = tcxt.type_of_ident(lhs.val.as_ident(), lhs.span);
 
     let (name, struc) =
-        if let Some(Ty::Struct { ident, .. }) = lhs_ty.as_ref().and_then(|t| field_access(t)) {
+        if let Some(Ty::Struct { ident, .. }) = lhs_ty.as_ref().and_then(field_access) {
             // FIXME: come on clone here that's cray
             (ident, (*tcxt.name_struct.get(&ident).expect("no struct definition found")).clone())
         } else {
