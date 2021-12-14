@@ -412,96 +412,41 @@ impl Instruction {
         } else {
             vec![]
         };
+
+        let op_instructions = |cond| {
+            vec![
+                Instruction::Mov {
+                    src: ZERO,
+                    dst: cond_reg.clone(),
+                    comment: "binary compare move zero",
+                },
+                Instruction::Cmp { src: lhs, dst: rhs },
+                Instruction::CondMov {
+                    src: Location::NamedOffset(".bool_test".into()),
+                    dst: cond_reg,
+                    cond,
+                },
+            ]
+        };
+
         match op {
             BinOp::Lt => {
-                inst.extend_from_slice(&[
-                    Instruction::Mov {
-                        src: ZERO,
-                        dst: cond_reg.clone(),
-                        comment: "binary compare move zero",
-                    },
-                    Instruction::Cmp { src: lhs, dst: rhs },
-                    Instruction::CondMov {
-                        src: Location::NamedOffset(".bool_test".into()),
-                        dst: cond_reg,
-                        cond: CondFlag::Less,
-                    },
-                ]);
+                inst.extend_from_slice(&op_instructions(CondFlag::Less));
             }
             BinOp::Le => {
-                inst.extend_from_slice(&[
-                    Instruction::Mov {
-                        src: ZERO,
-                        dst: cond_reg.clone(),
-                        comment: "binary compare move zero",
-                    },
-                    Instruction::Cmp { src: lhs, dst: rhs },
-                    Instruction::CondMov {
-                        src: Location::NamedOffset(".bool_test".into()),
-                        dst: cond_reg,
-                        cond: CondFlag::LessEq,
-                    },
-                ]);
+                inst.extend_from_slice(&op_instructions(CondFlag::LessEq));
             }
             BinOp::Ge => {
-                inst.extend_from_slice(&[
-                    Instruction::Mov {
-                        src: ZERO,
-                        dst: cond_reg.clone(),
-                        comment: "binary compare move zero",
-                    },
-                    Instruction::Cmp { src: lhs, dst: rhs },
-                    Instruction::CondMov {
-                        src: Location::NamedOffset(".bool_test".into()),
-                        dst: cond_reg,
-                        cond: CondFlag::GreaterEq,
-                    },
-                ]);
+                inst.extend_from_slice(&op_instructions(CondFlag::GreaterEq));
             }
             BinOp::Gt => {
-                inst.extend_from_slice(&[
-                    Instruction::Mov {
-                        src: ZERO,
-                        dst: cond_reg.clone(),
-                        comment: "binary compare move zero",
-                    },
-                    Instruction::Cmp { src: lhs, dst: rhs },
-                    Instruction::CondMov {
-                        src: Location::NamedOffset(".bool_test".into()),
-                        dst: cond_reg,
-                        cond: CondFlag::Greater,
-                    },
-                ]);
+                inst.extend_from_slice(&op_instructions(CondFlag::Greater));
             }
             BinOp::Eq => {
-                inst.extend_from_slice(&[
-                    Instruction::Mov {
-                        src: ZERO,
-                        dst: cond_reg.clone(),
-                        comment: "binary compare move zero",
-                    },
-                    Instruction::Cmp { src: lhs, dst: rhs },
-                    Instruction::CondMov {
-                        src: Location::NamedOffset(".bool_test".into()),
-                        dst: cond_reg,
-                        cond: CondFlag::Eq,
-                    },
-                ]);
+                inst.extend_from_slice(&op_instructions(CondFlag::Eq));
             }
             BinOp::Ne => {
-                inst.extend_from_slice(&[
-                    Instruction::Mov {
-                        src: ZERO,
-                        dst: cond_reg.clone(),
-                        comment: "binary compare move zero",
-                    },
-                    Instruction::Cmp { src: lhs, dst: rhs },
-                    Instruction::CondMov {
-                        src: Location::NamedOffset(".bool_test".into()),
-                        dst: cond_reg,
-                        cond: CondFlag::NotEq,
-                    },
-                ]);
+                inst.extend_from_slice(&op_instructions(CondFlag::NotEq));
             }
             _ => unreachable!("not a comparison operator"),
         }
