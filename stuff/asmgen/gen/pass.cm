@@ -1,12 +1,13 @@
-linked fn write<T>(_: T);
+linked fn printf<T>(_fmt: cstr, _: T);
 
-fn pass<T>(a: T) {
-    write::<T>(a);
+fn pass<T>(fmts: cstr, a: T) {
+    printf::<T>(fmts, a);
 }
 
 fn main() {
     let x = 10;
-    pass(x);
+    pass("%d\n", x);
 
-    pass::<string>("stringy");
+    pass::<cstr>("%s\n", "stringy");
+    // pass("%s\n", "stringy");
 }

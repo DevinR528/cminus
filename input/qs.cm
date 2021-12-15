@@ -9,19 +9,6 @@ linked fn printf<T>(_fmt: cstr, _val: T);
 linked fn scanf<T>(_fmt: cstr, _val: *T);
 
 const NULL: int = 0;
-// const mut A: [21; int] = [0; 21];
-
-fn readarray(b: [21; int]) {
-    printf("A?", NULL);
-    let i = 1;
-    let tmp = 0;
-    while (i < 20) {
-        printf("%d\n", i);
-        scanf("%d", &tmp);
-        b[i] = tmp;
-        i += 1;
-    }
-}
 
 fn writearray(b: [21; int]) {
     printf("A:", NULL);
@@ -70,8 +57,6 @@ fn quicksort(z: [21; int], p: int, r: int): int {
 }
 
 fn main(): int {
-    //   A[0] = 0; A[20] = 100;
-    //   readarray();
     let a = [0, 5, 6, 3, 1, 4, 7, 8, 10, 20, 11, 13, 12, 15, 14, 16, 17, 18, 19, 0, 100];
     printf("After read %d\n", a[0]);
     quicksort(a, 1, 19);

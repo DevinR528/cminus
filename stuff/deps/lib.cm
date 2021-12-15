@@ -1,6 +1,6 @@
-linked fn write<T>(_: T);
+linked fn printf<T>(_fmt: cstr, _: T);
 
-fn print_fmt(arg1: string, arg2: int, foo: int) {
-    write::<string>(arg1);
-    write::<int>(arg2);
+fn print_fmt(arg1: cstr, arg2: int) {
+    printf("hello from another module arg1: %s\n", arg1);
+    printf("hello from another module arg2: %d\n", arg2);
 }
