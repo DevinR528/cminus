@@ -28,7 +28,6 @@ fn main() {
             cost[i*size+j] = cost[(i - 1)*size+j - 1];
 
             if (target[i] != source[j]) {
-                printf("%d\n", j+i);
                 cost[i * size + j] = cost[i * size + j] + 1;
             }
 

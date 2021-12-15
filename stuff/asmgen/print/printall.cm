@@ -1,13 +1,3 @@
-// struct dstr {
-//     buf: *char,
-//     len: int,
-// }
-
-// fn new_string(): dstr {
-//     let s = dstr { buf: &' ', len: 0 };
-//     return s;
-// }
-
 linked fn printf<T>(_fmt: cstr, _val: T) {}
 linked fn scanf<T>(_fmt: cstr, _val: *T) {}
 

@@ -15,7 +15,7 @@ fn gcd(x: int, y: int): int {
     }
 }
 
-fn main() {
+fn main(): int {
     scanf("%d", &X);
     scanf("%d", &Y);
     while ((X != 0) || (Y != 0)) {
@@ -23,5 +23,5 @@ fn main() {
         scanf("%d", &X)
         scanf("%d", &Y);
     }
-    exit;
+    return 0;
 }
