@@ -15,6 +15,8 @@
     - TODO: implement closures as function pointers with extra arguments?
   - To complete the type system there is a Bottom type, like Rust's `!` never or Haskell's `data Empty`
 
+### More info about the implementation and reasoning.
+
 I broke down and added a few compiler builtins, as I could see no way around implementing
 these in the compiler.
 
