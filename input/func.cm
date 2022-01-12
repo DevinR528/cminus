@@ -12,10 +12,9 @@ fn cvti2f(_from: int): float {
 // const c: float = 4.0;
 
 /// hey
-fn b(x: float)
-  {
-    printf("%f\n", x);
-  }
+fn b(x: float) {
+  printf("%f\n", x);
+}
 
 fn main() {
   b(cvti2f(1));

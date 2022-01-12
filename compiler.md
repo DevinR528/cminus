@@ -1,19 +1,78 @@
-## The Enum Compiler
-### Safer than C and less restrictive than Rust.
+## The Original Compiler
 
-  - Algebraic data type (structs and enums)
-  - Imports
-  - Traits
-  - Match statements, similar to a switch statemnet but uses structrual equality or the types equal trait
-    - partially implemnted
-  - Builtins, I feel like this is somewhat cheating/magic so there are only a few.
-  - Assembly blocks
-    - TODO: track live registers to avoid clobbering
-  - No `++` operator but plenty of `+=` like assignment operators
-  - Generic type parameters via compiletime monomorphization
-  - Limited first class functions
-    - TODO: implement closures as function pointers with extra arguments?
-  - To complete the type system there is a Bottom type, like Rust's `!` never or Haskell's `data Empty`
+The original compiler requirements were a compiler capable of
+
+  - declaring variables
+    - constants (variables in the read only data section of assmbly)
+    - locals
+  - expressions
+    - math
+    - function calls
+    - boolean logic
+    - array indexing
+  - statements
+    - function calls
+    - i/o
+    - return
+    - if
+    - while
+    - assignments
+  - functions
+    - named parameters
+    - a single scalar return value
+  - i/o
+    - hardcoded write/read compiler builtin "functions"
+
+The original language had five types:
+
+  - float
+  - int
+  - char
+  - bool
+  - array of a previously defined type (not multi-dimension)
+  - and void, used only for return type
+
+Lexing and parsing were achieved by specifying a grammar and generating an AST from the generated tree.
+Type checking consists of checking that the declaration (all const and local variable declarations
+are type first like C) and the expression match. In addition, there were a specified set of type promotions
+that were allowed (implicit casts), and as long as the type and the operation were legal, it type-checked.
+
+## The Enum Compiler
+
+The compiler adds several item/declaration kinds
+
+  - import
+  - algebraic data type (struct, enum)
+  - trait block
+  - impl block
+
+and expression kinds
+
+  - dereference
+  - address of
+  - trait method call
+  - field access
+  - struct init
+  - array init
+  - enum init
+
+and statement kinds
+
+  - assingment operator (`+=, -=, *=, etc`)
+  - trait method call
+  - match statement (similar to switch)
+  - inline assembly
+  - builtin calls
+
+a few types were added
+
+  - The generic type
+  - struct type
+  - enum type
+  - a path
+  - pointer
+  - function pointer
+  - bottom (or never)
 
 I broke down and added a few compiler builtins, as I could see no way around implementing
 these in the compiler.
@@ -22,8 +81,9 @@ these in the compiler.
   - @size_of<T>
   - @line and @file
 
-The `linked` keyword tells the compiler to ignore the body of the function during the code generation phase;
-otherwise, they are treated as any other function with no body. There is no implicit type conversion/promotion
+I removed the hardcoded read/write functions in favor of generic printf/scanf. These functions are annotated
+with the `linked` keyword. The `linked` keyword tells the compiler to ignore them during the code generation phase;
+otherwise, they are treated as any other function with no body. I also removed implicit type conversion/promotion
 in expressions, parameters, and return position. There are now specific conversion functions that provide
 an explicit type-safe way to convert between types.
 
@@ -57,7 +117,7 @@ fn printf<T>(fmt_str: cstr, val: T) { ... }
 printf("%d\n", 10); // now there is a resolved `printf<int>`
 ```
 
-In the compiler, one can import items from another file and use them as if they are defined in the
+In the new compiler, one can import items from another file and use them as if they are defined in the
 current file. This was done using a multi-threaded parsing step. Items are added to the main type checking
 process via channels. The dependency graph is built implicitly by waiting on each thread to finish parsing
 each imported file.
