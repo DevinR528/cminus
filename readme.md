@@ -1,20 +1,19 @@
 ## The Enum Compiler
 ### Safer than C but less restrictive than a managed language (or Rust).
 
-
 #### Features of the Enum Compiler
 
   - Algebraic data type (structs and enums)
   - Imports
   - Traits
-  - Match statements, similar to a switch statemnet but uses structrual equality or the types equal trait
-    - partially implemnted
+  - Match statements, similar to a switch statement but uses structural equality or the types equal trait
+    - partially implemented
   - Builtins (since this is cheating and magic, I tried to limit the number)
   - Assembly blocks
     - TODO: track live registers to avoid clobbering
   - No `++` operator but plenty of `+=` like assignment operators
   - Generic type parameters via compiletime monomorphization
-  - Limited first class functions
+  - Limited first class functions, more like second class
     - TODO: implement closures as function pointers with extra arguments?
   - To complete the type system there is a Bottom type, like Rust's `!` never or Haskell's `data Empty`
 
