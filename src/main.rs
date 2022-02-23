@@ -118,18 +118,29 @@ fn process_file<'a>(
         return Ok(());
     }
 
-    if backend == Some("llvm") {
-        // let ctxt = inkwell::context::Context::create();
-        // let mut gen = gen::llvm::LLVMGen::new(&ctxt, Path::new(path));
-    }
-
     let out = if let Some(out) = output { Path::new(out) } else { Path::new(path) };
 
     let mut gen_mem = Region::new(GLOBAL);
     let gen_time = Instant::now();
-    let mut gen = gen::asm::CodeGen::new(out);
-    gen.visit_prog(&lowered);
-    gen.dump_asm()?;
+
+    match backend {
+        Some("llvm") => {
+            // let ctxt = inkwell::context::Context::create();
+            // gen::llvm::LLVMGen::new(&ctxt, out)
+            // gen.visit_prog(&lowered);
+            // gen.dump_asm()?;
+        }
+        Some("iloc") => {
+            let mut gen = gen::iloc::IlocGen::new(out);
+            gen.visit_prog(&lowered);
+            gen.dump_asm()?;
+        }
+        _ => {
+            let mut gen = gen::asm::CodeGen::new(out);
+            gen.visit_prog(&lowered);
+            gen.dump_asm()?;
+        }
+    };
 
     if need_stats {
         println!("    code generation:   {}s", gen_time.elapsed().as_secs_f64());
@@ -188,7 +199,7 @@ fn main() {
             Arg::with_name("backend")
                 .long("backend")
                 .short("b")
-                .possible_values(&["llvm", "hasm"])
+                .possible_values(&["llvm", "iloc", "hasm"])
                 .default_value("hasm")
                 .help("specify the backend (llvm or hand-rolled asm)"),
         )

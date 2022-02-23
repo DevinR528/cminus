@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, hash, mem::discriminant};
 
 use crate::{
     ast::{
@@ -81,9 +81,19 @@ impl PartialEq for Val {
         }
     }
 }
-
 impl Eq for Val {}
-
+impl hash::Hash for Val {
+    fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        discriminant(self).hash(state);
+        match self {
+            Self::Int(int) => int.hash(state),
+            Self::Float(float) => float.to_bits().hash(state),
+            Self::Char(s) => s.hash(state),
+            Self::Str(s) => s.hash(state),
+            Self::Bool(b) => b.hash(state),
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum UnOp {
     Not,

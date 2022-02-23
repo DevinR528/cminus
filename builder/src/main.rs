@@ -99,7 +99,6 @@ fn main() {
         ["test" | "t"] => {
             cmd!("cargo b").run().unwrap();
 
-            #[rustfmt::skip]
             if let Err(e) = build_files(TEST_FILES, "-as") {
                 writeln_red("Error: ", &e.to_string()).unwrap();
                 std::process::exit(1);
