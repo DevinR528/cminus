@@ -28,11 +28,18 @@ mod inst;
 #[derive(Debug)]
 crate struct IlocGen<'ctx> {
     iloc_buf: Vec<Instruction>,
-    globals: HashMap<Ident, Global>,
-    registers: HashMap<Ident, Reg>,
-    current_fn_params: HashSet<Ident>,
-    values: HashMap<Val, Reg>,
+
+    stack_size: usize,
+
     vars: HashMap<Ident, Loc>,
+    globals: HashMap<Ident, Global>,
+
+    registers: HashMap<Ident, Reg>,
+    expr_regs: HashMap<(BinOp, Reg, Reg), Reg>,
+    values: HashMap<Val, Reg>,
+    curr_register: usize,
+
+    current_fn_params: HashSet<Ident>,
     path: &'ctx Path,
 }
 
@@ -40,10 +47,13 @@ impl<'ctx> IlocGen<'ctx> {
     crate fn new(path: &'ctx Path) -> IlocGen<'ctx> {
         Self {
             iloc_buf: vec![],
+            stack_size: 0,
             globals: HashMap::default(),
             current_fn_params: HashSet::default(),
             registers: HashMap::default(),
+            expr_regs: HashMap::default(),
             values: HashMap::default(),
+            curr_register: 0,
             vars: HashMap::default(),
             path,
         }
@@ -79,13 +89,9 @@ impl<'ctx> IlocGen<'ctx> {
             .collect::<Vec<String>>()
             .join("\n");
         let assembly =
-            self.iloc_buf.iter().map(|inst| self.to_asm(inst)).collect::<Vec<String>>().join("\n");
+            self.iloc_buf.iter().map(|inst| inst.to_string()).collect::<Vec<String>>().join("\n");
 
         file.write_all(format!("{}\n{}\n", globals, assembly).as_bytes()).map_err(|e| e.to_string())
-    }
-
-    crate fn to_asm(&self, inst: &Instruction) -> String {
-        String::new()
     }
 
     crate fn to_global(&self, glob: &Global) -> String {
@@ -122,20 +128,32 @@ impl<'ctx> IlocGen<'ctx> {
     }
 
     fn ident_to_reg(&mut self, ident: Ident) -> Reg {
-        let num = self.registers.len();
+        let num = self.curr_register;
         if let Some(num) = self.registers.get(&ident) {
             *num
         } else {
+            self.curr_register += 1;
             self.registers.insert(ident, Reg::Var(num));
             Reg::Var(num)
         }
     }
     fn value_to_reg(&mut self, val: Val) -> Reg {
-        let num = self.values.len();
+        let num = self.curr_register;
         if let Some(num) = self.values.get(&val) {
             *num
         } else {
+            self.curr_register += 1;
             self.values.insert(val, Reg::Var(num));
+            Reg::Var(num)
+        }
+    }
+    fn expr_to_reg(&mut self, expr: (BinOp, Reg, Reg)) -> Reg {
+        let num = self.curr_register;
+        if let Some(num) = self.expr_regs.get(&expr) {
+            *num
+        } else {
+            self.curr_register += 1;
+            self.expr_regs.insert(expr, Reg::Var(num));
             Reg::Var(num)
         }
     }
@@ -147,28 +165,142 @@ impl<'ctx> IlocGen<'ctx> {
                 Ty::Ptr(_) => todo!(),
                 Ty::Ref(_) => todo!(),
                 Ty::ConstStr(_) => todo!(),
-                Ty::Int => self.ident_to_reg(ident),
-                Ty::Char => self.ident_to_reg(ident),
-                Ty::Float => {
-                    let i_reg = self.ident_to_reg(ident);
-                }
-                Ty::Bool => self.ident_to_reg(ident),
-                Ty::Void => todo!(),
-                Ty::Bottom => todo!(),
+                Ty::Int => self.ident_to_reg(*ident),
+                Ty::Char => self.ident_to_reg(*ident),
+                Ty::Float => self.ident_to_reg(*ident),
+                Ty::Bool => self.ident_to_reg(*ident),
+                _ => todo!(),
             },
             Expr::Deref { indir, expr, ty } => todo!(),
             Expr::AddrOf(_) => todo!(),
             Expr::Array { ident, exprs, ty } => todo!(),
             Expr::Urnary { op, expr, ty } => todo!(),
-            Expr::Binary { op, lhs, rhs, ty } => todo!(),
-            Expr::Parens(_) => todo!(),
+            Expr::Binary { op, lhs, rhs, ty } => {
+                let lhs_reg = self.gen_expression(lhs);
+                let rhs_reg = self.gen_expression(rhs);
+                match op {
+                    BinOp::Mul => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::Mult {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::Div => {
+                        todo!("No division in ILOC... weak")
+                    }
+                    BinOp::Rem => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::Mod {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::Add => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::Add {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::Sub => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::Sub {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::LeftShift => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::LShift {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::RightShift => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::RShift {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::Lt => todo!(),
+                    BinOp::Le => todo!(),
+                    BinOp::Ge => todo!(),
+                    BinOp::Gt => todo!(),
+                    BinOp::Eq => todo!(),
+                    BinOp::Ne => todo!(),
+                    BinOp::BitAnd => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::And {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::BitXor => {
+                        todo!("No exclusive OR in ILOC...")
+                    }
+                    BinOp::BitOr => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::Or { src_a: lhs_reg, src_b: rhs_reg, dst });
+                        dst
+                    }
+                    BinOp::And => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::And {
+                            src_a: lhs_reg,
+                            src_b: rhs_reg,
+                            dst,
+                        });
+                        dst
+                    }
+                    BinOp::Or => {
+                        let dst = self.expr_to_reg((*op, lhs_reg, rhs_reg));
+                        self.iloc_buf.push(Instruction::Or { src_a: lhs_reg, src_b: rhs_reg, dst });
+                        dst
+                    }
+                    BinOp::AddAssign => {
+                        unreachable!("this is converted to a full add expression")
+                    }
+                    BinOp::SubAssign => {
+                        unreachable!("this is converted to a full sub expression")
+                    }
+                }
+            }
+            Expr::Parens(expr) => self.gen_expression(expr),
             Expr::Call { path, args, type_args, def } => todo!(),
             Expr::TraitMeth { trait_, args, type_args, def } => todo!(),
             Expr::FieldAccess { lhs, def, rhs } => todo!(),
             Expr::StructInit { path, fields, def } => todo!(),
             Expr::EnumInit { path, variant, items, def } => todo!(),
             Expr::ArrayInit { items, ty } => todo!(),
-            Expr::Value(_) => todo!(),
+            Expr::Value(val) => {
+                let tmp = self.value_to_reg(val.clone());
+                match val {
+                    Val::Float(_) => todo!(),
+                    Val::Int(i) => self
+                        .iloc_buf
+                        .push(Instruction::ImmLoad { src: inst::Val::Integer(*i), dst: tmp }),
+                    Val::Char(_) => todo!(),
+                    Val::Bool(_) => todo!(),
+                    Val::Str(_) => todo!(),
+                }
+                tmp
+            }
             Expr::Builtin(_) => todo!(),
         }
     }
@@ -186,7 +318,7 @@ impl<'ctx> IlocGen<'ctx> {
                 let val = self.gen_expression(rval);
                 match lval {
                     LValue::Ident { ident, ty } => {
-                        let dst = self.ident_to_reg(ident);
+                        let dst = self.ident_to_reg(*ident);
                         match ty {
                             Ty::Int => {
                                 //
@@ -204,12 +336,27 @@ impl<'ctx> IlocGen<'ctx> {
                     LValue::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
                 }
             }
-            Stmt::Call { expr, def } => todo!(),
+            Stmt::Call { expr, def } => match expr.path.to_string().as_str() {
+                "print" if !matches!(def.kind, FuncKind::Normal | FuncKind::Pointer) => {
+                    assert!(expr.args.len() == 1);
+                    let arg = self.gen_expression(&expr.args[0]);
+                    self.iloc_buf.push(Instruction::IWrite(arg));
+                }
+                "scan" if !matches!(def.kind, FuncKind::Normal | FuncKind::Pointer) => {
+                    assert!(expr.args.len() == 1);
+                    let arg = self.gen_expression(&expr.args[0]);
+                    self.iloc_buf.push(Instruction::IRead(arg));
+                }
+                _ => todo!(),
+            },
             Stmt::TraitMeth { expr, def } => todo!(),
-            Stmt::If { cond, blk, els } => todo!(),
+            Stmt::If { cond, blk, els } => {}
             Stmt::While { cond, stmts } => todo!(),
             Stmt::Match { expr, arms, ty } => todo!(),
-            Stmt::Ret(_, _) => todo!(),
+            Stmt::Ret(ex, _) => {
+                let ret_reg = self.gen_expression(ex);
+                self.iloc_buf.push(Instruction::ImmRet(ret_reg));
+            }
             Stmt::Exit => todo!(),
             Stmt::Block(_) => todo!(),
             Stmt::InlineAsm(_) => todo!(),
@@ -333,14 +480,18 @@ impl<'ast> Visit<'ast> for IlocGen<'ast> {
 
         self.current_fn_params = func.params.iter().map(|p| p.ident).collect();
         let params = func.params.iter().map(|p| self.ident_to_reg(p.ident)).collect();
-        let frame_inst = Instruction::Frame { name: function_name, params, size: 40 };
+        let frame_inst = Instruction::Frame { name: function_name, params, size: 58008 };
 
+        let frame_idx = self.iloc_buf.len();
         self.iloc_buf.push(frame_inst);
 
+        self.stack_size = 0;
         for stmt in &func.stmts {
             self.gen_statement(stmt);
         }
     }
 }
 
-fn type_ident_reg(ident: Ident, ty: &Ty) -> Reg {}
+fn type_ident_reg(ident: Ident, ty: &Ty) -> Reg {
+    todo!()
+}

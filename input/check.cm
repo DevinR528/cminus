@@ -11,6 +11,6 @@ fn main(): int {
         }
         i = i + 1;
     }
-    printf("SUCCESS\n", 0)
+    printf("SUCCESS\n", 0);
     return 0;
 }
