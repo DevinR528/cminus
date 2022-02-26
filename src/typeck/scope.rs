@@ -14,6 +14,12 @@ use crate::{
     typeck::{TyCheckRes, Visit},
 };
 
+crate fn hash_any<T: Hash>(thing: &T) -> u64 {
+    let mut hasher = FxHasher::default();
+    thing.hash(&mut hasher);
+    hasher.finish()
+}
+
 crate fn hash_file(file: &str) -> u64 {
     let mut hasher = FxHasher::default();
     hasher.write(file.as_bytes());

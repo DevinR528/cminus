@@ -94,7 +94,7 @@ impl hash::Hash for Val {
         }
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum UnOp {
     Not,
     OnesComp,
@@ -527,6 +527,8 @@ impl Expr {
         }
     }
 
+    // TODO: remove, this is used to cheat the type system to make carr's programs
+    // happy, it also does real weak control flow folding
     crate fn is_const_true(&self) -> bool {
         match self {
             Expr::Value(Val::Bool(true)) => true,
@@ -754,7 +756,7 @@ pub enum Ty {
     Float,
     /// A single bit representing true and false.
     Bool,
-    /// The empty/never/uninhabited type.
+    /// The empty type.
     Void,
     /// The never/uninhabited type.
     Bottom,
