@@ -1,0 +1,9 @@
+linked fn print<T>(_: T);
+
+fn main(): void {
+    // maths
+    let i = 1.0;
+    let y = 3.0 * i;
+    let x = y - 1.1;
+    print(x);
+}
