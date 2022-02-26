@@ -19,7 +19,8 @@
   - extern/foreign/link/clang/dynamic some sort of keyword to signify dy linked function/type
     - we currently use linked
   - if `fn call<T>(a: T): T {...}` is generic make `call::<int>(x)` and `call(x)` work
-  - add support for uninitialized values MAYBE???
+  - Add `Stmt::Exit` to anything that has no return stmt and is a void func so codegen can correctly
+    add ret instructions, and we don't rely on hardcoded crap...
   - var args for native printf
     - string needs to be convertable to a slice/array thing or impled as a struct with len and bufff
   - `size_of` or something so that adding to pointer types isn't hardcoded crap...
