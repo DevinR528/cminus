@@ -631,25 +631,28 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             // Now we can check the return value incase it was generic we did that ^^
             //
             // We take from the `generics` to get bound info
-            let ty = &func.ret.get();
-            if ty.val.has_generics() {
+            if func.ret.get().val.has_generics() {
                 self.generic_res.collect_generic_usage(
-                    &ty.val,
+                    &func.ret.get().val,
                     self.unique_id(),
                     0,
                     &[],
                     &mut vec![Node::Func(func.ident)],
                 );
 
-                let matching_gen = func.generics.iter().any(|g| g.ident == *ty.val.generics()[0]);
+                let matching_gen =
+                    func.generics.iter().any(|g| g.ident == *func.ret.get().val.generics()[0]);
                 if !matching_gen {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         func.span,
-                        &format!("found return `{}` which is not a declared generic type", ty.val),
+                        &format!(
+                            "found return `{}` which is not a declared generic type",
+                            func.ret.get().val
+                        ),
                     ));
                 }
-            };
+            }
 
             if self.var_func.name_func.insert(func.ident.to_owned(), func).is_some() {
                 self.errors.push_error(Error::error_with_span(
@@ -658,6 +661,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     &format!("multiple function declaration `{}`", func.ident),
                 ));
             } else {
+                // Add explicit return to void functions with no last return stmt
+                if matches!(func.ret.get().val, Ty::Void)
+                    && !matches!(func.stmts.stmts.slice().last().map(|s| &s.val), Some(Stmt::Exit))
+                {
+                    unsafe {
+                        func.stmts.stmts.push_shared(Stmt::Exit.into_spanned(DUMMY));
+                    }
+                }
                 // Finally add this to the global namespace since it is a usable identifier now
                 self.global.insert(
                     func.ident,
