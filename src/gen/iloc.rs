@@ -33,7 +33,8 @@ mod inst;
 crate struct IlocGen<'ctx> {
     iloc_buf: Vec<Instruction>,
 
-    stack_size: usize,
+    stack_size: isize,
+    ident_address: HashMap<Ident, isize>,
 
     vars: HashMap<Ident, Loc>,
     globals: HashMap<Ident, Global>,
@@ -41,10 +42,11 @@ crate struct IlocGen<'ctx> {
     registers: HashMap<Ident, Reg>,
     expr_regs: HashMap<Operation, Reg>,
     values: HashMap<Val, Reg>,
+    /// This is a map of `Val` -> (name of global, register global is loaded to, optional register
+    /// for the conversion to float)
     global_regs: HashMap<Val, (Ident, Reg, Reg)>,
 
     curr_register: usize,
-    curr_stack: isize,
     curr_label: usize,
 
     current_fn_params: HashSet<Ident>,
@@ -55,18 +57,23 @@ impl<'ctx> IlocGen<'ctx> {
     crate fn new(path: &'ctx Path) -> IlocGen<'ctx> {
         Self {
             iloc_buf: vec![],
+
             stack_size: 0,
+            ident_address: HashMap::default(),
+
+            vars: HashMap::default(),
             globals: HashMap::default(),
-            current_fn_params: HashSet::default(),
+
             registers: HashMap::default(),
             expr_regs: HashMap::default(),
             values: HashMap::default(),
             global_regs: HashMap::default(),
+
             // `0` is a protected register (it's the stack/frame pointer)
             curr_register: 1,
-            curr_stack: 0,
             curr_label: 0,
-            vars: HashMap::default(),
+
+            current_fn_params: HashSet::default(),
             path,
         }
     }
@@ -369,7 +376,10 @@ impl<'ctx> IlocGen<'ctx> {
     fn gen_expression(&mut self, expr: &Expr) -> Reg {
         match expr {
             Expr::Ident { ident, ty } => match ty {
-                Ty::Array { size, ty } => todo!(),
+                Ty::Array { size, ty } => {
+                    // TODO: this is the address right...
+                    self.ident_to_reg(*ident)
+                }
                 Ty::Ptr(_) => todo!(),
                 Ty::Ref(_) => todo!(),
                 Ty::ConstStr(_) => todo!(),
@@ -474,9 +484,7 @@ impl<'ctx> IlocGen<'ctx> {
             Expr::StructInit { path, fields, def } => todo!(),
             Expr::EnumInit { path, variant, items, def } => todo!(),
             Expr::ArrayInit { items, ty } => {
-                let start = self.curr_stack;
-
-                self.curr_stack += (items.len() as isize * 4);
+                let start = self.stack_size;
 
                 let arr_reg = self.expr_to_reg(Operation::ArrayInit(hash_any(
                     &items.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>(),
@@ -600,12 +608,24 @@ impl<'ctx> IlocGen<'ctx> {
             //  - loadI 2 => %vr2; store %vr2 => %vrx; (because at some point `let x = &y;`)
             Stmt::Assign { lval, rval, is_let } => {
                 match rval.type_of() {
-                    Ty::Array { size, ty } if matches!(&*ty, Ty::Int) => {
-                        self.stack_size += (4 * size);
+                    Ty::Array { size, ty } if *is_let && matches!(&*ty, Ty::Int) => {
+                        self.stack_size += (4 * size as isize);
+                    }
+                    Ty::Int | Ty::Float if *is_let => {
+                        self.ident_address.insert(lval.as_ident().unwrap(), self.stack_size);
+                        self.stack_size += 4;
                     }
                     _ => (),
                 }
-                let val = self.gen_expression(rval);
+                let mut val = self.gen_expression(rval);
+
+                // If we are looking at an element of an array or dereferencing memory we get the
+                // value
+                if matches!(rval, Expr::Array { .. } | Expr::Deref { .. }) {
+                    let dst = self.expr_to_reg(Operation::Load(val));
+                    self.iloc_buf.push(Instruction::Load { src: val, dst });
+                    val = dst;
+                }
                 match lval {
                     LValue::Ident { ident, ty } => {
                         let dst = self.ident_to_reg(*ident);
@@ -679,18 +699,23 @@ impl<'ctx> IlocGen<'ctx> {
                         _ => unreachable!("not readable"),
                     }
                 }
-                _ => todo!(),
+                _ => {
+                    self.gen_expression(&Expr::Call {
+                        path: expr.path.clone(),
+                        args: expr.args.clone(),
+                        type_args: expr.type_args.clone(),
+                        def: def.clone(),
+                    });
+                }
             },
             Stmt::TraitMeth { expr, def } => todo!(),
             Stmt::If { cond, blk, els } => {
                 let cond = self.gen_expression(cond);
-                let true_case = format!(".L{}:", self.next_label());
                 let after_blk = format!(".L{}:", self.next_label());
+
                 if let Some(els) = els {
-                    self.iloc_buf.extend([
-                        Instruction::CbrT { cond, loc: Loc(after_blk.replace(':', "")) },
-                        Instruction::Label(true_case),
-                    ]);
+                    self.iloc_buf
+                        .push(Instruction::CbrT { cond, loc: Loc(after_blk.replace(':', "")) });
                     for stmt in &blk.stmts {
                         self.gen_statement(stmt)
                     }
@@ -699,10 +724,8 @@ impl<'ctx> IlocGen<'ctx> {
                         self.gen_statement(stmt)
                     }
                 } else {
-                    self.iloc_buf.extend([
-                        Instruction::CbrT { cond, loc: Loc(after_blk.replace(':', "")) },
-                        Instruction::Label(true_case),
-                    ]);
+                    self.iloc_buf
+                        .push(Instruction::CbrT { cond, loc: Loc(after_blk.replace(':', "")) });
                     for stmt in &blk.stmts {
                         self.gen_statement(stmt)
                     }
@@ -835,9 +858,6 @@ impl<'ast> Visit<'ast> for IlocGen<'ast> {
         self.vars.insert(var.ident, Loc(name));
     }
 
-    // TODO: we double the `leave; ret;` instructions for functions that actually return
-    // TODO: we double the `leave; ret;` instructions for functions that actually return
-    // TODO: we double the `leave; ret;` instructions for functions that actually return
     fn visit_func(&mut self, func: &'ast Func) {
         let function_name = func.ident.name().to_string();
         self.vars.insert(func.ident, Loc(function_name.clone()));
@@ -860,7 +880,7 @@ impl<'ast> Visit<'ast> for IlocGen<'ast> {
         }
 
         if let Instruction::Frame { size, .. } = &mut self.iloc_buf[frame_idx] {
-            *size = self.stack_size;
+            *size = self.stack_size as usize;
         }
     }
 }

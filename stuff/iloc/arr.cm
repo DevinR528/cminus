@@ -25,5 +25,4 @@ fn main() {
     print(a[2]);
     print(b[3]);
     print(b[4] + a[2]);
-
 }

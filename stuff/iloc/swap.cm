@@ -1,0 +1,16 @@
+linked fn print<T>(_: T);
+
+fn main() {
+    let a = [0, 1, 2];
+
+    print("swap");
+    let t = a[0];
+    a[0] = a[2];
+    a[2] = t;
+
+    let i = 0;
+    while i < 3 {
+        print(a[i]);
+        i += 1;
+    }
+}
