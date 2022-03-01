@@ -35,6 +35,8 @@ crate struct IlocGen<'ctx> {
 
     stack_size: isize,
     ident_address: HashMap<Ident, isize>,
+    /// If present this is the register that hold that memory address for this variable
+    load_from_addr: HashMap<Ident, Reg>,
 
     vars: HashMap<Ident, Loc>,
     globals: HashMap<Ident, Global>,
@@ -60,6 +62,7 @@ impl<'ctx> IlocGen<'ctx> {
 
             stack_size: 0,
             ident_address: HashMap::default(),
+            load_from_addr: HashMap::default(),
 
             vars: HashMap::default(),
             globals: HashMap::default(),
@@ -373,60 +376,97 @@ impl<'ctx> IlocGen<'ctx> {
         }
     }
 
+    fn gen_index(&mut self, arr_reg: Reg, exprs: &[Expr]) -> Reg {
+        let stack_pad = self.value_to_reg(Val::Int(-4));
+        let size_of = self.value_to_reg(Val::Int(4));
+        let arr_start = self.expr_to_reg(Operation::FramePointer);
+
+        if let [expr] = exprs {
+            let idx = self.gen_expression(expr);
+            let calc_idx = self.expr_to_reg(Operation::BinOp(BinOp::Mul, idx, size_of));
+            let calc_arr_start =
+                self.expr_to_reg(Operation::BinOp(BinOp::Add, arr_start, stack_pad));
+            let arr_slot = self.expr_to_reg(Operation::BinOp(BinOp::Sub, calc_arr_start, calc_idx));
+
+            self.iloc_buf.extend([
+                // Move array start address to register
+                Instruction::I2I { src: arr_reg, dst: arr_start },
+                // Load the number of bytes on the stack for no reason
+                Instruction::ImmLoad { src: inst::Val::Integer(-4), dst: stack_pad },
+                // // Add -4 to make up for stack padding
+                Instruction::Add { src_a: arr_start, src_b: stack_pad, dst: calc_arr_start },
+                // Size of type
+                Instruction::ImmLoad { src: inst::Val::Integer(4), dst: size_of },
+                // index * size of type
+                Instruction::Mult { src_a: idx, src_b: size_of, dst: calc_idx },
+                // array start - (index * size_of)
+                Instruction::Sub { src_a: calc_arr_start, src_b: calc_idx, dst: arr_slot },
+            ]);
+            arr_slot
+        } else {
+            todo!("No multi dim arrays yet...")
+        }
+    }
+
     fn gen_expression(&mut self, expr: &Expr) -> Reg {
         match expr {
-            Expr::Ident { ident, ty } => match ty {
-                Ty::Array { size, ty } => {
-                    // TODO: this is the address right...
-                    self.ident_to_reg(*ident)
+            Expr::Ident { ident, ty } => {
+                if let Some(mem_addr) = self.load_from_addr.get(ident).copied() {
+                    let dst = self.expr_to_reg(Operation::Load(mem_addr));
+                    self.iloc_buf.extend([Instruction::Load { src: mem_addr, dst }]);
+                    return dst;
                 }
-                Ty::Ptr(_) => todo!(),
-                Ty::Ref(_) => todo!(),
-                Ty::ConstStr(_) => todo!(),
-                Ty::Int => self.ident_to_reg(*ident),
-                Ty::Char => self.ident_to_reg(*ident),
-                Ty::Float => self.ident_to_reg(*ident),
-                Ty::Bool => self.ident_to_reg(*ident),
-                _ => todo!(),
-            },
-            Expr::Deref { indir, expr, ty } => todo!(),
-            Expr::AddrOf(_) => todo!(),
+                match ty {
+                    Ty::Array { size, ty } => {
+                        // TODO: this is the address right...
+                        self.ident_to_reg(*ident)
+                    }
+                    Ty::Ptr(_) => self.ident_to_reg(*ident),
+                    Ty::Ref(_) => todo!(),
+                    Ty::ConstStr(_) => todo!(),
+                    Ty::Int => self.ident_to_reg(*ident),
+                    Ty::Char => self.ident_to_reg(*ident),
+                    Ty::Float => self.ident_to_reg(*ident),
+                    Ty::Bool => self.ident_to_reg(*ident),
+                    _ => todo!(),
+                }
+            }
+            Expr::Deref { indir, expr, ty } => {
+                let val = self.gen_expression(expr);
+                let dst = self.expr_to_reg(Operation::Load(val));
+                self.iloc_buf.extend([Instruction::Load { src: val, dst }]);
+                dst
+            }
+            Expr::AddrOf(expr) => {
+                let start = *self
+                    .ident_address
+                    .get(&expr.as_ident())
+                    .unwrap_or_else(|| panic!("{:?}", expr));
+
+                let src = self.gen_expression(&*expr);
+
+                if let Expr::Array { .. } = &**expr {
+                    return src;
+                }
+
+                let curr_stack = self.value_to_reg(Val::Int(start));
+                let fp = self.expr_to_reg(Operation::FramePointer);
+                let addr = self.expr_to_reg(Operation::BinOp(BinOp::Sub, fp, curr_stack));
+
+                self.iloc_buf.extend([
+                    Instruction::I2I { src: Reg::Var(0), dst: fp },
+                    Instruction::ImmLoad { src: inst::Val::Integer(start), dst: curr_stack },
+                    Instruction::Sub { src_a: fp, src_b: curr_stack, dst: addr },
+                    Instruction::Store { src, dst: addr },
+                ]);
+
+                self.load_from_addr.insert(expr.as_ident(), addr);
+
+                addr
+            }
             Expr::Array { ident, exprs, ty } => {
-                let arr_reg = self.ident_to_reg(*ident);
-                let stack_pad = self.value_to_reg(Val::Int(-4));
-                let size_of = self.value_to_reg(Val::Int(4));
-                let arr_start = self.expr_to_reg(Operation::FramePointer);
-
-                if let [expr] = exprs.as_slice() {
-                    let idx = self.gen_expression(expr);
-                    let calc_idx = self.expr_to_reg(Operation::BinOp(BinOp::Mul, idx, size_of));
-                    let calc_arr_start =
-                        self.expr_to_reg(Operation::BinOp(BinOp::Add, arr_start, stack_pad));
-                    let arr_slot =
-                        self.expr_to_reg(Operation::BinOp(BinOp::Sub, calc_arr_start, calc_idx));
-
-                    self.iloc_buf.extend([
-                        // Move array start address to register
-                        Instruction::I2I { src: arr_reg, dst: arr_start },
-                        // Load the number of bytes on the stack for no reason
-                        Instruction::ImmLoad { src: inst::Val::Integer(-4), dst: stack_pad },
-                        // // Add -4 to make up for stack padding
-                        Instruction::Add {
-                            src_a: arr_start,
-                            src_b: stack_pad,
-                            dst: calc_arr_start,
-                        },
-                        // Size of type
-                        Instruction::ImmLoad { src: inst::Val::Integer(4), dst: size_of },
-                        // index * size of type
-                        Instruction::Mult { src_a: idx, src_b: size_of, dst: calc_idx },
-                        // array start - (index * size_of)
-                        Instruction::Sub { src_a: calc_arr_start, src_b: calc_idx, dst: arr_slot },
-                    ]);
-                    arr_slot
-                } else {
-                    todo!("No multi dim arrays yet...")
-                }
+                let reg = self.ident_to_reg(*ident);
+                self.gen_index(reg, exprs)
             }
             Expr::Urnary { op, expr, ty } => {
                 let ex = self.gen_expression(expr);
@@ -575,7 +615,14 @@ impl<'ctx> IlocGen<'ctx> {
                     tmp
                 }
                 Val::Char(_) => todo!(),
-                Val::Bool(_) => todo!(),
+                Val::Bool(b) => {
+                    let tmp = self.value_to_reg(val.clone());
+                    self.iloc_buf.push(Instruction::ImmLoad {
+                        src: inst::Val::Integer(if *b { 1 } else { 0 }),
+                        dst: tmp,
+                    });
+                    tmp
+                }
                 Val::Str(s) => {
                     let (name, tmp) = self.global_to_reg(
                         val.clone(),
@@ -597,6 +644,35 @@ impl<'ctx> IlocGen<'ctx> {
         }
     }
 
+    fn get_pointer(&mut self, lval: &LValue) -> Reg {
+        match lval {
+            LValue::Ident { ident, ty } => self.ident_to_reg(*ident),
+            LValue::Deref { indir, expr, ty } => {
+                let mut loc = self.get_pointer(expr);
+                let mut l_dst = self.expr_to_reg(Operation::Load(loc));
+
+                for _ in 0..*indir {
+                    self.iloc_buf.push(Instruction::Load { src: loc, dst: l_dst });
+
+                    // We followed the address, if the memory is another address we load from there
+                    loc = l_dst;
+                    l_dst = self.expr_to_reg(Operation::Load(loc));
+                }
+                l_dst
+            }
+            LValue::Array { ident, exprs, ty } => self.gen_expression(&Expr::Array {
+                ident: *ident,
+                exprs: exprs.clone(),
+                ty: ty.clone(),
+            }),
+            LValue::FieldAccess { lhs, def, rhs, field_idx } => {
+                let lhs_reg = self.ident_to_reg(lhs.as_ident().unwrap());
+                let access = construct_field_offset_lvalue(self, &*rhs, lhs_reg, &def);
+                todo!()
+            }
+        }
+    }
+
     fn gen_statement(&mut self, stmt: &'ctx Stmt) {
         match stmt {
             Stmt::Const(_) => todo!(),
@@ -609,6 +685,7 @@ impl<'ctx> IlocGen<'ctx> {
             Stmt::Assign { lval, rval, is_let } => {
                 match rval.type_of() {
                     Ty::Array { size, ty } if *is_let && matches!(&*ty, Ty::Int) => {
+                        self.ident_address.insert(lval.as_ident().unwrap(), self.stack_size);
                         self.stack_size += (4 * size as isize);
                     }
                     Ty::Int | Ty::Float if *is_let => {
@@ -626,42 +703,32 @@ impl<'ctx> IlocGen<'ctx> {
                     self.iloc_buf.push(Instruction::Load { src: val, dst });
                     val = dst;
                 }
+                let dst = self.get_pointer(lval);
                 match lval {
-                    LValue::Ident { ident, ty } => {
-                        let dst = self.ident_to_reg(*ident);
-                        match ty {
-                            Ty::Int => {
-                                //
-                                self.iloc_buf.push(Instruction::I2I { src: val, dst })
-                            }
-                            Ty::Float => {
-                                //
-                                self.iloc_buf.push(Instruction::F2F { src: val, dst })
-                            }
-                            Ty::Array { .. } => {
-                                //
-                                self.iloc_buf.push(Instruction::I2I { src: val, dst })
-                            }
-                            t => todo!("{:?}", t),
+                    LValue::Ident { .. } => match lval.type_of() {
+                        Ty::Int | Ty::Array { .. } | Ty::Ptr(..) => {
+                            self.iloc_buf.push(Instruction::I2I { src: val, dst })
                         }
+                        Ty::Float => {
+                            self.iloc_buf.push(Instruction::F2F { src: val, dst });
+                        }
+                        t => todo!("{:?}", lval),
+                    },
+                    LValue::Deref { indir, expr, ty } => {
+                        let dst = self.get_pointer(expr);
+                        self.iloc_buf.push(Instruction::Store { src: val, dst });
                     }
-                    LValue::Deref { indir, expr, ty } => todo!(),
                     LValue::Array { ident, exprs, ty } => {
-                        let arr_slot = self.gen_expression(&Expr::Array {
-                            ident: *ident,
-                            exprs: exprs.clone(),
-                            ty: ty.clone(),
-                        });
                         if let [expr] = exprs.as_slice() {
                             self.iloc_buf.push(
                                 // Store the value calculated before the LValue match `val`
-                                Instruction::Store { src: val, dst: arr_slot },
+                                Instruction::Store { src: val, dst },
                             );
                         } else {
                             unreachable!("No multi dim arrays yet...")
                         }
                     }
-                    LValue::FieldAccess { lhs, def, rhs, field_idx } => todo!(),
+                    _ => (),
                 }
             }
             Stmt::Call { expr, def } => match expr.path.to_string().as_str() {
@@ -669,7 +736,9 @@ impl<'ctx> IlocGen<'ctx> {
                     assert!(expr.args.len() == 1);
                     let arg = self.gen_expression(&expr.args[0]);
                     match expr.args[0].type_of() {
-                        Ty::Int => self.iloc_buf.push(Instruction::IWrite(arg)),
+                        Ty::Int | Ty::Ptr(..) | Ty::Ref(..) => {
+                            self.iloc_buf.push(Instruction::IWrite(arg))
+                        }
                         Ty::Float => self.iloc_buf.push(Instruction::FWrite(arg)),
                         Ty::ConstStr(..) => self.iloc_buf.push(Instruction::SWrite(arg)),
                         Ty::Array { ty, .. } if matches!(&*ty, Ty::Int) => {
@@ -679,7 +748,7 @@ impl<'ctx> IlocGen<'ctx> {
                                 Instruction::IWrite(dst),
                             ]);
                         }
-                        _ => unreachable!("not writeable"),
+                        t => unreachable!("not writeable {:?}", t),
                     }
                 }
                 "scan" if !matches!(def.kind, FuncKind::Normal | FuncKind::Pointer) => {
@@ -687,16 +756,16 @@ impl<'ctx> IlocGen<'ctx> {
                     let arg = self.gen_expression(&expr.args[0]);
 
                     match expr.args[0].type_of() {
-                        Ty::Int => self.iloc_buf.push(Instruction::IRead(arg)),
-                        Ty::Float => self.iloc_buf.push(Instruction::FRead(arg)),
-                        Ty::Array { ty, .. } if matches!(&*ty, Ty::Int) => {
-                            let dst = self.expr_to_reg(Operation::Load(arg));
-                            self.iloc_buf.extend([
-                                Instruction::Load { src: arg, dst },
-                                Instruction::IRead(dst),
-                            ]);
+                        Ty::Ptr(ty) if matches!(&*ty, Ty::Int) => {
+                            self.iloc_buf.push(Instruction::IRead(arg))
                         }
-                        _ => unreachable!("not readable"),
+                        Ty::Ptr(ty) if matches!(&*ty, Ty::Float) => {
+                            self.iloc_buf.push(Instruction::FRead(arg))
+                        }
+                        Ty::Array { ty, .. } if matches!(&*ty, Ty::Int) => {
+                            self.iloc_buf.push(Instruction::IRead(arg));
+                        }
+                        t => unreachable!("not readable {:?}", t),
                     }
                 }
                 _ => {
@@ -732,13 +801,8 @@ impl<'ctx> IlocGen<'ctx> {
                     self.iloc_buf.push(Instruction::Label(after_blk));
                 }
             }
-            Stmt::While { cond, stmts } => {
-                let cond = self.gen_expression(cond);
-
-                // The last 2 instructions will always be `comp ...` and
-                // `test* ...`, copy them and insert them after the loop
-                let start = self.iloc_buf.len() - 3;
-                let post_loop_cond = self.iloc_buf[start..].to_vec();
+            Stmt::While { cond: cond_expr, stmts } => {
+                let cond = self.gen_expression(cond_expr);
 
                 let while_case = format!(".L{}:", self.next_label());
                 let after_blk = format!(".L{}:", self.next_label());
@@ -752,8 +816,9 @@ impl<'ctx> IlocGen<'ctx> {
                     self.gen_statement(stmt)
                 }
 
-                // the comp/test
-                self.iloc_buf.extend(post_loop_cond);
+                // Regenerate the condition but, since we generate the opposite logic
+                // we continue the loop only for false cases (since we jump the loop for true cases)
+                let cond = self.gen_expression(cond_expr);
                 self.iloc_buf.extend([
                     Instruction::CbrF { cond, loc: Loc(while_case.replace(':', "")) },
                     Instruction::Label(after_blk),
@@ -882,5 +947,74 @@ impl<'ast> Visit<'ast> for IlocGen<'ast> {
         if let Instruction::Frame { size, .. } = &mut self.iloc_buf[frame_idx] {
             *size = self.stack_size as usize;
         }
+    }
+}
+
+// TODO: @copypaste this whole thing could be removed if `LValue -> Expr` worked but the
+// lifetimes can't match when creating an `Expr` from a `LValue`
+fn construct_field_offset_lvalue<'a>(
+    gen: &mut IlocGen<'a>,
+    rhs: &LValue,
+    lhs_reg: Reg,
+    def: &Struct,
+) -> Reg {
+    match rhs {
+        LValue::Ident { ident, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    let tmp = gen.value_to_reg(Val::Int(count));
+                    let loc = gen.expr_to_reg(Operation::BinOp(BinOp::Sub, lhs_reg, tmp));
+                    let dst = gen.expr_to_reg(Operation::Load(loc));
+                    gen.iloc_buf.extend([
+                        Instruction::ImmLoad { src: inst::Val::Integer(count), dst: tmp },
+                        Instruction::Sub { src_a: lhs_reg, src_b: tmp, dst: loc },
+                        Instruction::Load { src: loc, dst },
+                    ]);
+                    return dst;
+                }
+                // TODO: make this no just 4...
+                // Do this after so first field is the 0th offset
+                count += 4;
+            }
+            unreachable!("type checking failed for this field access {:?}", rhs)
+        }
+        LValue::Deref { indir, expr, ty } => {
+            todo!("follow the pointer")
+        }
+        LValue::Array { ident, exprs, ty } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if f.ident == *ident {
+                    let tmp = gen.value_to_reg(Val::Int(count));
+                    let loc = gen.expr_to_reg(Operation::BinOp(BinOp::Sub, lhs_reg, tmp));
+                    let arr_loc = gen.expr_to_reg(Operation::Load(loc));
+                    gen.iloc_buf.extend([
+                        Instruction::ImmLoad { src: inst::Val::Integer(count), dst: tmp },
+                        Instruction::Sub { src_a: lhs_reg, src_b: tmp, dst: loc },
+                        Instruction::Load { src: loc, dst: arr_loc },
+                    ]);
+                    // let ele_size =
+                    // if let Ty::Array { ty, .. } = ty { ty.size() } else { ty.size() };
+                    return gen.gen_index(arr_loc, exprs);
+                }
+                count += 4;
+            }
+            unreachable!("type checking failed for this field access {:?}", rhs)
+        }
+        LValue::FieldAccess { lhs, rhs: inner, def: inner_def, field_idx } => {
+            let mut count = 0;
+            for f in &def.fields {
+                if Some(f.ident) == lhs.as_ident() {
+                    return construct_field_offset_lvalue(
+                        gen, inner, // offset - count,
+                        lhs_reg, inner_def,
+                    );
+                }
+                count += 4;
+            }
+            unreachable!("type checking failed for this field access {:?}", rhs)
+        }
+        _ => unreachable!("not a valid struct field accessor"),
     }
 }

@@ -22,6 +22,7 @@ pub enum Operation {
     ImmCall(Ident),
     ArrayInit(u64),
     Load(Reg),
+    Store(Reg),
     FramePointer,
 }
 
