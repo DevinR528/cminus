@@ -1,8 +1,7 @@
 linked fn print<T>(_: T);
-linked fn scan<T>(_: T);
+linked fn scan<T>(_: *T);
 
 fn gcd(a: int, b: int): int {
-    print(a);
     if (b == 0) {
         return a;
     } else {

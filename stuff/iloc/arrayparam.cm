@@ -22,8 +22,8 @@ fn writearray(z: [10; int]) {
     print(z[9]);
 }
 
-fn inc(a: int) {
-    a += 1;
+fn inc(a: *int) {
+    *a += 1;
 }
 
 fn main() {
@@ -32,8 +32,8 @@ fn main() {
     writearray(a);
     let i = 0;
     while (i <= 9) {
-        a[i] = a[i] * i;
-        inc(a[i]);
+        a[i] = a[i] * (i + 1);
+        inc(&a[i]);
         i += 1;
     }
 

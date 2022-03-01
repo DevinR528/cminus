@@ -22,15 +22,9 @@
 // tell rust not to complain about unused anything
 #![allow(unused)]
 
-use std::{
-    alloc::System,
-    env,
-    fs::{self},
-    path::Path,
-    time::Instant,
-};
+use std::{alloc::System, env, fs, path::Path, time::Instant};
 
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgMatches, Command as App};
 
 mod alloc;
 mod ast;
@@ -52,10 +46,7 @@ use crate::{
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 /// Driver function responsible for lexing and parsing input.
-fn process_file<'a>(
-    path: &str,
-    args: &ArgMatches<'a>,
-) -> Result<(), Box<dyn std::error::Error + 'a>> {
+fn process_file<'a>(path: &str, args: &ArgMatches) -> Result<(), Box<dyn std::error::Error + 'a>> {
     let mut need_stats = args.is_present("stats");
     let verbose = if args.is_present("verbose") {
         need_stats = true;
@@ -181,40 +172,35 @@ fn main() {
         .author(clap::crate_authors!("\n"))
         .version(clap::crate_version!())
         .arg(
-            Arg::with_name("input")
+            Arg::new("input")
                 .value_name("INPUT")
                 .long("input")
-                .short("i")
-                .multiple(true)
+                .short('i')
+                .multiple_occurrences(true)
                 .help("sets the files that should be compiled"),
         )
-        .arg(Arg::with_name("stats").long("stats").short("s").help("compile with stats"))
+        .arg(Arg::new("stats").long("stats").short('s').help("compile with stats"))
         .arg(
-            Arg::with_name("verbose")
+            Arg::new("verbose")
                 .long("verbose")
-                .short("v")
+                .short('v')
                 .help("compile with verbose printing of IR"),
         )
         .arg(
-            Arg::with_name("backend")
+            Arg::new("backend")
                 .long("backend")
-                .short("b")
+                .short('b')
                 .possible_values(&["llvm", "iloc", "hasm"])
                 .default_value("hasm")
                 .help("specify the backend (llvm or hand-rolled asm)"),
         )
         .arg(
-            Arg::with_name("assemble")
+            Arg::new("assemble")
                 .long("assemble")
-                .short("a")
+                .short('a')
                 .help("enumc will produce assembly output"),
         )
-        .arg(
-            Arg::with_name("output")
-                .long("output")
-                .short("o")
-                .help("specify the assembly file name"),
-        );
+        .arg(Arg::new("output").long("output").short('o').help("specify the assembly file name"));
 
     let matches = app.get_matches();
 
