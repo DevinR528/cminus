@@ -200,7 +200,13 @@ fn main() {
                 .short('a')
                 .help("enumc will produce assembly output"),
         )
-        .arg(Arg::new("output").long("output").short('o').help("specify the assembly file name"));
+        .arg(
+            Arg::new("output")
+                .long("output")
+                .short('o')
+                .takes_value(true)
+                .help("specify the assembly file name"),
+        );
 
     let matches = app.get_matches();
 
