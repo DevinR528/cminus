@@ -1,9 +1,10 @@
 linked fn print<T>(_: T);
+linked fn flt_int(_val: float): int;
 
 fn init(a: [10; int]) {
     let i = 0; let j = 10;
     while (i < 10) {
-        a[i] = j;
+        a[i] = (i * flt_int(0.01)) + j;
         i += 1;
         j += 1;
     }

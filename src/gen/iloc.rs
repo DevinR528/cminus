@@ -506,16 +506,32 @@ impl<'ctx> IlocGen<'ctx> {
             Expr::Parens(expr) => self.gen_expression(expr),
             Expr::Call { path, args, type_args, def } => {
                 let name = path.to_string();
-                let args = args.iter().map(|a| self.gen_expression(a)).collect();
+                let arg_regs: Vec<_> = args.iter().map(|a| self.gen_expression(a)).collect();
 
-                if matches!(def.ret, Ty::Void) {
-                    self.iloc_buf.push(Instruction::Call { name, args });
+                if name == "flt_int" && !matches!(def.kind, FuncKind::Normal | FuncKind::Pointer) {
+                    assert!(args.len() == 1);
+                    assert!(args[0].type_of() == Ty::Float);
+                    let arg = arg_regs[0];
+                    let dst = self.expr_to_reg(Operation::CvtInt(arg));
+                    self.iloc_buf.push(Instruction::F2I { src: arg, dst });
+                    dst
+                } else if name == "int_flt"
+                    && !matches!(def.kind, FuncKind::Normal | FuncKind::Pointer)
+                {
+                    assert!(args.len() == 1);
+                    assert!(args[0].type_of() == Ty::Int);
+                    let arg = arg_regs[0];
+                    let dst = self.expr_to_reg(Operation::CvtFloat(arg));
+                    self.iloc_buf.push(Instruction::I2F { src: arg, dst });
+                    dst
+                } else if matches!(def.ret, Ty::Void) {
+                    self.iloc_buf.push(Instruction::Call { name, args: arg_regs });
                     // A fake register, this should NEVER be used by the caller since this
                     // returns nothing
                     Reg::Var(0)
                 } else {
                     let ret = self.expr_to_reg(Operation::ImmCall(path.local_ident()));
-                    self.iloc_buf.push(Instruction::ImmCall { name, args, ret });
+                    self.iloc_buf.push(Instruction::ImmCall { name, args: arg_regs, ret });
                     ret
                 }
             }
@@ -667,7 +683,7 @@ impl<'ctx> IlocGen<'ctx> {
             }),
             LValue::FieldAccess { lhs, def, rhs, field_idx } => {
                 let lhs_reg = self.ident_to_reg(lhs.as_ident().unwrap());
-                let access = construct_field_offset_lvalue(self, &*rhs, lhs_reg, &def);
+                let access = construct_field_offset_lvalue(self, &*rhs, lhs_reg, def);
                 todo!()
             }
         }
@@ -973,7 +989,7 @@ fn construct_field_offset_lvalue<'a>(
                     ]);
                     return dst;
                 }
-                // TODO: make this no just 4...
+                // TODO: make this not just 4...
                 // Do this after so first field is the 0th offset
                 count += 4;
             }

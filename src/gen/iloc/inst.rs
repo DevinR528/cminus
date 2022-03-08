@@ -23,6 +23,8 @@ pub enum Operation {
     ArrayInit(u64),
     Load(Reg),
     Store(Reg),
+    CvtInt(Reg),
+    CvtFloat(Reg),
     FramePointer,
 }
 
