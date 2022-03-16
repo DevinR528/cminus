@@ -537,14 +537,30 @@ impl<'ctx> IlocGen<'ctx> {
             }
             Expr::TraitMeth { trait_, args, type_args, def } => todo!(),
             Expr::FieldAccess { lhs, def, rhs } => todo!(),
-            Expr::StructInit { path, fields, def } => todo!(),
+            Expr::StructInit { path, fields, def } => {
+                fn flatten_struct_init(f: &FieldInit) -> Vec<&Expr> {
+                    match &f.init {
+                        Expr::StructInit { path, fields, def } => {
+                            fields.iter().flat_map(flatten_struct_init).collect::<Vec<_>>()
+                        }
+                        Expr::EnumInit { path, variant, items, def } => {
+                            items.iter().collect::<Vec<_>>()
+                        }
+                        Expr::ArrayInit { items, ty } => items.iter().collect::<Vec<_>>(),
+                        _ => vec![&f.init],
+                    }
+                }
+
+                let start = self.stack_size;
+                let struct_reg = self.expr_to_reg(Operation::StructInit(start as u64));
+
+                for expr in fields.iter().flat_map(flatten_struct_init) {}
+            }
             Expr::EnumInit { path, variant, items, def } => todo!(),
             Expr::ArrayInit { items, ty } => {
                 let start = self.stack_size;
 
-                let arr_reg = self.expr_to_reg(Operation::ArrayInit(hash_any(
-                    &items.iter().map(|e| format!("{:?}", e)).collect::<Vec<_>>(),
-                )));
+                let arr_reg = self.expr_to_reg(Operation::ArrayInit(start as u64));
                 let stack_pad = self.value_to_reg(Val::Int(-4));
                 let size_of = self.value_to_reg(Val::Int(4));
                 let mut arr_start = self.expr_to_reg(Operation::FramePointer);

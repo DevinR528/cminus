@@ -1,0 +1,10 @@
+linked fn print<T>(_val: T);
+
+struct foo {
+    x: int, y: int
+}
+
+fn main() {
+    let a = foo { x: 0, y: 1 };
+    print(a.x); print(a.y);
+}

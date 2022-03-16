@@ -21,6 +21,7 @@ pub enum Operation {
     Call(Ident),
     ImmCall(Ident),
     ArrayInit(u64),
+    StructInit(u64),
     Load(Reg),
     Store(Reg),
     CvtInt(Reg),
