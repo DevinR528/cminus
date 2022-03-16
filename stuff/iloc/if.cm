@@ -1,0 +1,14 @@
+linked fn print<T>(_: T);
+
+fn main() {
+    let z = 0;
+    let x = 5;
+    let y = 3;
+    if (x > 3) {
+        z = x + y;
+    } else {
+        z = x + y;
+    }
+    z = x + y;
+    print(z);
+}

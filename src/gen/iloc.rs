@@ -796,21 +796,28 @@ impl<'ctx> IlocGen<'ctx> {
             Stmt::TraitMeth { expr, def } => todo!(),
             Stmt::If { cond, blk, els } => {
                 let cond = self.gen_expression(cond);
+                let else_label = format!(".L{}:", self.next_label());
                 let after_blk = format!(".L{}:", self.next_label());
 
                 if let Some(els) = els {
                     self.iloc_buf
-                        .push(Instruction::CbrT { cond, loc: Loc(after_blk.replace(':', "")) });
+                        .push(Instruction::CbrT { cond, loc: Loc(else_label.replace(':', "")) });
+
                     for stmt in &blk.stmts {
                         self.gen_statement(stmt)
                     }
-                    self.iloc_buf.push(Instruction::Label(after_blk));
+                    self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(":", ""))));
+
+                    self.iloc_buf.push(Instruction::Label(else_label));
+
                     for stmt in &els.stmts {
                         self.gen_statement(stmt)
                     }
+                    self.iloc_buf.push(Instruction::Label(after_blk));
                 } else {
                     self.iloc_buf
                         .push(Instruction::CbrT { cond, loc: Loc(after_blk.replace(':', "")) });
+
                     for stmt in &blk.stmts {
                         self.gen_statement(stmt)
                     }
