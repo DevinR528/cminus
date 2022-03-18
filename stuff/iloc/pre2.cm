@@ -1,0 +1,17 @@
+linked fn print<T>(_: T);
+linked fn scan<T>(_: *T);
+
+fn main() {
+    let z = 0;
+    let x = 0;
+    scan(&x);
+    let y = 3;
+    if (x > 3) {
+        z = x + y;
+    } else {
+        z = x + y;
+        print("howdy");
+    }
+
+    print(z);
+}

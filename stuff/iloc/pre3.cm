@@ -1,0 +1,13 @@
+linked fn print<T>(_: T);
+
+fn pre_example(x: int, y: int, z: int) {
+    while (x < 5) {
+        z = y + 4;
+        x += 1;
+    }
+    print(z);
+}
+
+fn main() {
+    pre_example(3, 2, 0);
+}

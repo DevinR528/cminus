@@ -9,7 +9,6 @@
     panic_info_message,
     path_file_prefix,
     io_error_more,
-    const_fn_trait_bound,
     hash_drain_filter,
     ptr_internals,
     vec_into_raw_parts,

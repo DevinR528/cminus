@@ -555,6 +555,7 @@ impl<'ctx> IlocGen<'ctx> {
                 let struct_reg = self.expr_to_reg(Operation::StructInit(start as u64));
 
                 for expr in fields.iter().flat_map(flatten_struct_init) {}
+                todo!()
             }
             Expr::EnumInit { path, variant, items, def } => todo!(),
             Expr::ArrayInit { items, ty } => {
