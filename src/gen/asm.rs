@@ -59,6 +59,7 @@ crate struct CodeGen<'ctx> {
     used_float_regs: HashSet<FloatRegister>,
     current_stack: usize,
     total_stack: usize,
+    current_fn_name: Option<Ident>,
     current_fn_params: HashSet<Ident>,
     vars: HashMap<Ident, Location>,
     path: &'ctx Path,
@@ -73,6 +74,7 @@ impl<'ctx> CodeGen<'ctx> {
             used_float_regs: HashSet::default(),
             current_stack: 0,
             total_stack: 0,
+            current_fn_name: None,
             current_fn_params: HashSet::default(),
             vars: HashMap::default(),
             path,
@@ -1911,6 +1913,10 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
             }
             Stmt::Exit => {
+                // HACK: so we exit cleanly instead of just crashing cus that's no fun
+                if self.current_fn_name.unwrap().name() == "main" {
+                    self.asm_buf.push(Instruction::SizedMov { src: ZERO, dst: RAX, size: 8 });
+                }
                 self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
             }
             Stmt::Block(_) => todo!(),
@@ -2166,6 +2172,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
             Instruction::Mov { src: RSP, dst: RBP, comment: "" },
         ]);
 
+        self.current_fn_name = Some(func.ident);
         self.current_fn_params.clear();
         self.current_fn_params = func.params.iter().map(|p| p.ident).collect();
 
@@ -2184,12 +2191,6 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
         self.total_stack = 0;
         self.clear_regs_except(None, CanClearRegs::Yes);
         self.clear_float_regs_except(None, CanClearRegs::Yes);
-
-        // HACK: so when other programs run our programs they don't non-zero exit
-        if func.ident.name() == "main" {
-            self.asm_buf.push(Instruction::SizedMov { src: ZERO, dst: RAX, size: 8 });
-        }
-        self.asm_buf.extend_from_slice(&[Instruction::Leave, Instruction::Ret]);
     }
 }
 

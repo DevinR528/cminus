@@ -165,7 +165,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Array { ident, exprs } => {
-                if let arr @ Some(ty @ Ty::Array { .. }) = fields
+                if let arr @ Some(ty @ Ty::Array { ty: inner_ty, .. }) = fields
                     .iter()
                     .find_map(|f| if f.ident == *ident { Some(&f.ty.get().val) } else { None })
                 {
@@ -179,9 +179,14 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                         self.tcxt.errors.poisoned(true);
 
                     } else {
-                        self.tcxt.expr_ty.insert(rhs, ty.clone());
+                        // We need to save the types of the index values
+                        for expr in exprs {
+                            self.visit_expr(expr);
+                        }
+
+                        self.tcxt.expr_ty.insert(rhs, inner_ty.val.clone());
                     // We are at the end of the field access expression so, the whole expr resolves to this
-                        self.tcxt.expr_ty.insert(parent, ty.clone());
+                        self.tcxt.expr_ty.insert(parent, inner_ty.val.clone());
                     }
                 } else {
                     self.tcxt.errors.push_error(Error::error_with_span(

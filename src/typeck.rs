@@ -664,9 +664,14 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 // Add explicit return to void functions with no last return stmt
                 if matches!(func.ret.get().val, Ty::Void)
                     && !matches!(func.stmts.stmts.slice().last().map(|s| &s.val), Some(Stmt::Exit))
+                    // Don't add a dummy Exit to functions with no block
+                    && !matches!(func.kind, FuncKind::Linked | FuncKind::Extern)
                 {
                     unsafe {
-                        func.stmts.stmts.push_shared(Stmt::Exit.into_spanned(DUMMY));
+                        // TODO: HACK: to give the Exit a span...
+                        func.stmts.stmts.push_shared(
+                            Stmt::Exit.into_spanned(func.stmts.stmts.slice().last().unwrap().span),
+                        );
                     }
                 }
                 // Finally add this to the global namespace since it is a usable identifier now

@@ -23,9 +23,13 @@ pub enum Operation {
     ArrayInit(u64),
     StructInit(u64),
     Load(Reg),
+    ImmLoad(Ident),
     Store(Reg),
     CvtInt(Reg),
     CvtFloat(Reg),
+    Malloc(Reg),
+    Realloc(Reg, Reg),
+    Free(Reg),
     FramePointer,
 }
 
@@ -233,6 +237,18 @@ pub enum Instruction {
     IWrite(Reg),
     /// `fread %r` where r is a null terminated string source.
     SWrite(Reg),
+    /// `putchar %r` where r is a int but written as ascii.
+    PutChar(Reg),
+
+    // Malloc - Free - Realloc
+    /// `malloc %r => %r` where arg `r` is an int for the size and return `r` is the
+    /// register that hold the address.
+    Malloc { size: Reg, dst: Reg },
+    /// `free %r` where `r` is the register to be freed, must be valid.
+    Free(Reg),
+    /// `realloc %r, %r => %r` where first `r` is the old address, second `r` is an int for the size
+    /// and `r` is the register that hold the address.
+    Realloc { src: Reg, size: Reg, dst: Reg },
 
     // Stack operations
     /// `push`
@@ -246,6 +262,7 @@ pub enum Instruction {
     Text,
     Frame { name: String, size: usize, params: Vec<Reg> },
     Global { name: String, size: usize, align: usize },
+    Array { name: String, size: usize, content: Vec<Val> },
     String { name: String, content: String },
     Float { name: String, content: f64 },
 
@@ -255,6 +272,7 @@ pub enum Instruction {
 
 #[derive(Clone, Debug)]
 pub enum Global {
+    Array { name: String, content: Vec<Val> },
     Text { name: String, content: String },
     Int { name: String, content: i64 },
     Float { name: String, content: f64 },
@@ -264,6 +282,7 @@ impl Global {
     crate fn name(&self) -> &str {
         match self {
             Global::Text { name, .. } => name,
+            Global::Array { name, .. } => name,
             Global::Int { name, .. } => name,
             Global::Float { name, .. } => name,
             Global::Char { name, .. } => name,
@@ -341,6 +360,10 @@ impl Instruction {
             Instruction::FWrite(_) => "fwrite",
             Instruction::IWrite(_) => "iwrite",
             Instruction::SWrite(_) => "swrite",
+            Instruction::PutChar(_) => "putchar",
+            Instruction::Free(_) => "free",
+            Instruction::Malloc { .. } => "malloc",
+            Instruction::Realloc { .. } => "realloc",
             Instruction::Push(_) => "push",
             Instruction::PushR(_) => "pushr",
             Instruction::Pop => "pop",
@@ -348,6 +371,7 @@ impl Instruction {
             Instruction::Text => "text",
             Instruction::Frame { .. } => "frame",
             Instruction::Global { .. } => "global",
+            Instruction::Array { .. } => "array",
             Instruction::String { .. } => "string",
             Instruction::Float { .. } => "float",
             Instruction::Label(_) => "label",
@@ -474,7 +498,16 @@ impl fmt::Display for Instruction {
             | Instruction::FWrite(reg)
             | Instruction::IWrite(reg)
             | Instruction::SWrite(reg)
+            | Instruction::PutChar(reg)
+            | Instruction::Free(reg)
             | Instruction::PushR(reg) => write!(f, "    {} {}", self.inst_name(), reg),
+
+            Instruction::Malloc { size, dst } => {
+                write!(f, "    {} {} => {}", self.inst_name(), size, dst)
+            }
+            Instruction::Realloc { src, size, dst } => {
+                write!(f, "    {} {}, {} => {}", self.inst_name(), src, size, dst)
+            }
 
             Instruction::Push(val) => write!(f, "    {} {}", self.inst_name(), val),
             Instruction::Frame { name, size, params } => {
@@ -490,6 +523,11 @@ impl fmt::Display for Instruction {
             }
             Instruction::Global { name, size, align } => {
                 write!(f, "    .{} {}, {}, {}", self.inst_name(), name, size, align)
+            }
+            Instruction::Array { name, size, content } => {
+                write!(f, "    .{} {}, {}, [", self.inst_name(), name, size)?;
+                write!(f, "{}", content.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))?;
+                writeln!(f, "]")
             }
             Instruction::String { name, content } => {
                 write!(f, "    .{} {}, {}", self.inst_name(), name, content)
