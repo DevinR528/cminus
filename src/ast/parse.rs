@@ -1250,7 +1250,7 @@ impl<'a> AstBuilder<'a> {
             // comma: argument lists, array elements, any initializer stuff (structs, enums)
             // semi: we need to recurse out of our expression tree before we eat this token
             TokenKind::Comma | TokenKind::Semi => None,
-            t => todo!("Error found {:?} {}", self.input_curr(), &self.call_stack.join("\n")),
+            t => return Err(ParseError::Error("unexpected token found", self.curr_span())),
         })
     }
 
@@ -1841,25 +1841,25 @@ impl<'a> AstBuilder<'a> {
                     LiteralKind::Int { base, empty_int } => Val::Int(match base {
                         Base::Binary => isize::from_str_radix(
                             text.strip_prefix("0b")
-                                .ok_or(ParseError::InvalidIntLiteral(self.curr_span()))?,
+                                .ok_or_else(|| ParseError::InvalidIntLiteral(self.curr_span()))?,
                             2,
                         )
                         .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
                         Base::Hexadecimal => isize::from_str_radix(
                             text.strip_prefix("0x")
-                                .ok_or(ParseError::InvalidIntLiteral(self.curr_span()))?,
+                                .ok_or_else(|| ParseError::InvalidIntLiteral(self.curr_span()))?,
                             16,
                         )
                         .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
                         Base::Octal => isize::from_str_radix(
                             text.strip_prefix("0o")
-                                .ok_or(ParseError::InvalidIntLiteral(self.curr_span()))?,
+                                .ok_or_else(|| ParseError::InvalidIntLiteral(self.curr_span()))?,
                             8,
                         )
                         .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
                         Base::Decimal => {
                             neg_ident
-                                * isize::from_str_radix(text, 10)
+                                * text.parse::<isize>()
                                     .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?
                         }
                     }),
@@ -1887,7 +1887,7 @@ impl<'a> AstBuilder<'a> {
                         text.remove(0);
                         text.pop();
 
-                        Val::Str(Ident::new(self.curr_span(), &text))
+                        Val::Str(text.len(), Ident::new(self.curr_span(), &text))
                     }
                     LiteralKind::Byte { terminated } => {
                         let end = text.len() - 1;
