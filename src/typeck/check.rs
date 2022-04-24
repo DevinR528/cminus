@@ -961,6 +961,6 @@ fn lit_to_type(lit: &Val) -> Ty {
         Val::Int(_) => Ty::Int,
         Val::Char(_) => Ty::Char,
         Val::Bool(_) => Ty::Bool,
-        Val::Str(s) => Ty::ConstStr(s.name().len()),
+        Val::Str(size, s) => Ty::ConstStr(*size),
     }
 }

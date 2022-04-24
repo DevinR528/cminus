@@ -237,7 +237,7 @@ impl<'ctx> CodeGen<'ctx> {
                         Val::Int(v) => writeln!(buf, "    .quad {}", v),
                         Val::Char(v) => writeln!(buf, "    .quad {}", (*v) as u8),
                         Val::Bool(v) => writeln!(buf, "    .quad {}", if *v { 1 } else { 0 }),
-                        Val::Str(v) => writeln!(buf, "    .string {:?}", v),
+                        Val::Str(_, v) => writeln!(buf, "    .string {:?}", v),
                     };
                 }
                 writeln!(buf, ".text");
@@ -1503,7 +1503,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expr::Value(val) => match val {
                 Val::Float(_) | Val::Int(_) | Val::Bool(_) => Location::Const { val: val.clone() },
                 Val::Char(c) => Location::Const { val: Val::Int(*c as isize) },
-                Val::Str(s) => {
+                Val::Str(_, s) => {
                     let string = s.name();
                     let cleaned = StripEscape::new(string).into_iter().collect();
                     let name = format!(".Sstring_{}", s.token());
@@ -2076,7 +2076,7 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                     var.ident,
                     Global::Text {
                         name: name.clone(),
-                        content: if let Expr::Value(Val::Str(s)) = var.init {
+                        content: if let Expr::Value(Val::Str(_, s)) = var.init {
                             s.name().to_owned()
                         } else {
                             unreachable!("non const string value used in constant")

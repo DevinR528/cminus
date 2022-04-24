@@ -124,7 +124,7 @@ impl Val {
             (Val::Int(i1), Val::Int(i2)) => int_op(*i1, *i2, op),
             (Val::Char(c1), Val::Char(c2)) => char_op(*c1, *c2, op),
             (Val::Bool(b1), Val::Bool(b2)) => bool_op(*b1, *b2, op),
-            (Val::Str(s1), Val::Str(s2)) => str_op(s1, s2, op),
+            (Val::Str(_, s1), Val::Str(_, s2)) => str_op(s1, s2, op),
             _ => todo!("coercion and const fold"),
         }
     }

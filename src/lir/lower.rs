@@ -17,7 +17,7 @@ pub enum Val {
     Int(isize),
     Char(char),
     Bool(bool),
-    Str(Ident),
+    Str(usize, Ident),
 }
 
 impl Val {
@@ -27,7 +27,7 @@ impl Val {
             ty::Val::Int(v) => Val::Int(v),
             ty::Val::Char(v) => Val::Char(v),
             ty::Val::Bool(v) => Val::Bool(v),
-            ty::Val::Str(v) => Val::Str(v),
+            ty::Val::Str(size, v) => Val::Str(size, v),
         }
     }
 
@@ -37,7 +37,7 @@ impl Val {
             Val::Int(_) => Ty::Int,
             Val::Char(_) => Ty::Char,
             Val::Bool(_) => Ty::Bool,
-            Val::Str(s) => Ty::ConstStr(s.name().len()),
+            Val::Str(size, s) => Ty::ConstStr(*size),
         }
     }
 
@@ -48,7 +48,7 @@ impl Val {
             Val::Int(_) => 8,
             Val::Char(_) => 4,
             Val::Bool(_) => 1,
-            Val::Str(_) => 8,
+            Val::Str(_, _) => 8,
         }
     }
 }
@@ -60,7 +60,7 @@ impl fmt::Display for Val {
             Val::Int(v) => v.fmt(f),
             Val::Char(v) => v.fmt(f),
             Val::Bool(v) => v.fmt(f),
-            Val::Str(v) => v.fmt(f),
+            Val::Str(size, v) => v.fmt(f),
         }
     }
 }
@@ -74,8 +74,8 @@ impl PartialEq for Val {
             (Val::Int(_), _) => false,
             (Val::Char(a), Val::Char(b)) => a.eq(b),
             (Val::Char(_), _) => false,
-            (Val::Str(a), Val::Str(b)) => a.eq(b),
-            (Val::Str(_), _) => false,
+            (Val::Str(_, a), Val::Str(_, b)) => a.eq(b),
+            (Val::Str(..), _) => false,
             (Val::Bool(a), Val::Bool(b)) => a.eq(b),
             (Val::Bool(_), _) => false,
         }
@@ -89,7 +89,7 @@ impl hash::Hash for Val {
             Self::Int(int) => int.hash(state),
             Self::Float(float) => float.to_bits().hash(state),
             Self::Char(s) => s.hash(state),
-            Self::Str(s) => s.hash(state),
+            Self::Str(_, s) => s.hash(state),
             Self::Bool(b) => b.hash(state),
         }
     }
@@ -541,12 +541,19 @@ impl Expr {
 
 /// Remove any amount of pointer indirection or follows.
 fn deref_field(ty: &Ty, left: Option<&LValue>) -> Struct {
+    println!("{:?} {:?}", ty, left);
     let mut peel = ty;
     while let Ty::Ptr(t) | Ty::Ref(t) = peel {
         peel = t;
     }
     if let Ty::Struct { def, .. } = peel {
         def.clone()
+    } else if let Ty::ConstStr(..) = peel {
+        Struct {
+            ident: Ident::new(DUMMY, "__const_str"),
+            fields: vec![Field { ident: Ident::new(DUMMY, "len"), ty: Ty::Int }],
+            generics: vec![],
+        }
     } else {
         unreachable!("lhs of field access must be struct {:?}", left)
     }

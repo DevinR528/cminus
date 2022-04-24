@@ -387,6 +387,38 @@ impl<'ctx> IlocGen<'ctx> {
         }
     }
 
+    fn gen_str_index(&mut self, arr_reg: Reg, exprs: &[Expr]) -> Reg {
+        let stack_pad = self.value_to_reg(Val::Int(-4));
+        let size_of = self.value_to_reg(Val::Int(4));
+        let arr_start = self.expr_to_reg(Operation::FramePointer);
+
+        if let [expr] = exprs {
+            let idx = self.gen_expression(expr);
+            let calc_idx = self.expr_to_reg(Operation::BinOp(BinOp::Mul, idx, size_of));
+            let calc_arr_start =
+                self.expr_to_reg(Operation::BinOp(BinOp::Add, arr_start, stack_pad));
+            let arr_slot = self.expr_to_reg(Operation::BinOp(BinOp::Sub, calc_arr_start, calc_idx));
+
+            self.iloc_buf.extend([
+                // Move array start address to register
+                Instruction::I2I { src: arr_reg, dst: arr_start },
+                // Load the number of bytes on the stack for no reason
+                Instruction::ImmLoad { src: inst::Val::Integer(-4), dst: stack_pad },
+                // Add -4 to make up for stack padding
+                Instruction::Add { src_a: arr_start, src_b: stack_pad, dst: calc_arr_start },
+                // Size of type
+                Instruction::ImmLoad { src: inst::Val::Integer(4), dst: size_of },
+                // index * size of type
+                Instruction::Mult { src_a: idx, src_b: size_of, dst: calc_idx },
+                // array start - (index * size_of)
+                Instruction::Sub { src_a: calc_arr_start, src_b: calc_idx, dst: arr_slot },
+            ]);
+            arr_slot
+        } else {
+            todo!("No multi dim arrays yet...")
+        }
+    }
+
     fn gen_index(&mut self, arr_reg: Reg, exprs: &[Expr]) -> Reg {
         let stack_pad = self.value_to_reg(Val::Int(-4));
         let size_of = self.value_to_reg(Val::Int(4));
@@ -436,7 +468,7 @@ impl<'ctx> IlocGen<'ctx> {
                         if let Some(Global::Text { name, .. }) = self.globals.get(ident).cloned() {
                             let tmp = self.expr_to_reg(Operation::ImmLoad(*ident));
                             self.iloc_buf.push(Instruction::ImmLoad {
-                                src: inst::Val::Location(name.to_string()),
+                                src: inst::Val::Location(name),
                                 dst: tmp,
                             });
                             tmp
@@ -452,10 +484,16 @@ impl<'ctx> IlocGen<'ctx> {
                 }
             }
             Expr::Deref { indir, expr, ty } => {
-                let val = self.gen_expression(expr);
-                let dst = self.expr_to_reg(Operation::Load(val));
-                self.iloc_buf.extend([Instruction::Load { src: val, dst }]);
-                dst
+                let mut loc = self.gen_expression(expr);
+                // We subtract 1 so that we leave the address and not the value
+                for _ in 0..*indir {
+                    let mut l_dst = self.expr_to_reg(Operation::Load(loc));
+                    self.iloc_buf.push(Instruction::Load { src: loc, dst: l_dst });
+
+                    // We followed the address, if the memory is another address we load from there
+                    loc = l_dst;
+                }
+                loc
             }
             Expr::AddrOf(expr) => {
                 let start = *self
@@ -488,15 +526,17 @@ impl<'ctx> IlocGen<'ctx> {
                 let reg = if let Some(Global::Array { name, .. }) = self.globals.get(ident).cloned()
                 {
                     let tmp = self.expr_to_reg(Operation::ImmLoad(*ident));
-                    self.iloc_buf.push(Instruction::ImmLoad {
-                        src: inst::Val::Location(name.to_string()),
-                        dst: tmp,
-                    });
+                    self.iloc_buf
+                        .push(Instruction::ImmLoad { src: inst::Val::Location(name), dst: tmp });
                     tmp
                 } else {
                     self.ident_to_reg(*ident)
                 };
-                self.gen_index(reg, exprs)
+                if matches!(ty, Ty::ConstStr(size)) {
+                    self.gen_str_index(reg, exprs)
+                } else {
+                    self.gen_index(reg, exprs)
+                }
             }
             Expr::Urnary { op, expr, ty } => {
                 let ex = self.gen_expression(expr);
@@ -589,10 +629,9 @@ impl<'ctx> IlocGen<'ctx> {
                 let start = self.gen_expression(lhs);
                 let access = construct_field_offset(self, rhs, 0, start, def);
                 match rhs.type_of() {
-                    Ty::Struct { .. }
-                    | Ty::Enum { .. }
-                    | Ty::Func { .. }
-                    | Ty::Ref(_) => todo!("{:?}", rhs),
+                    Ty::Struct { .. } | Ty::Enum { .. } | Ty::Func { .. } | Ty::Ref(_) => {
+                        todo!("{:?}", rhs)
+                    }
                     Ty::Ptr(inner) => {
                         // Just return the pointer to the thing
                         access
@@ -788,7 +827,7 @@ impl<'ctx> IlocGen<'ctx> {
                     });
                     tmp
                 }
-                Val::Str(s) => {
+                Val::Str(size, s) => {
                     let (name, tmp) = self.global_to_reg(
                         val.clone(),
                         Ident::new(DUMMY, &format!(".str_const_{}", self.globals.len())),
@@ -814,16 +853,17 @@ impl<'ctx> IlocGen<'ctx> {
             LValue::Ident { ident, ty } => self.ident_to_reg(*ident),
             LValue::Deref { indir, expr, ty } => {
                 let mut loc = self.get_pointer(expr);
-                let mut l_dst = self.expr_to_reg(Operation::Load(loc));
 
-                for _ in 0..*indir {
+                // We subtract 1 so that we leave the address and not the value
+                for _ in 0..(indir - 1) {
+                    let mut l_dst = self.expr_to_reg(Operation::Load(loc));
                     self.iloc_buf.push(Instruction::Load { src: loc, dst: l_dst });
 
                     // We followed the address, if the memory is another address we load from there
                     loc = l_dst;
-                    l_dst = self.expr_to_reg(Operation::Load(loc));
+                    // l_dst = self.expr_to_reg(Operation::Load(loc));
                 }
-                l_dst
+                loc
             }
             LValue::Array { ident, exprs, ty } => self.gen_expression(&Expr::Array {
                 ident: *ident,
@@ -858,6 +898,10 @@ impl<'ctx> IlocGen<'ctx> {
                         self.stack_size += (4 * def.fields.len() as isize);
                     }
                     Ty::Int | Ty::Float if *is_let => {
+                        self.ident_address.insert(lval.as_ident().unwrap(), self.stack_size);
+                        self.stack_size += 4;
+                    }
+                    Ty::Ptr(..) => {
                         self.ident_address.insert(lval.as_ident().unwrap(), self.stack_size);
                         self.stack_size += 4;
                     }
@@ -917,12 +961,11 @@ impl<'ctx> IlocGen<'ctx> {
                     assert!(expr.args.len() == 1);
                     let arg = self.gen_expression(&expr.args[0]);
                     match expr.args[0].type_of() {
-                        Ty::Int | Ty::Ptr(..) | Ty::Ref(..) => {
-                            self.iloc_buf.push(Instruction::IWrite(arg))
-                        }
+                        Ty::Int => self.iloc_buf.push(Instruction::IWrite(arg)),
+                        Ty::Ptr(..) | Ty::Ref(..) => self.iloc_buf.push(Instruction::IWrite(arg)),
                         Ty::Float => self.iloc_buf.push(Instruction::FWrite(arg)),
                         Ty::ConstStr(..) => self.iloc_buf.push(Instruction::SWrite(arg)),
-                        Ty::Array { ty, .. } if matches!(&*ty, Ty::Int) => {
+                        Ty::Array { ty, .. } => {
                             let dst = self.expr_to_reg(Operation::Load(arg));
                             self.iloc_buf.extend([
                                 Instruction::Load { src: arg, dst },
@@ -988,7 +1031,7 @@ impl<'ctx> IlocGen<'ctx> {
                         self.gen_statement(stmt)
                     }
                     // Don't fallthrough to the else case, jump to the merge after all else/elseif
-                    self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(":", ""))));
+                    self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(':', ""))));
 
                     // Jump to the else block which doubles as the start of our elseif's
                     self.iloc_buf.push(Instruction::Label(else_label));
@@ -1005,7 +1048,7 @@ impl<'ctx> IlocGen<'ctx> {
                         for stmt in stmts {
                             self.gen_statement(stmt)
                         }
-                        self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(":", ""))));
+                        self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(':', ""))));
                         self.iloc_buf.push(Instruction::Label(elseif_label));
                     }
 
@@ -1101,7 +1144,7 @@ impl<'ast> Visit<'ast> for IlocGen<'ast> {
                     var.ident,
                     Global::Text {
                         name: name.clone(),
-                        content: if let Expr::Value(Val::Str(s)) = var.init {
+                        content: if let Expr::Value(Val::Str(size, s)) = var.init {
                             s.name().to_owned()
                         } else {
                             unreachable!("non const string value used in constant")
@@ -1208,7 +1251,15 @@ fn construct_field_offset<'a>(
         Expr::Ident { ident, ty } => {
             // FIXME: this is crap
             // Start with the -4 of the stack offset so we don't need to do the instruction
-            let mut count = 4;
+            let mut count = if matches!(
+                def,
+                Struct { ident, fields, .. } if ident.name() == "__const_str"
+                    && fields.len() == 1
+            ) {
+                0
+            } else {
+                4
+            };
             for f in &def.fields {
                 // println!("{} = {} - {}", ident, offset, count);
                 if f.ident == *ident {
@@ -1255,7 +1306,15 @@ fn construct_field_offset<'a>(
         Expr::FieldAccess { lhs, rhs: inner, def: inner_def } => {
             // FIXME: this is crap
             // Start with the -4 of the stack offset so we don't need to do the instruction
-            let mut count = 4;
+            let mut count = if matches!(
+                def,
+                Struct { ident, fields, .. } if ident.name() == "__const_str"
+                    && fields.len() == 1
+            ) {
+                0
+            } else {
+                4
+            };
             for f in &def.fields {
                 if f.ident == lhs.as_ident() {
                     return construct_field_offset(gen, inner, offset + count, start, inner_def);

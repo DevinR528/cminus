@@ -64,7 +64,7 @@ use crate::{
         generic::TyRegion,
         infer::TypeInfer,
     },
-    visit::{Visit, VisitMut},
+    visit::{Visit, VisitMut}, rawptr,
 };
 
 crate mod check;
@@ -188,14 +188,32 @@ crate struct TyCheckRes<'ast, 'input> {
     crate imported_items: Vec<&'static Declaration>,
 }
 
+lazy_static::lazy_static! {
+    static ref CONST_STR: Struct = {
+        let string = Ident::new(DUMMY, "__const_str");
+        Struct {
+            ident: string,
+            fields: vec![Field { ident: Ident::new(DUMMY, "len"), ty: rawptr!(Ty::Int.into_spanned(DUMMY)), span: DUMMY }],
+            generics: vec![],
+            span: DUMMY
+        }
+    };
+}
+
 impl<'input> TyCheckRes<'_, 'input> {
     crate fn new(input: &'input str, name: &'input str, rcv: AstReceiver) -> Self {
+        let mut builtin_structs = HashMap::default();
+        let string = Ident::new(DUMMY, "__const_str");
+
+        builtin_structs.insert(string, &*CONST_STR);
+
         let file_id = hash_file(name);
         Self {
             file_names: HashMap::from_iter([(file_id, name)]),
             inputs: HashMap::from_iter([(file_id, input)]),
             rcv: Some(rcv),
             record_used: true,
+            name_struct: builtin_structs,
             ..Self::default()
         }
     }
@@ -942,7 +960,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self.errors.push_error(Error::error_with_span(
                                 self,
                                 var.span,
-                                &"type and expression do not agree".to_string(),
+                                "type and expression do not agree",
                             ));
                             return;
                         },
@@ -954,7 +972,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 self.errors.push_error(Error::error_with_span(
                     self,
                     var.init.span,
-                    &"invalid const expression".to_string(),
+                    "invalid const expression",
                 ));
             }
         }
@@ -1673,6 +1691,7 @@ crate fn check_field_access<'ast>(
             Ty::Enum { ident, gen } => ty.clone(),
             Ty::Ptr(inner) => field_access(&inner.val)?,
             Ty::Ref(inner) => field_access(&inner.val)?,
+            Ty::ConstStr(_) => Ty::Struct { ident: Ident::new(DUMMY, "__const_str"), gen: vec![] },
             _ => return None,
         })
     }

@@ -433,7 +433,7 @@ impl<'ctx> LLVMGen<'ctx> {
                 Val::Bool(b) => {
                     BasicValueEnum::IntValue(self.context.bool_type().const_int((*b) as u64, false))
                 }
-                Val::Str(s) => BasicValueEnum::ArrayValue(
+                Val::Str(_, s) => BasicValueEnum::ArrayValue(
                     self.context.i8_type().const_array(
                         &s.name()
                             .as_bytes()

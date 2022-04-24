@@ -138,7 +138,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         parent.span,
-                        &"[E0i] could not infer type of deref expression".to_string(),
+                        "[E0i] could not infer type of deref expression",
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
@@ -159,7 +159,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         parent.span,
-                        &"[E0i] could not infer type of deref expression".to_string(),
+                        "[E0i] could not infer type of deref expression",
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
@@ -217,7 +217,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
                         inner.span,
-                        &"[E0i] tried to access field of non struct".to_string(),
+                        "[E0i] tried to access field of non struct",
                     ));
                     self.tcxt.errors.poisoned(true);
                 }
@@ -434,6 +434,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Expr::Array { ident, exprs } => {
                 if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
+println!("{:?}", (ident, &ty));
                     for ex in exprs {
                         self.visit_expr(ex);
                     }
@@ -737,6 +738,7 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
 fn fetch_fields<'a>(lhs_ty: &Ty, span: Range, tcxt: &mut TyCheckRes<'a, '_>) -> Option<&'a Struct> {
     match lhs_ty {
         Ty::Struct { ident, gen } => tcxt.name_struct.get(ident).copied(),
+        Ty::ConstStr(size) => tcxt.name_struct.get(&Ident::new(DUMMY, "__const_str")).copied(),
         Ty::Path(path) => tcxt.name_struct.get(&path.local_ident()).copied(),
         Ty::Ptr(inner) => fetch_fields(&inner.val, span, tcxt),
         Ty::Ref(_) => todo!("{:?}", lhs_ty),
@@ -746,7 +748,7 @@ fn fetch_fields<'a>(lhs_ty: &Ty, span: Range, tcxt: &mut TyCheckRes<'a, '_>) -> 
             tcxt.errors.push_error(Error::error_with_span(
                 tcxt,
                 span,
-                &"[E0tc] invalid field accessor target".to_string(),
+                "[E0tc] invalid field accessor target",
             ));
             tcxt.errors.poisoned(true);
             None

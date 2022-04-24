@@ -1,7 +1,7 @@
 use std::{
     fmt,
     hash::{self, Hash, Hasher},
-    ops,
+    ops, mem::discriminant,
 };
 
 use crate::{
@@ -30,7 +30,7 @@ pub enum Val {
     Int(isize),
     Char(char),
     Bool(bool),
-    Str(Ident),
+    Str(usize, Ident),
 }
 
 impl Val {
@@ -40,19 +40,20 @@ impl Val {
             Val::Int(_) => Ty::Int,
             Val::Char(_) => Ty::Char,
             Val::Bool(_) => Ty::Bool,
-            Val::Str(s) => Ty::ConstStr(s.name().len()),
+            Val::Str(size, _) => Ty::ConstStr(*size),
         }
     }
 }
 
 impl hash::Hash for Val {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
+        let disc = discriminant(self);
         match self {
-            Val::Float(f) => format!("float{}", f).hash(state),
-            Val::Int(i) => format!("int{}", i).hash(state),
-            Val::Char(c) => format!("char{}", c).hash(state),
-            Val::Bool(b) => format!("bool{}", b).hash(state),
-            Val::Str(s) => format!("str{}", s).hash(state),
+            Val::Float(f) => (f.to_bits(), disc).hash(state),
+            Val::Int(i) => (i, disc).hash(state),
+            Val::Char(c) => (c, disc).hash(state),
+            Val::Bool(b) => (b, disc).hash(state),
+            Val::Str(_, s) => (s, disc).hash(state),
         }
     }
 }
@@ -66,8 +67,8 @@ impl PartialEq for Val {
             (Val::Int(_), _) => false,
             (Val::Char(a), Val::Char(b)) => a.eq(b),
             (Val::Char(_), _) => false,
-            (Val::Str(a), Val::Str(b)) => a.eq(b),
-            (Val::Str(_), _) => false,
+            (Val::Str(_, a), Val::Str(_, b)) => a.eq(b),
+            (Val::Str(..), _) => false,
             (Val::Bool(a), Val::Bool(b)) => a.eq(b),
             (Val::Bool(_), _) => false,
         }
@@ -83,7 +84,7 @@ impl fmt::Display for Value {
             Val::Int(v) => write!(f, "int {}", v),
             Val::Char(v) => write!(f, "char {}", v),
             Val::Bool(v) => write!(f, "bool {}", v),
-            Val::Str(v) => write!(f, "string '{}'", v),
+            Val::Str(_, v) => write!(f, "str '{}'", v),
         }
     }
 }
@@ -626,6 +627,10 @@ impl TypeEquality for Ty {
             }
             (Ty::Ptr(t1), Ty::Ptr(t2)) => t1.val.is_ty_eq(&t2.val),
             (Ty::Ref(t1), Ty::Ref(t2)) => t1.val.is_ty_eq(&t2.val),
+            // Make derefs follow their pointers
+            (ptr @ Ty::Ref(_), ty) | (ty, ptr @ Ty::Ref(_)) => {
+                ptr.resolve().map_or(false, |p| p.is_ty_eq(ty))
+            }
             // TODO: we don't want/need the size to be ==
             (Ty::ConstStr(..), Ty::ConstStr(..))
             | (Ty::Int, Ty::Int)
