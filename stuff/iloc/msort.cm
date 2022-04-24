@@ -1,0 +1,56 @@
+linked fn print<T>(_: T);
+
+fn msort(array: [int; 100], scratch: [int; 100], n: int): [int; 100] {
+    if (n < 2) {
+        return array;
+    } else {
+        let i = 0;
+        let j = 0;
+        let k = 0;
+        let m = n / 2;
+        let l = n - m;
+        let arr = merge_sort(array,     scratch,     m);
+        let b_arr = merge_sort(array + m, scratch + m, l);
+
+        // because `if` is not an expression and no ternary operator :(
+        let d = array;
+        if (arr == array) { d = scratch } else { d = array }
+
+        while (k < n) {
+            let ele_check = j < l && arr[i] < b_arr[j];
+            // if (i < m ? j < l ? a[i] < b[j] : 1 : 0)
+            if (i < m && j > l || ele_check) {
+                d[k] = arr[i];
+                i += 1;
+                k += 1;
+            } else {
+                d[k] = b_arr[j];
+                j += 1;
+                k += 1;
+            }
+        }
+
+        return d;
+    }
+}
+
+fn main() {
+    let a: [100; int] = [0; 100];
+    let b: [100; int] = [0; 100];
+
+    let i = 0;
+    while (i < 100) {
+        a[i] = (159 * i) % 309 + 1;
+        i += 1;
+    }
+
+    let c = merge_sort(a, b, 100);
+
+    i = 0;
+    while (i < 100) {
+        print(c[i]);
+        i += 1;
+    }
+}
+
+

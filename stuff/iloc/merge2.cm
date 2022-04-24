@@ -1,0 +1,25 @@
+linked fn print<T>(_: T);
+
+fn merge(x: int, y: int) {
+    let a = 1;
+    if (x > 3) {
+        if (y < 3) {
+            print(a);
+        } else {
+            a = 3;
+        }
+        print(a);
+    } else {
+         if (y < 3) {
+            a = 2;
+        } else {
+            a = 3;
+        }
+        print(a);
+    }
+}
+
+
+fn main() {
+    merge(4, 5);
+}

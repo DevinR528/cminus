@@ -1,0 +1,33 @@
+linked fn putchar(_: int);
+linked fn write<T>(_: T);
+
+linked fn scan(_: *int);
+
+fn printhex_recursive(x: int) {
+    let d = x % 16;
+
+    if (x >= 16) {
+        printhex_recursive(x / 16);
+    }
+
+    if (d < 10) {
+        putchar(48 + d);
+    } else {
+        putchar(65 + (d - 10));
+    }
+}
+
+fn printhex(x: int) {
+    if (x > 0) {
+        printhex_recursive(x);
+    } else {
+        putchar(48);
+    }
+}
+
+fn main() {
+    let x = 0;
+    scan(&x);
+    printhex(x);
+    write("\n");
+}

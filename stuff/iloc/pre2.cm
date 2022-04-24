@@ -7,7 +7,9 @@ fn main() {
     scan(&x);
     let y = 3;
     if (x > 3) {
+        let k = x + x;
         z = x + y;
+        print(k);
     } else {
         z = x + y;
         print("howdy");

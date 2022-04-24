@@ -1,4 +1,6 @@
-linked fn print<T>(_: T);
+linked fn write<T>(_: T);
+
+// const mut A: [21; int] = [0; 21];
 
 fn main() {
     let z = 0;
@@ -10,5 +12,7 @@ fn main() {
         z = x + y;
     }
     z = x + y;
-    print(z);
+    write(z);
+
+    write("don't me");
 }

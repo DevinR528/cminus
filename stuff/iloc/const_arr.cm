@@ -1,0 +1,16 @@
+linked fn write<T>(_: T);
+
+const x: [3; int] = [1, 2, 3];
+
+fn main()
+{
+    let a = x[1];
+    let b = x[2];
+    x[1] = b;
+    x[2] = a;
+
+    write(x[0]);
+    write(x[1]);
+    write(x[2]);
+
+}

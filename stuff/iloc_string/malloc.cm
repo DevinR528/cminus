@@ -1,0 +1,11 @@
+linked fn write<T>(_val: T);
+
+linked fn malloc<T>(_size: int): *T;
+linked fn free<T>(_ptr: *T);
+
+fn main() {
+    let s = malloc::<int>(1);
+    *s = 10;
+    write(*s);
+    free(s);
+}

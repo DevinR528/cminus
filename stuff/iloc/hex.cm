@@ -1,0 +1,32 @@
+linked fn write<T>(_: T);
+linked fn putchar(_: int);
+
+fn printhex(x: int) {
+    write("decimal: ");
+    write(x);
+    write("\nhex: ");
+    while (x > 0) {
+        let next = x % 16;
+        if (next < 10) {
+            write(next);
+        } else if (next == 10) {
+            putchar(b'A');
+        } else if (next == 11) {
+            putchar(b'B');
+        } else if (next == 12) {
+            putchar(b'C');
+        } else if (next == 13) {
+            putchar(b'D');
+        } else if (next == 14) {
+            putchar(b'E');
+        } else {
+            putchar(b'F');
+        }
+        x = x >> 4;
+    }
+}
+
+fn main() {
+    printhex(144);
+    write("\n")
+}

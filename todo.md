@@ -24,7 +24,8 @@
   - var args for native printf
     - string needs to be convertable to a slice/array thing or impled as a struct with len and bufff
   - `size_of` or something so that adding to pointer types isn't hardcoded crap...
-  - and...
+  - `else if` needs to work
+  - MAKE STRING WORK AS AN ARRAY!!!!! and vise versa in some way
 
 # The Whole Point
 
@@ -33,5 +34,5 @@
 
 ## things I need to remember
 
-  - get & addrof working
+  - get & addrof working (works in iloc kinda)
   - make sure there are no name_resolve or patch_path calls but pre type checking

@@ -1,0 +1,36 @@
+linked fn write<T>(_val: T);
+
+linked fn malloc<T>(_size: int): *T;
+linked fn free<T>(_ptr: *T);
+linked fn realloc<T>(_ptr: *T, _size: int): *T;
+
+struct string {
+    buff: *char,
+    len: int,
+    cap: int,
+}
+
+fn new_string(size: int): string {
+    write(size);
+    let arr = malloc::<char>(size);
+    let str = string { buff: arr, len: 0, cap: size };
+    return str;
+}
+
+fn print_string(str: string) {
+    let x = 0;
+    while (x < str.len) {
+        let ptr = str.buff + (x * 4);
+        write(*ptr);
+        x += 1;
+    }
+}
+
+fn free_string(str: string) {
+    free::<char>(str.buff);
+}
+
+fn main() {
+    let s = new_string(4);
+    print_string(s);
+}
