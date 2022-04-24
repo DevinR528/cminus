@@ -8,4 +8,12 @@ fn main() {
     *s = 10;
     write(*s);
     free(s);
+
+    let ptr = malloc::<int>(1);
+    let ptr_ptr = &ptr;
+    **ptr_ptr = 10;
+    // TODO: inference needs some help, it shouldn't...
+    write::<int>(**ptr_ptr);
+    write(*ptr_ptr);
+    free(ptr);
 }
