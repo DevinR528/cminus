@@ -1,6 +1,6 @@
 use crate::ast::types::{
-    Adt, Block, Builtin, Const, Decl, Declaration, Enum, Expr, Expression, Field, FieldInit, Func,
-    Generic, Impl, MatchArm, Param, Statement, Stmt, Struct, Trait, Type, Variant,
+    Adt, Block, Builtin, Const, Decl, Declaration, Else, Enum, Expr, Expression, Field, FieldInit,
+    Func, Generic, Impl, MatchArm, Param, Statement, Stmt, Struct, Trait, Type, Variant,
 };
 
 pub trait Visit<'ast>: Sized {
@@ -161,7 +161,10 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Statement) {
             for stmt in stmts.iter() {
                 visit.visit_stmt(stmt);
             }
-            if let Some(Block { stmts, .. }) = els {
+            for Else { block: Block { stmts, .. }, cond } in els {
+                if let Some(cond) = cond {
+                    visit.visit_expr(cond);
+                }
                 for stmt in stmts.iter() {
                     visit.visit_stmt(stmt);
                 }
@@ -411,7 +414,10 @@ crate fn walk_mut_stmt<'ast, V: VisitMut<'ast>>(visit: &mut V, stmt: &'ast mut S
             for stmt in stmts.iter_mut() {
                 visit.visit_stmt(stmt);
             }
-            if let Some(Block { stmts, .. }) = els {
+            for Else { block: Block { stmts, .. }, cond } in els {
+                if let Some(cond) = cond {
+                    visit.visit_expr(cond);
+                }
                 for stmt in stmts.iter_mut() {
                     visit.visit_stmt(stmt);
                 }

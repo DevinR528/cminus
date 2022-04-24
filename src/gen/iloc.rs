@@ -17,8 +17,8 @@ use crate::{
     gen::iloc::inst::{Global, Instruction, Loc, Reg},
     lir::{
         lower::{
-            BinOp, Binding, Builtin, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat,
-            Stmt, Struct, Ty, UnOp, Val,
+            BinOp, Binding, Block, Builtin, CallExpr, Const, Else, Expr, FieldInit, Func, LValue,
+            MatchArm, Pat, Stmt, Struct, Ty, UnOp, Val,
         },
         visit::Visit,
     },
@@ -28,6 +28,8 @@ use crate::{
 use self::inst::Operation;
 
 mod inst;
+
+use inst::Operation;
 
 #[derive(Debug)]
 crate struct IlocGen<'ctx> {
@@ -816,20 +818,36 @@ impl<'ctx> IlocGen<'ctx> {
                 let else_label = format!(".L{}:", self.next_label());
                 let after_blk = format!(".L{}:", self.next_label());
 
-                if let Some(els) = els {
+                if !els.is_empty() {
+                    // If the `if` is not true jump to else
                     self.iloc_buf
                         .push(Instruction::CbrT { cond, loc: Loc(else_label.replace(':', "")) });
-
+                    // Otherwise fall through to the true case
                     for stmt in &blk.stmts {
                         self.gen_statement(stmt)
                     }
+                    // Don't fallthrough to the else case, jump to the merge after all else/elseif
                     self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(":", ""))));
 
+                    // Jump to the else block which doubles as the start of our elseif's
                     self.iloc_buf.push(Instruction::Label(else_label));
+                    for Else { block: Block { stmts }, cond } in els {
+                        let elseif_label = format!(".L{}:", self.next_label());
 
-                    for stmt in &els.stmts {
-                        self.gen_statement(stmt)
+                        if let Some(c) = cond {
+                            let cond = self.gen_expression(c);
+                            self.iloc_buf.push(Instruction::CbrT {
+                                cond,
+                                loc: Loc(elseif_label.replace(':', "")),
+                            });
+                        }
+                        for stmt in stmts {
+                            self.gen_statement(stmt)
+                        }
+                        self.iloc_buf.push(Instruction::ImmJump(Loc(after_blk.replace(":", ""))));
+                        self.iloc_buf.push(Instruction::Label(elseif_label));
                     }
+
                     self.iloc_buf.push(Instruction::Label(after_blk));
                 } else {
                     self.iloc_buf

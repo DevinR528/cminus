@@ -23,6 +23,8 @@ use crate::{
     typeck::scope::hash_file,
 };
 
+use super::types::Else;
+
 crate mod error;
 crate mod kw;
 mod ops;
@@ -91,6 +93,7 @@ impl<'a> AstBuilder<'a> {
     }
 
     pub fn parse(&mut self) -> ParseResult<()> {
+        self.eat_whitespace();
         loop {
             if self.curr.kind == TokenKind::Eof {
                 break;
@@ -201,7 +204,9 @@ impl<'a> AstBuilder<'a> {
                 TokenKind::Unknown => {
                     return Err(ParseError::Error("encountered unknown token", self.curr_span()))
                 }
-                tkn => unreachable!("Unknown token {:?}", tkn),
+                _ => {
+                    return Err(ParseError::Error("encountered incorrect token", self.curr_span()))
+                }
             }
             self.eat_whitespace();
         }
@@ -871,7 +876,7 @@ impl<'a> AstBuilder<'a> {
                 .pop()
                 .ok_or_else(|| ParseError::Error("failed to generate expression", self.curr_span()))
         } else {
-            panic!("{:?}", self.curr);
+            // panic!("{:?}", self.curr);
             // See the above 4 todos/fixes
             Err(ParseError::Error("no top level expression", self.curr_span()))
         }
@@ -1371,12 +1376,25 @@ impl<'a> AstBuilder<'a> {
         let blk = self.make_block()?;
         self.eat_whitespace();
 
-        let els = if self.eat_if_kw(kw::Else) {
+        let mut els = vec![];
+        while self.eat_if_kw(kw::Else) {
             self.eat_whitespace();
-            Some(self.make_block()?)
-        } else {
-            None
-        };
+
+            if self.eat_if_kw(kw::If) {
+                self.eat_whitespace();
+                let cond = Some(self.make_expr()?);
+                self.eat_whitespace();
+
+                let block = self.make_block()?;
+                self.eat_whitespace();
+
+                els.push(Else { cond, block });
+            } else {
+                els.push(Else { cond: None, block: self.make_block()? });
+                break;
+            }
+        }
+
         Ok(ast::Stmt::If { cond, blk, els })
     }
 
@@ -1820,12 +1838,31 @@ impl<'a> AstBuilder<'a> {
                 let text = self.input_curr();
 
                 let val = match kind {
-                    LiteralKind::Int { base, empty_int } => Val::Int(
-                        neg_ident
-                            * text
-                                .parse::<isize>()
-                                .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
-                    ),
+                    LiteralKind::Int { base, empty_int } => Val::Int(match base {
+                        Base::Binary => isize::from_str_radix(
+                            text.strip_prefix("0b")
+                                .ok_or(ParseError::InvalidIntLiteral(self.curr_span()))?,
+                            2,
+                        )
+                        .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
+                        Base::Hexadecimal => isize::from_str_radix(
+                            text.strip_prefix("0x")
+                                .ok_or(ParseError::InvalidIntLiteral(self.curr_span()))?,
+                            16,
+                        )
+                        .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
+                        Base::Octal => isize::from_str_radix(
+                            text.strip_prefix("0o")
+                                .ok_or(ParseError::InvalidIntLiteral(self.curr_span()))?,
+                            8,
+                        )
+                        .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?,
+                        Base::Decimal => {
+                            neg_ident
+                                * isize::from_str_radix(text, 10)
+                                    .map_err(|_| ParseError::InvalidIntLiteral(self.curr_span()))?
+                        }
+                    }),
                     LiteralKind::Float { base, empty_exponent } => Val::Float(
                         (neg_ident as f64)
                             * text
@@ -1852,11 +1889,22 @@ impl<'a> AstBuilder<'a> {
 
                         Val::Str(Ident::new(self.curr_span(), &text))
                     }
-
+                    LiteralKind::Byte { terminated } => {
+                        let end = text.len() - 1;
+                        // We skip the `b'` (so the b and the "'"")
+                        let text = &text[2..end];
+                        if text.replace('\\', "").len() == 1 {
+                            Val::Int(text.chars().next().unwrap() as isize)
+                        } else {
+                            return Err(ParseError::Error(
+                                "multi character `char`",
+                                self.curr_span(),
+                            ));
+                        }
+                    },
                     LiteralKind::ByteStr { .. }
                     | LiteralKind::RawStr { .. }
                     | LiteralKind::RawByteStr { .. }
-                    | LiteralKind::Byte { .. }
                     | _ => todo!(),
                 };
                 self.eat_if(&TokenMatch::Literal);
@@ -2808,5 +2856,19 @@ fn while_loops() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
+    assert_eq!(parser.items().len(), 1);
+}
+
+#[test]
+fn parse_index_field_access() {
+    let input = r#"
+fn add() {
+    let x = a.b[0];
+}
+"#;
+    let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
+    parser.parse().unwrap();
+    println!("{:#?}", parser.items);
+
     assert_eq!(parser.items().len(), 1);
 }

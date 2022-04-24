@@ -1,6 +1,6 @@
 use crate::lir::lower::{Adt, Const, Expr, Func, Impl, Item, MatchArm, Param, Stmt, Trait};
 
-use super::lower::{Block, FieldInit, LValue};
+use super::lower::{Block, Else, FieldInit, LValue};
 
 pub trait Visit<'ast>: Sized {
     fn visit_prog(&mut self, items: &'ast [Item]) {
@@ -137,7 +137,10 @@ crate fn walk_stmt<'ast, V: Visit<'ast>>(visit: &mut V, stmt: &'ast Stmt) {
             for stmt in stmts {
                 visit.visit_stmt(stmt);
             }
-            if let Some(Block { stmts, .. }) = els {
+            for Else { block: Block { stmts, .. }, cond } in els {
+                if let Some(cond) = cond {
+                    visit.visit_expr(cond);
+                }
                 for stmt in stmts {
                     visit.visit_stmt(stmt);
                 }

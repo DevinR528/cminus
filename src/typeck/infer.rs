@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     fmt,
     sync::mpsc::Receiver,
 };
@@ -10,9 +10,10 @@ use crate::{
     ast::{
         parse::{symbol::Ident, ParseResult},
         types::{
-            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
-            Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany,
-            Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
+            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Else, Enum, Expr,
+            Expression, Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range,
+            Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant,
+            DUMMY,
         },
     },
     error::Error,
@@ -363,6 +364,11 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             Stmt::TraitMeth(expr) => self.visit_expr(expr),
             Stmt::If { cond, blk, els } => {
                 self.visit_expr(cond);
+                for Else { cond, .. } in els {
+                    if let Some(cond) = cond {
+                        self.visit_expr(cond);
+                    }
+                }
                 // DO NOT WALK DEEPER the calling method is doing the walking
             }
             Stmt::While { cond, blk } => {

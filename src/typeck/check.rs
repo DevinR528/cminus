@@ -10,9 +10,10 @@ use crate::{
     ast::{
         parse::{symbol::Ident, ParseResult},
         types::{
-            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Enum, Expr, Expression,
-            Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range, Spany,
-            Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant, DUMMY,
+            to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Else, Enum, Expr,
+            Expression, Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range,
+            Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant,
+            DUMMY,
         },
     },
     error::Error,
@@ -85,6 +86,7 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
                     orig_lty.map_or("<unknown>".to_owned(), |t| t.to_string()),
                 ),
             ));
+            self.tcxt.errors.poisoned(true);
         } else if let Expr::Ident(id) = &lval.val {
             if let Expr::Value(val) = &rval.val {
                 // TODO: const folding could fold un-mutated idents but it gets tricky llvm will do
@@ -126,7 +128,27 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     self.visit_stmt(stmt);
                 }
 
-                if let Some(Block { stmts, .. }) = els {
+                for Else { block: Block { stmts, .. }, cond: elsif } in els {
+                    // TODO: cleanup copy/paste
+                    // TODO: cleanup copy/paste
+                    if let Some(elsif) = elsif {
+                        let elsif_ty = self
+                            .tcxt
+                            .expr_ty
+                            .get(cond)
+                            .and_then(|t| resolve_ty(self.tcxt, elsif, Some(t)));
+
+                        // TODO: type coercions :( REMOVE
+                        if !is_truthy(elsif_ty.as_ref()) {
+                            self.tcxt.errors.push_error(Error::error_with_span(
+                                self.tcxt,
+                                stmt.span,
+                                "[E0tc] condition of `else if` must be of type bool",
+                            ));
+                            self.tcxt.errors.poisoned(true);
+                        }
+                    }
+
                     for stmt in stmts.iter() {
                         self.visit_stmt(stmt);
                     }
@@ -309,6 +331,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                     .var_func
                     .get_fn_by_span(stmt.span)
                     .and_then(|fname| self.tcxt.var_func.name_func.get(&fname));
+
                 if !func.map_or(false, |f| f.ret.get().val.is_ty_eq(&Ty::Void)) {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
@@ -338,14 +361,12 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
 
 /// TODO: remove coercion
 crate fn is_truthy(ty: Option<&Ty>) -> bool {
-    if let Some(t) = ty {
-        matches!(
-            t,
+    matches!(
+        ty,
+        Some(
             Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool
         )
-    } else {
-        false
-    }
+    )
 }
 
 /// Fill the unused generic types if a variant is missing some.

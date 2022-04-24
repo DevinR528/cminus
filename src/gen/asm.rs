@@ -19,8 +19,8 @@ use crate::{
     },
     lir::{
         lower::{
-            BinOp, Binding, Builtin, CallExpr, Const, Expr, FieldInit, Func, LValue, MatchArm, Pat,
-            Stmt, Struct, Ty, UnOp, Val,
+            BinOp, Binding, Block, Builtin, CallExpr, Const, Else, Expr, FieldInit, Func, LValue,
+            MatchArm, Pat, Stmt, Struct, Ty, UnOp, Val,
         },
         visit::Visit,
     },
@@ -1808,10 +1808,9 @@ impl<'ctx> CodeGen<'ctx> {
                 self.asm_buf.push(Instruction::Jmp(merge_loc));
 
                 self.asm_buf.push(Instruction::Label(name));
-                if let Some(els) = els {
-                    for stmt in &els.stmts {
-                        self.gen_statement(stmt);
-                    }
+                for Else { block: Block { stmts }, cond } in els {
+                    todo!();
+                    self.gen_statement(stmt);
                 }
 
                 self.asm_buf.push(Instruction::Label(merge_label));

@@ -18,7 +18,7 @@ use inkwell::{
 use crate::{
     ast::parse::symbol::Ident,
     lir::{
-        lower::{BinOp, CallExpr, Const, Expr, Func, LValue, Stmt, Ty, Val},
+        lower::{BinOp, Block, CallExpr, Const, Else, Expr, Func, LValue, Stmt, Ty, Val},
         visit::Visit,
     },
 };
@@ -510,10 +510,9 @@ impl<'ctx> LLVMGen<'ctx> {
                 let _then_block = self.builder.get_insert_block().unwrap();
 
                 self.builder.position_at_end(else_bb);
-                if let Some(els) = els {
-                    for stmt in &els.stmts {
-                        self.gen_statement(fnval, stmt);
-                    }
+                for Else { block: Block { stmts }, cond } in els {
+                    todo!();
+                    self.gen_statement(fnval, stmt);
                 }
                 self.builder.build_unconditional_branch(cont_bb);
                 let _else_block = self.builder.get_insert_block().unwrap();

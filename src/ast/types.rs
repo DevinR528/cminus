@@ -808,6 +808,12 @@ impl Builtin {
 }
 
 #[derive(Clone, Debug)]
+pub struct Else {
+    pub cond: Option<Expression>,
+    pub block: Block,
+}
+
+#[derive(Clone, Debug)]
 pub enum Stmt {
     /// Variable declaration `int x;`
     Const(Const),
@@ -820,7 +826,7 @@ pub enum Stmt {
     /// A trait method call `<<T>::trait>(args)`
     TraitMeth(Expression),
     /// If statement `if (expr) { stmts }`
-    If { cond: Expression, blk: Block, els: Option<Block> },
+    If { cond: Expression, blk: Block, els: Vec<Else> },
     /// While loop `while (expr) { stmts }`
     While { cond: Expression, blk: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.

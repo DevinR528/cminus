@@ -1008,6 +1008,12 @@ pub struct TraitMethExpr {
     pub type_args: Vec<Ty>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Else {
+    pub cond: Option<Expr>,
+    pub block: Block,
+}
+
 #[derive(Clone, derive_help::Debug, PartialEq, Eq)]
 pub enum Stmt {
     /// Variable declaration `int x;`
@@ -1027,7 +1033,7 @@ pub enum Stmt {
         def: Impl,
     },
     /// If statement `if (expr) { stmts }`
-    If { cond: Expr, blk: Block, els: Option<Block> },
+    If { cond: Expr, blk: Block, els: Vec<Else> },
     /// While loop `while (expr) { stmts }`
     While { cond: Expr, stmts: Block },
     /// A match statement `match expr { variant1 => { stmts }, variant2 => { stmts } }`.
@@ -1083,7 +1089,7 @@ impl Stmt {
                             .map(|a| Ty::lower(tyctx, &a.val))
                             .collect(),
                     },
-                    def: Func::lower(tyctx, fold, func),
+                    def: Func::lower_minus_body(tyctx, fold, func),
                 }
             }
             ty::Stmt::Call(_) => unreachable!("call statement without call expression"),
@@ -1127,7 +1133,13 @@ impl Stmt {
             ty::Stmt::If { cond, blk, els } => Stmt::If {
                 cond: Expr::lower(tyctx, fold, cond),
                 blk: Block::lower(tyctx, fold, blk),
-                els: els.map(|e| Block::lower(tyctx, fold, e)),
+                els: els
+                    .into_iter()
+                    .map(|e| Else {
+                        block: Block::lower(tyctx, fold, e.block),
+                        cond: e.cond.map(|cond| Expr::lower(tyctx, fold, cond)),
+                    })
+                    .collect(),
             },
             ty::Stmt::While { cond, blk: stmts } => Stmt::While {
                 cond: Expr::lower(tyctx, fold, cond),
@@ -1338,6 +1350,7 @@ impl Impl {
         Impl {
             ident: imp.path.clone(),
             type_arguments: imp.type_arguments.iter().map(|t| Ty::lower(tyctx, &t.val)).collect(),
+            // TODO: this will segfault if we ever call ourselves recursively
             method: Func::lower(tyctx, fold, &imp.method),
         }
     }
@@ -1412,7 +1425,7 @@ crate fn lower_items(items: &[ty::Declaration], tyctx: TyCheckRes<'_, '_>) -> Ve
     let mut lowered = vec![];
 
     for item in tyctx.imported_items.iter() {
-        lower_item(item, &tyctx, &fold, &mut lowered)
+        lower_item(item, &tyctx, &fold, &mut lowered);
     }
     for item in items.iter() {
         lower_item(item, &tyctx, &fold, &mut lowered);
