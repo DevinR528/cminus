@@ -434,10 +434,10 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Expr::Array { ident, exprs } => {
                 if let Some(ty) = self.tcxt.type_of_ident(*ident, expr.span) {
-println!("{:?}", (ident, &ty));
                     for ex in exprs {
                         self.visit_expr(ex);
                     }
+                    // Takes care if `ty` is `ConstStr(..)`
                     if let Some(t) = ty.index_dim(self.tcxt, exprs, expr.span) {
                         self.tcxt.expr_ty.insert(expr, t);
                     }

@@ -5,10 +5,24 @@ linked fn malloc<T>(_size: int): *T;
 linked fn free<T>(_ptr: *T);
 linked fn realloc<T>(_ptr: *T, _size: int): *T;
 
+struct list<T> {
+    len: int,
+    cap: int,
+    buff: *T,
+}
+
 struct string {
     len: int,
     cap: int,
     buff: *int,
+}
+
+fn new_list<T>(size: int): *list<T> {
+    // Allocate `list` buffer
+    let dyn_list = malloc::<list<T>>((size * 4) + 8);
+    dyn_list.cap = size;
+    dyn_list.len = 0;
+    return dyn_list;
 }
 
 fn new_string_from(str: cstr): *string {
@@ -69,14 +83,16 @@ fn free_string(str: *string) {
 }
 
 fn main() {
-    let s = new_string_from("abcde");
+    let to_sort = new_list(5);
+    let s = new_string_from("");
+    while (true) {
+        let ch = 0;
+        read(ch);
 
-    print_string(s);
+        if (ch == b'\n') {
 
-    push_char(s, b'z');
-    push_char(s, b'x');
-
-    print_string(s);
+        }
+    }
 
     free_string(s);
 }

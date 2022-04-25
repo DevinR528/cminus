@@ -24,6 +24,7 @@
     - string needs to be convertable to a slice/array thing or impled as a struct with len and bufff
   - `size_of` or something so that adding to pointer types isn't hardcoded crap...
   - MAKE STRING WORK AS AN ARRAY!!!!! and vise versa in some way
+  - Type assignment is ignored i.e. `let x: int = "hello";` works...
   - if `fn call<T>(a: T): T {...}` is generic make `call::<int>(x)` and `call(x)` more robust
     - fix this `write::<int>(**ptr_ptr);` inference needs some help in this case, it should be ok
       but it gives this error "found `**&&int` expected `*&&int`"

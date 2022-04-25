@@ -541,7 +541,6 @@ impl Expr {
 
 /// Remove any amount of pointer indirection or follows.
 fn deref_field(ty: &Ty, left: Option<&LValue>) -> Struct {
-    println!("{:?} {:?}", ty, left);
     let mut peel = ty;
     while let Ty::Ptr(t) | Ty::Ref(t) = peel {
         peel = t;

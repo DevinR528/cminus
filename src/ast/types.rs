@@ -457,6 +457,29 @@ impl Ty {
         }
     }
 
+    /// Returns true if this type has a component that is a `Ty::Path`.
+    crate fn has_path(&self) -> bool {
+        match self {
+            Ty::Generic { .. } => true,
+            Ty::Array { ty, .. } => ty.val.has_path(),
+            Ty::Struct { gen, .. } => gen.iter().any(|t| t.val.has_path()),
+            Ty::Enum { gen, .. } => gen.iter().any(|t| t.val.has_path()),
+            Ty::Ptr(ty) => ty.val.has_path(),
+            Ty::Ref(ty) => ty.val.has_path(),
+            Ty::Func { ret, params, .. } => {
+                ret.has_path() || params.iter().any(|t| t.has_path())
+            }
+            Ty::Path(_) => true,
+            Ty::ConstStr(..)
+            | Ty::Int
+            | Ty::Char
+            | Ty::Float
+            | Ty::Bool
+            | Ty::Void
+            | Ty::Bottom => false,
+        }
+    }
+
     /// Substitute a generic parameter with a concrete type.
     crate fn subst_generic(&mut self, generic: Ident, subs: &Ty) {
         match self {
@@ -531,20 +554,34 @@ impl Ty {
     ) -> Option<Self> {
         let mut new = self.clone();
         for expr in exprs {
-            if let Ty::Array { ty, ref size } = &new {
-                if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
-                    if i >= &(*size as isize) {
-                        tcxt.errors.push_error(Error::error_with_span(
-                            tcxt,
-                            span,
-                            "out of bound of static array",
-                        ));
-                        tcxt.errors.poisoned(true);
+            match &new {
+                Ty::Array { ty, ref size } => {
+                    if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
+                        if i >= &(*size as isize) {
+                            tcxt.errors.push_error(Error::error_with_span(
+                                tcxt,
+                                span,
+                                "out of bound of static array",
+                            ));
+                            tcxt.errors.poisoned(true);
+                        }
                     }
+                    new = ty.val.clone();
                 }
-                new = ty.val.clone();
-            } else {
-                break;
+                Ty::ConstStr(size) => {
+                    if let Expr::Value(Spanned { val: Val::Int(i), .. }) = &expr.val {
+                        if i >= &(*size as isize) {
+                            tcxt.errors.push_error(Error::error_with_span(
+                                tcxt,
+                                span,
+                                "out of bound of static string",
+                            ));
+                            tcxt.errors.poisoned(true);
+                        }
+                    }
+                    new = Ty::Int;
+                }
+                _ => break,
             }
         }
         Some(new)

@@ -430,9 +430,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             impl<'ast, 'b> VisitMut<'ast> for NameResUserTypes<'ast, 'b> {
                 fn visit_expr(&mut self, expr: &'ast mut Expression) {
                     if let Expr::Call { path, args, type_args } = &expr.val {
-                        if let Some(Ty::Enum { ident, .. }) =
-                            self.res.type_from_path(path, self.tcxt)
-                        {
+                        let fixed_ty = self.res.type_from_path(path, self.tcxt);
+                        if let Some(Ty::Enum { ident, .. }) = fixed_ty {
                             let mut path = path.clone();
                             let variant = path.segs.pop().unwrap();
                             expr.val = Expr::EnumInit { path, variant, items: args.clone() };
@@ -442,9 +441,18 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     // -> Ty::Generic`
                     if let Expr::Call { path, type_args, .. } = &expr.val {
                         for ty_arg in unsafe { type_args.iter_mut_shared() } {
-                            if !matches!(ty_arg.val, Ty::Path(..)) {
+                            if !ty_arg.val.has_path() {
                                 continue;
                             }
+
+                            if let Some(Ty::Path(path)) = ty_arg.val.resolve() {
+                                if let Some(fixed_ty) = self.res.type_from_path(&path, self.tcxt) {
+                                    *ty_arg = fixed_ty.into_spanned(ty_arg.span);
+                                    // It can't be a generic if we determined it was a struct
+                                    continue;
+                                }
+                            }
+
                             let resolved =
                                 self.tcxt.patch_generic_from_path(ty_arg, &self.func.generics);
                             if let Some(res) = resolved {

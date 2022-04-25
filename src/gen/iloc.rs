@@ -387,38 +387,6 @@ impl<'ctx> IlocGen<'ctx> {
         }
     }
 
-    fn gen_str_index(&mut self, arr_reg: Reg, exprs: &[Expr]) -> Reg {
-        let stack_pad = self.value_to_reg(Val::Int(-4));
-        let size_of = self.value_to_reg(Val::Int(4));
-        let arr_start = self.expr_to_reg(Operation::FramePointer);
-
-        if let [expr] = exprs {
-            let idx = self.gen_expression(expr);
-            let calc_idx = self.expr_to_reg(Operation::BinOp(BinOp::Mul, idx, size_of));
-            let calc_arr_start =
-                self.expr_to_reg(Operation::BinOp(BinOp::Add, arr_start, stack_pad));
-            let arr_slot = self.expr_to_reg(Operation::BinOp(BinOp::Sub, calc_arr_start, calc_idx));
-
-            self.iloc_buf.extend([
-                // Move array start address to register
-                Instruction::I2I { src: arr_reg, dst: arr_start },
-                // Load the number of bytes on the stack for no reason
-                Instruction::ImmLoad { src: inst::Val::Integer(-4), dst: stack_pad },
-                // Add -4 to make up for stack padding
-                Instruction::Add { src_a: arr_start, src_b: stack_pad, dst: calc_arr_start },
-                // Size of type
-                Instruction::ImmLoad { src: inst::Val::Integer(4), dst: size_of },
-                // index * size of type
-                Instruction::Mult { src_a: idx, src_b: size_of, dst: calc_idx },
-                // array start - (index * size_of)
-                Instruction::Sub { src_a: calc_arr_start, src_b: calc_idx, dst: arr_slot },
-            ]);
-            arr_slot
-        } else {
-            todo!("No multi dim arrays yet...")
-        }
-    }
-
     fn gen_index(&mut self, arr_reg: Reg, exprs: &[Expr]) -> Reg {
         let stack_pad = self.value_to_reg(Val::Int(-4));
         let size_of = self.value_to_reg(Val::Int(4));
@@ -532,11 +500,8 @@ impl<'ctx> IlocGen<'ctx> {
                 } else {
                     self.ident_to_reg(*ident)
                 };
-                if matches!(ty, Ty::ConstStr(size)) {
-                    self.gen_str_index(reg, exprs)
-                } else {
-                    self.gen_index(reg, exprs)
-                }
+
+                self.gen_index(reg, exprs)
             }
             Expr::Urnary { op, expr, ty } => {
                 let ex = self.gen_expression(expr);
@@ -919,7 +884,7 @@ impl<'ctx> IlocGen<'ctx> {
                 let dst = self.get_pointer(lval);
                 match lval {
                     LValue::Ident { ident, .. } => match lval.type_of() {
-                        Ty::Int | Ty::Array { .. } | Ty::Ptr(..) => {
+                        Ty::Int | Ty::Char | Ty::Array { .. } | Ty::Ptr(..) => {
                             self.iloc_buf.push(Instruction::I2I { src: val, dst })
                         }
                         Ty::Float => {
@@ -980,6 +945,9 @@ impl<'ctx> IlocGen<'ctx> {
                     let arg = self.gen_expression(&expr.args[0]);
                     match expr.args[0].type_of() {
                         Ty::Int => self.iloc_buf.push(Instruction::PutChar(arg)),
+                        Ty::Char => self.iloc_buf.push(Instruction::PutChar(arg)),
+                        Ty::Ref(_) => self.iloc_buf.push(Instruction::PutChar(arg)),
+                        Ty::Array { ty, .. } if *ty == Ty::Int => self.iloc_buf.push(Instruction::PutChar(arg)),
                         t => unreachable!("not writeable {:?} {:?}", t, expr.args[0]),
                     }
                 }

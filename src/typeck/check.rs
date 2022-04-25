@@ -76,7 +76,10 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
             return;
         }
 
+
         if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
+            println!("{:?}", (&lval_ty, &rval_ty));
+
             self.tcxt.errors.push_error(Error::error_with_span(
                 self.tcxt,
                 span,
