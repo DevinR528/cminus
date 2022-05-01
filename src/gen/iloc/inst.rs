@@ -36,6 +36,7 @@ pub enum Operation {
 #[derive(Clone, Debug)]
 pub enum Val {
     Integer(isize),
+    UInteger(u32),
     Float(f64),
     Location(String),
     String(String),
@@ -47,6 +48,7 @@ impl Hash for Val {
         discriminant(self).hash(state);
         match self {
             Self::Integer(int) => int.hash(state),
+            Self::UInteger(int) => int.hash(state),
             Self::Float(float) => float.to_bits().hash(state),
             Self::Location(s) => s.hash(state),
             Self::String(s) => s.hash(state),
@@ -58,6 +60,7 @@ impl PartialEq for Val {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Integer(a), Self::Integer(b)) => a.eq(b),
+            (Self::UInteger(a), Self::UInteger(b)) => a.eq(b),
             (Self::Float(a), Self::Float(b)) => a.to_bits().eq(&b.to_bits()),
             (Self::Location(a), Self::Location(b)) => a.eq(b),
             _ => false,
@@ -69,6 +72,7 @@ impl fmt::Display for Val {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Val::Integer(int) => int.fmt(f),
+            Val::UInteger(int) => int.fmt(f),
             Val::Float(flt) => flt.fmt(f),
             Val::Location(loc) => loc.fmt(f),
             Val::String(s) => s.fmt(f),
@@ -202,6 +206,23 @@ pub enum Instruction {
     CbrEQ { a: Reg, b: Reg, loc: Loc },
     CbrNE { a: Reg, b: Reg, loc: Loc },
 
+    // Unsigned operations
+    CmpuLT { a: Reg, b: Reg, dst: Reg },
+    CmpuLE { a: Reg, b: Reg, dst: Reg },
+    CmpuGT { a: Reg, b: Reg, dst: Reg },
+    CmpuGE { a: Reg, b: Reg, dst: Reg },
+    Compu { a: Reg, b: Reg, dst: Reg },
+    TestuGT { test: Reg, dst: Reg },
+    TestuGE { test: Reg, dst: Reg },
+    TestuLT { test: Reg, dst: Reg },
+    TestuLE { test: Reg, dst: Reg },
+    CbruLT { a: Reg, b: Reg, loc: Loc },
+    CbruLE { a: Reg, b: Reg, loc: Loc },
+    CbruGT { a: Reg, b: Reg, loc: Loc },
+    CbruGE { a: Reg, b: Reg, loc: Loc },
+    RShiftu { src_a: Reg, src_b: Reg, dst: Reg },
+    ImmRShiftu { src: Reg, konst: Val, dst: Reg },
+
     // Floating point arithmetic
     /// `f2i`
     F2I { src: Reg, dst: Reg },
@@ -293,88 +314,111 @@ impl Global {
 impl Instruction {
     pub const fn inst_name(&self) -> &'static str {
         match self {
-            Instruction::I2I { .. } => "i2i",
-            Instruction::Add { .. } => "add",
-            Instruction::Sub { .. } => "sub",
-            Instruction::Mult { .. } => "mult",
-            Instruction::Div { .. } => "div",
-            Instruction::LShift { .. } => "lshift",
-            Instruction::RShift { .. } => "rshift",
-            Instruction::Mod { .. } => "mod",
-            Instruction::And { .. } => "and",
-            Instruction::Or { .. } => "or",
-            Instruction::Not { .. } => "not",
-            Instruction::ImmAdd { .. } => "addI",
-            Instruction::ImmSub { .. } => "subI",
-            Instruction::ImmMult { .. } => "multI",
-            Instruction::ImmLShift { .. } => "lshiftI",
-            Instruction::ImmRShift { .. } => "rshiftI",
-            Instruction::ImmLoad { .. } => "loadI",
-            Instruction::Load { .. } => "load",
-            Instruction::LoadAddImm { .. } => "loadAI",
-            Instruction::LoadAdd { .. } => "loadAO",
-            Instruction::Store { .. } => "store",
-            Instruction::StoreAddImm { .. } => "storeAI",
-            Instruction::StoreAdd { .. } => "storeAO",
-            Instruction::CmpLT { .. } => "cmp_LT",
-            Instruction::CmpLE { .. } => "cmp_LE",
-            Instruction::CmpGT { .. } => "cmp_GT",
-            Instruction::CmpGE { .. } => "cmp_GE",
-            Instruction::CmpEQ { .. } => "cmp_EQ",
-            Instruction::CmpNE { .. } => "cmp_NE",
-            Instruction::Comp { .. } => "comp",
-            Instruction::TestEQ { .. } => "testeq",
-            Instruction::TestNE { .. } => "testne",
-            Instruction::TestGT { .. } => "testgt",
-            Instruction::TestGE { .. } => "testge",
-            Instruction::TestLT { .. } => "testlt",
-            Instruction::TestLE { .. } => "testle",
-            Instruction::ImmJump(_) => "jumpI",
-            Instruction::Jump(_) => "jump",
-            Instruction::Call { .. } => "call",
-            Instruction::ImmCall { .. } => "icall",
-            Instruction::ImmRCall { .. } => "ircall",
-            Instruction::Ret => "ret",
-            Instruction::ImmRet(_) => "iret",
-            Instruction::CbrT { .. } => "cbr",
-            Instruction::CbrF { .. } => "cbrne",
-            Instruction::CbrLT { .. } => "cbr_LT",
-            Instruction::CbrLE { .. } => "cbr_LE",
-            Instruction::CbrGT { .. } => "cbr_GT",
-            Instruction::CbrGE { .. } => "cbr_GE",
-            Instruction::CbrEQ { .. } => "cbr_EQ",
-            Instruction::CbrNE { .. } => "cbr_NE",
-            Instruction::F2I { .. } => "f2i",
-            Instruction::I2F { .. } => "i2f",
-            Instruction::F2F { .. } => "f2f",
-            Instruction::FAdd { .. } => "fadd",
-            Instruction::FSub { .. } => "fsub",
-            Instruction::FMult { .. } => "fmult",
-            Instruction::FDiv { .. } => "fdiv",
-            Instruction::FComp { .. } => "fcomp",
-            Instruction::FLoad { .. } => "fload",
-            Instruction::FLoadAddImm { .. } => "floadAI",
-            Instruction::FLoadAdd { .. } => "floadAO",
-            Instruction::FRead(_) => "fread",
-            Instruction::IRead(_) => "iread",
-            Instruction::FWrite(_) => "fwrite",
-            Instruction::IWrite(_) => "iwrite",
-            Instruction::SWrite(_) => "swrite",
-            Instruction::PutChar(_) => "putchar",
-            Instruction::Free(_) => "free",
-            Instruction::Malloc { .. } => "malloc",
-            Instruction::Realloc { .. } => "realloc",
-            Instruction::Push(_) => "push",
-            Instruction::PushR(_) => "pushr",
-            Instruction::Pop => "pop",
-            Instruction::Data => "data",
-            Instruction::Text => "text",
-            Instruction::Frame { .. } => "frame",
-            Instruction::Global { .. } => "global",
-            Instruction::Array { .. } => "array",
-            Instruction::String { .. } => "string",
-            Instruction::Float { .. } => "float",
-            Instruction::Label(_) => "label",
+            Self::I2I { .. } => "i2i",
+            Self::Add { .. } => "add",
+            Self::Sub { .. } => "sub",
+            Self::Mult { .. } => "mult",
+            Self::Div { .. } => "div",
+            Self::LShift { .. } => "lshift",
+            Self::RShift { .. } => "rshift",
+            // unsigned
+            Self::RShiftu { .. } => "rshiftu",
+            Self::Mod { .. } => "mod",
+            Self::And { .. } => "and",
+            Self::Or { .. } => "or",
+            Self::Not { .. } => "not",
+            Self::ImmAdd { .. } => "addI",
+            Self::ImmSub { .. } => "subI",
+            Self::ImmMult { .. } => "multI",
+            Self::ImmLShift { .. } => "lshiftI",
+            Self::ImmRShift { .. } => "rshiftI",
+            // unsigned
+            Self::ImmRShiftu { .. } => "rshiftuI",
+            Self::ImmLoad { .. } => "loadI",
+            Self::Load { .. } => "load",
+            Self::LoadAddImm { .. } => "loadAI",
+            Self::LoadAdd { .. } => "loadAO",
+            Self::Store { .. } => "store",
+            Self::StoreAddImm { .. } => "storeAI",
+            Self::StoreAdd { .. } => "storeAO",
+            Self::CmpLT { .. } => "cmp_LT",
+            Self::CmpLE { .. } => "cmp_LE",
+            Self::CmpGT { .. } => "cmp_GT",
+            Self::CmpGE { .. } => "cmp_GE",
+            Self::CmpEQ { .. } => "cmp_EQ",
+            Self::CmpNE { .. } => "cmp_NE",
+            Self::Comp { .. } => "comp",
+            // unsigned
+            Self::CmpuLT { .. } => "cmpu_LT",
+            Self::CmpuLE { .. } => "cmpu_LE",
+            Self::CmpuGT { .. } => "cmpu_GT",
+            Self::CmpuGE { .. } => "cmpu_GE",
+            Self::Compu { .. } => "compu",
+
+            Self::TestEQ { .. } => "testeq",
+            Self::TestNE { .. } => "testne",
+            Self::TestGT { .. } => "testgt",
+            Self::TestGE { .. } => "testge",
+            Self::TestLT { .. } => "testlt",
+            Self::TestLE { .. } => "testle",
+            // unsigned
+            Self::TestuGT { .. } => "testugt",
+            Self::TestuGE { .. } => "testuge",
+            Self::TestuLT { .. } => "testult",
+            Self::TestuLE { .. } => "testule",
+
+            Self::ImmJump(_) => "jumpI",
+            Self::Jump(_) => "jump",
+            Self::Call { .. } => "call",
+            Self::ImmCall { .. } => "icall",
+            Self::ImmRCall { .. } => "ircall",
+            Self::Ret => "ret",
+            Self::ImmRet(_) => "iret",
+            Self::CbrT { .. } => "cbr",
+            Self::CbrF { .. } => "cbrne",
+            Self::CbrLT { .. } => "cbr_LT",
+            Self::CbrLE { .. } => "cbr_LE",
+            Self::CbrGT { .. } => "cbr_GT",
+            Self::CbrGE { .. } => "cbr_GE",
+            Self::CbrEQ { .. } => "cbr_EQ",
+            Self::CbrNE { .. } => "cbr_NE",
+            // unsigned
+            Self::CbruLT { .. } => "cbru_LT",
+            Self::CbruLE { .. } => "cbru_LE",
+            Self::CbruGT { .. } => "cbru_GT",
+            Self::CbruGE { .. } => "cbru_GE",
+
+            Self::F2I { .. } => "f2i",
+            Self::I2F { .. } => "i2f",
+            Self::F2F { .. } => "f2f",
+            Self::FAdd { .. } => "fadd",
+            Self::FSub { .. } => "fsub",
+            Self::FMult { .. } => "fmult",
+            Self::FDiv { .. } => "fdiv",
+            Self::FComp { .. } => "fcomp",
+            Self::FLoad { .. } => "fload",
+            Self::FLoadAddImm { .. } => "floadAI",
+            Self::FLoadAdd { .. } => "floadAO",
+            Self::FRead(_) => "fread",
+            Self::IRead(_) => "iread",
+            Self::FWrite(_) => "fwrite",
+            Self::IWrite(_) => "iwrite",
+            Self::SWrite(_) => "swrite",
+            Self::PutChar(_) => "putchar",
+            Self::Free(_) => "free",
+            Self::Malloc { .. } => "malloc",
+            Self::Realloc { .. } => "realloc",
+            Self::Push(_) => "push",
+            Self::PushR(_) => "pushr",
+            Self::Pop => "pop",
+            Self::Data => "data",
+            Self::Text => "text",
+            Self::Frame { .. } => "frame",
+            Self::Global { .. } => "global",
+            Self::Array { .. } => "array",
+            Self::String { .. } => "string",
+            Self::Float { .. } => "float",
+            Self::Label(_) => "label",
         }
     }
 }
@@ -382,67 +426,82 @@ impl Instruction {
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Instruction::FLoad { src, dst }
-            | Instruction::F2I { src, dst }
-            | Instruction::I2F { src, dst }
-            | Instruction::F2F { src, dst }
-            | Instruction::I2I { src, dst }
-            | Instruction::Not { src, dst }
-            | Instruction::Load { src, dst }
-            | Instruction::Store { src, dst } => {
+            Self::FLoad { src, dst }
+            | Self::F2I { src, dst }
+            | Self::I2F { src, dst }
+            | Self::F2F { src, dst }
+            | Self::I2I { src, dst }
+            | Self::Not { src, dst }
+            | Self::Load { src, dst }
+            | Self::Store { src, dst } => {
                 write!(f, "    {} {} => {}", self.inst_name(), src, dst)
             }
-            Instruction::Add { src_a, src_b, dst }
-            | Instruction::Sub { src_a, src_b, dst }
-            | Instruction::Mult { src_a, src_b, dst }
-            | Instruction::Div { src_a, src_b, dst }
-            | Instruction::LShift { src_a, src_b, dst }
-            | Instruction::RShift { src_a, src_b, dst }
-            | Instruction::Mod { src_a, src_b, dst }
-            | Instruction::And { src_a, src_b, dst }
-            | Instruction::Or { src_a, src_b, dst } => {
+            Self::Add { src_a, src_b, dst }
+            | Self::Sub { src_a, src_b, dst }
+            | Self::Mult { src_a, src_b, dst }
+            | Self::Div { src_a, src_b, dst }
+            | Self::LShift { src_a, src_b, dst }
+            | Self::RShift { src_a, src_b, dst }
+            // unsigned
+            | Self::RShiftu { src_a, src_b, dst }
+            | Self::Mod { src_a, src_b, dst }
+            | Self::And { src_a, src_b, dst }
+            | Self::Or { src_a, src_b, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src_a, src_b, dst)
             }
-            Instruction::ImmAdd { src, konst, dst }
-            | Instruction::ImmSub { src, konst, dst }
-            | Instruction::ImmMult { src, konst, dst }
-            | Instruction::ImmLShift { src, konst, dst }
-            | Instruction::ImmRShift { src, konst, dst } => {
+            Self::ImmAdd { src, konst, dst }
+            | Self::ImmSub { src, konst, dst }
+            | Self::ImmMult { src, konst, dst }
+            | Self::ImmLShift { src, konst, dst }
+            | Self::ImmRShift { src, konst, dst }
+            // unsigned
+            | Self::ImmRShiftu { src, konst, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src, konst, dst)
             }
 
-            Instruction::ImmLoad { src, dst } => {
+            Self::ImmLoad { src, dst } => {
                 write!(f, "    {} {} => {}", self.inst_name(), src, dst)
             }
-            Instruction::LoadAddImm { src, add, dst }
-            | Instruction::StoreAddImm { src, add, dst } => {
+            Self::LoadAddImm { src, add, dst }
+            | Self::StoreAddImm { src, add, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src, add, dst)
             }
-            Instruction::LoadAdd { src, add, dst } | Instruction::StoreAdd { src, add, dst } => {
+            Self::LoadAdd { src, add, dst } | Self::StoreAdd { src, add, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src, add, dst)
             }
 
-            Instruction::CmpLT { a, b, dst }
-            | Instruction::CmpLE { a, b, dst }
-            | Instruction::CmpGT { a, b, dst }
-            | Instruction::CmpGE { a, b, dst }
-            | Instruction::CmpEQ { a, b, dst }
-            | Instruction::CmpNE { a, b, dst }
-            | Instruction::Comp { a, b, dst } => {
+            Self::CmpLT { a, b, dst }
+            | Self::CmpLE { a, b, dst }
+            | Self::CmpGT { a, b, dst }
+            | Self::CmpGE { a, b, dst }
+            | Self::CmpEQ { a, b, dst }
+            | Self::CmpNE { a, b, dst }
+            | Self::Comp { a, b, dst }
+            // unsigned
+            | Self::Compu { a, b, dst }
+            | Self::CmpuGE { a, b, dst }
+            | Self::CmpuGT { a, b, dst }
+            | Self::CmpuLE { a, b, dst }
+            | Self::CmpuLT { a, b, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), a, b, dst)
             }
 
-            Instruction::TestEQ { test, dst }
-            | Instruction::TestNE { test, dst }
-            | Instruction::TestGT { test, dst }
-            | Instruction::TestGE { test, dst }
-            | Instruction::TestLT { test, dst }
-            | Instruction::TestLE { test, dst } => {
+            Self::TestEQ { test, dst }
+            | Self::TestNE { test, dst }
+            | Self::TestGT { test, dst }
+            | Self::TestGE { test, dst }
+            | Self::TestLT { test, dst }
+            | Self::TestLE { test, dst }
+            // Unsigned
+            | Self::TestuGT { test, dst }
+            | Self::TestuGE { test, dst }
+            | Self::TestuLT { test, dst }
+            | Self::TestuLE { test, dst } => {
                 write!(f, "    {} {} => {}", self.inst_name(), test, dst)
             }
-            Instruction::ImmJump(label) => write!(f, "    {} -> {}", self.inst_name(), label),
-            Instruction::Jump(reg) => write!(f, "    {} -> {}", self.inst_name(), reg),
-            Instruction::Call { name, args } => write!(
+            Self::ImmJump(label) => write!(f, "    {} -> {}", self.inst_name(), label),
+            Self::Jump(reg) => write!(f, "    {} -> {}", self.inst_name(), reg),
+            Self::Call { name, args } => write!(
                 f,
                 "    {} {}{} {}",
                 self.inst_name(),
@@ -450,7 +509,7 @@ impl fmt::Display for Instruction {
                 if args.is_empty() { "" } else { "," },
                 args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
             ),
-            Instruction::ImmCall { name, args, ret } => write!(
+            Self::ImmCall { name, args, ret } => write!(
                 f,
                 "    {} {}, {} => {}",
                 self.inst_name(),
@@ -458,7 +517,7 @@ impl fmt::Display for Instruction {
                 args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", "),
                 ret
             ),
-            Instruction::ImmRCall { reg, args, ret } => write!(
+            Self::ImmRCall { reg, args, ret } => write!(
                 f,
                 "    {} {}, {} => {}",
                 self.inst_name(),
@@ -466,51 +525,56 @@ impl fmt::Display for Instruction {
                 args.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", "),
                 ret
             ),
-            Instruction::ImmRet(reg) => write!(f, "    {} {}", self.inst_name(), reg),
-            Instruction::CbrT { cond, loc } | Instruction::CbrF { cond, loc } => {
+            Self::ImmRet(reg) => write!(f, "    {} {}", self.inst_name(), reg),
+            Self::CbrT { cond, loc } | Self::CbrF { cond, loc } => {
                 write!(f, "    {} {} -> {}", self.inst_name(), cond, loc)
             }
-            Instruction::CbrLT { a, b, loc }
-            | Instruction::CbrLE { a, b, loc }
-            | Instruction::CbrGT { a, b, loc }
-            | Instruction::CbrGE { a, b, loc }
-            | Instruction::CbrEQ { a, b, loc }
-            | Instruction::CbrNE { a, b, loc } => {
+            Self::CbrLT { a, b, loc }
+            | Self::CbrLE { a, b, loc }
+            | Self::CbrGT { a, b, loc }
+            | Self::CbrGE { a, b, loc }
+            | Self::CbrEQ { a, b, loc }
+            | Self::CbrNE { a, b, loc }
+            // unsigned
+            | Self::CbruGE { a, b, loc }
+            | Self::CbruGT { a, b, loc }
+            | Self::CbruLE { a, b, loc }
+            | Self::CbruLT { a, b, loc } => {
                 write!(f, "    {} {}, {} -> {}", self.inst_name(), a, b, loc)
             }
 
-            Instruction::FAdd { src_a, src_b, dst }
-            | Instruction::FSub { src_a, src_b, dst }
-            | Instruction::FMult { src_a, src_b, dst }
-            | Instruction::FDiv { src_a, src_b, dst }
-            | Instruction::FComp { src_a, src_b, dst } => {
+            Self::FAdd { src_a, src_b, dst }
+            | Self::FSub { src_a, src_b, dst }
+            | Self::FMult { src_a, src_b, dst }
+            | Self::FDiv { src_a, src_b, dst }
+            | Self::FComp { src_a, src_b, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src_a, src_b, dst)
             }
 
-            Instruction::FLoadAddImm { src, add, dst } => {
+            Self::FLoadAddImm { src, add, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src, add, dst)
             }
-            Instruction::FLoadAdd { src, add, dst } => {
+            Self::FLoadAdd { src, add, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src, add, dst)
             }
-            Instruction::FRead(reg)
-            | Instruction::IRead(reg)
-            | Instruction::FWrite(reg)
-            | Instruction::IWrite(reg)
-            | Instruction::SWrite(reg)
-            | Instruction::PutChar(reg)
-            | Instruction::Free(reg)
-            | Instruction::PushR(reg) => write!(f, "    {} {}", self.inst_name(), reg),
+            Self::FRead(reg)
+            | Self::IRead(reg)
+            | Self::FWrite(reg)
+            | Self::IWrite(reg)
+            | Self::SWrite(reg)
+            | Self::PutChar(reg)
+            | Self::Free(reg)
+            | Self::PushR(reg) => write!(f, "    {} {}", self.inst_name(), reg),
 
-            Instruction::Malloc { size, dst } => {
+            Self::Malloc { size, dst } => {
                 write!(f, "    {} {} => {}", self.inst_name(), size, dst)
             }
-            Instruction::Realloc { src, size, dst } => {
+            Self::Realloc { src, size, dst } => {
                 write!(f, "    {} {}, {} => {}", self.inst_name(), src, size, dst)
             }
 
-            Instruction::Push(val) => write!(f, "    {} {}", self.inst_name(), val),
-            Instruction::Frame { name, size, params } => {
+            Self::Push(val) => write!(f, "    {} {}", self.inst_name(), val),
+            Self::Frame { name, size, params } => {
                 write!(
                     f,
                     ".{} {}, {}{} {}",
@@ -521,21 +585,21 @@ impl fmt::Display for Instruction {
                     params.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(", ")
                 )
             }
-            Instruction::Global { name, size, align } => {
+            Self::Global { name, size, align } => {
                 write!(f, "    .{} {}, {}, {}", self.inst_name(), name, size, align)
             }
-            Instruction::Array { name, size, content } => {
+            Self::Array { name, size, content } => {
                 write!(f, "    .{} {}, {}, [", self.inst_name(), name, size)?;
                 write!(f, "{}", content.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", "))?;
                 writeln!(f, "]")
             }
-            Instruction::String { name, content } => {
+            Self::String { name, content } => {
                 write!(f, "    .{} {}, {}", self.inst_name(), name, content)
             }
-            Instruction::Float { name, content } => {
+            Self::Float { name, content } => {
                 write!(f, "    .{} {}, {}", self.inst_name(), name, content)
             }
-            Instruction::Label(label) => {
+            Self::Label(label) => {
                 if label == ".L_main:"
                 // Remove the labels that are added as a result of basic block construction
                     || label.chars().take(3).all(|c| c == '.' || c.is_numeric() || c == '_')
@@ -545,7 +609,7 @@ impl fmt::Display for Instruction {
                     write!(f, "{} nop", label)
                 }
             }
-            Instruction::Text | Instruction::Data => write!(f, "    .{}", self.inst_name()),
+            Self::Text | Self::Data => write!(f, "    .{}", self.inst_name()),
             _ => write!(f, "    {}", self.inst_name()),
         }
     }

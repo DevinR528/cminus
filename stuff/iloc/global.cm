@@ -1,0 +1,9 @@
+linked fn write<T>(_: T);
+
+const global: int = 0;
+
+
+fn main(): void {
+    global = 0x67452301;
+    write(global);
+}

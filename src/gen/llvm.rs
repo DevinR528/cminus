@@ -427,6 +427,9 @@ impl<'ctx> LLVMGen<'ctx> {
                 Val::Int(i) => {
                     BasicValueEnum::IntValue(self.context.i64_type().const_int(*i as u64, true))
                 }
+                Val::UInt(i) => {
+                    BasicValueEnum::IntValue(self.context.i64_type().const_int(*i as u64, true))
+                }
                 Val::Char(c) => {
                     BasicValueEnum::IntValue(self.context.i8_type().const_int(*c as u64, false))
                 }

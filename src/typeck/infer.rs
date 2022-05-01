@@ -1,8 +1,4 @@
-use std::{
-    cell::Cell,
-    fmt,
-    sync::mpsc::Receiver,
-};
+use std::{cell::Cell, fmt, sync::mpsc::Receiver};
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
@@ -12,8 +8,8 @@ use crate::{
         types::{
             to_rng, Adt, BinOp, Binding, Block, Const, Decl, Declaration, Else, Enum, Expr,
             Expression, Field, FieldInit, Func, Generic, Impl, MatchArm, Param, Pat, Path, Range,
-            Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val, Variant,
-            DUMMY,
+            Spanned, Spany, Statement, Stmt, Struct, Trait, Ty, Type, TypeEquality, UnOp, Val,
+            Value, Variant, DUMMY,
         },
     },
     error::Error,
@@ -100,6 +96,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                 // TODO: hmmmm
                 (Ty::ConstStr(..), Ty::ConstStr(..)) => Some(Ty::ConstStr(0)),
                 (Ty::Int, Ty::Int) => Some(Ty::Int),
+                (Ty::UInt, Ty::UInt) => Some(Ty::UInt),
                 (Ty::Char, Ty::Char) => Some(Ty::Char),
                 (Ty::Float, Ty::Float) => Some(Ty::Float),
                 (Ty::Bool, Ty::Bool) => Some(Ty::Bool),
@@ -109,7 +106,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                     Ty::Func { ident: i2, ret: r2, params: p2 },
                 ) => todo!(),
                 _ => {
-                    println!("mismatched inference types");
+                    println!("mismatched inference types {:?} {:?}", ty, with);
                     None
                 }
             },
@@ -185,7 +182,7 @@ impl<'ast> TypeInfer<'_, 'ast, '_> {
                         }
 
                         self.tcxt.expr_ty.insert(rhs, inner_ty.val.clone());
-                    // We are at the end of the field access expression so, the whole expr resolves to this
+                        // We are at the end of the field access expression so, the whole expr resolves to this
                         self.tcxt.expr_ty.insert(parent, inner_ty.val.clone());
                     }
                 } else {
@@ -250,11 +247,16 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             // TODO: deal with user explicitly provided types
             Stmt::Assign { lval, rval, ty: given_ty, is_let } => {
                 self.visit_expr(rval);
-                // TODO: check given type and inferred type match
-                let ty = if let Some(t) =
-                    self.tcxt.expr_ty.get(rval).or_else(|| given_ty.as_ref().map(|t| &t.val))
-                {
-                    t.clone()
+
+                // If we have a given type `let x: given_ty = ...;` use that and make sure
+                // it agrees with the inferred type
+                let ty = if let Some(gt) = given_ty && *is_let {
+                    if !Some(&gt.val).is_ty_eq(&self.tcxt.expr_ty.get(rval)) {
+                        self.tcxt.expr_ty.insert(rval, gt.val.clone());
+                    }
+                    gt.val.clone()
+                } else if let Some(rty) = self.tcxt.expr_ty.get(rval) {
+                    rty.clone()
                 } else {
                     self.tcxt.errors.push_error(Error::error_with_span(
                         self.tcxt,
@@ -291,6 +293,8 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             (lval.span, Cell::new(false)),
                         );
 
+                        // TODO: don't error on shadowed var names allow multiple scopes in one
+                        // function
                         if self
                             .tcxt
                             .var_func
@@ -309,15 +313,45 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                             self.tcxt.errors.poisoned(true);
                         }
                     } else {
+                        // TODO: warn on unused don't error and bail
                         // we are only marking that the ident is used
                         self.tcxt.type_of_ident(lval.val.as_ident(), lval.span);
                     }
 
-                    // WE DO NOT DO TYPE CHECKING IN INFERENCE
-
                     // For any assignment we need to know the type of the lvalue, this is because
                     // each node is unique in the expr -> type map
                     self.visit_expr(lval);
+                    if let Some(rty) = self.tcxt.expr_ty.get(rval) {
+                        let is_int_char =
+                            rval.val.is_const_with_ty(&|t| matches!(t, Ty::Int | Ty::Char));
+                        let is_array_int_char =
+                            rval.val.is_const_with_ty(&|t| matches!(t, Ty::Int | Ty::Char));
+                        match self.tcxt.expr_ty.get(lval) {
+                            Some(Ty::UInt) if is_int_char => {
+                                self.tcxt.expr_ty.insert(rval, Ty::UInt);
+                            }
+                            Some(Ty::Array { ty: box Spanned { val: Ty::UInt, span }, size })
+                                if is_array_int_char =>
+                            {
+                                let span = *span;
+                                let size = *size;
+
+                                self.tcxt.expr_ty.insert(
+                                    rval,
+                                    Ty::Array { ty: box Ty::UInt.into_spanned(span), size },
+                                );
+
+                                let Expr::ArrayInit { items } = &rval.val else { unreachable!() };
+                                for it in items {
+                                    self.tcxt.expr_ty.insert(it, Ty::UInt);
+                                    update_inner_type(&it.val, self.tcxt, Ty::UInt);
+                                }
+                            }
+                            // hmmm => println!("{:?} {:?} {}", hmmm, &rval.val, is_array_int_char),
+                            _ => {}
+                        };
+                    }
+                    // WE DO NOT DO TYPE CHECKING IN INFERENCE
                 }
             }
             Stmt::AssignOp { lval, rval, op } => {
@@ -386,6 +420,26 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
             }
             Stmt::Ret(expr) => {
                 self.visit_expr(expr);
+                let path = self.tcxt.curr_fn.unwrap();
+                match &expr.val {
+                    Expr::Value(Spanned { val: Val::Int(..) | Val::Char(..), .. })
+                        if matches!(
+                            self.tcxt.var_func.name_func.get(&path).map(|f| { &f.ret.get().val }),
+                            Some(&Ty::UInt)
+                        ) =>
+                    {
+                        self.tcxt.expr_ty.insert(&*expr, Ty::UInt);
+                    }
+                    Expr::Value(Spanned { val: Val::Int(..) | Val::Char(..), .. })
+                        if matches!(
+                            self.tcxt.var_func.name_func.get(&path).map(|f| { &f.ret.get().val }),
+                            Some(Ty::UInt)
+                        ) =>
+                    {
+                        self.tcxt.expr_ty.insert(&*expr, Ty::UInt);
+                    }
+                    _ => {}
+                }
             }
             Stmt::Exit => {}
             Stmt::Block(blk) => {
@@ -465,8 +519,35 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 let rhsty = self.tcxt.expr_ty.get(&**rhs);
                 let lhsty = self.tcxt.expr_ty.get(&**lhs);
 
+                let (rhsty, lhsty) = match (&lhs.val, &rhs.val) {
+                    (Expr::Value(Spanned { val: Val::Int(..) | Val::Char(..), .. }), _)
+                        if matches!(rhsty, Some(Ty::UInt)) =>
+                    {
+                        self.tcxt.expr_ty.insert(&*lhs, Ty::UInt);
+                        (self.tcxt.expr_ty.get(&**rhs), self.tcxt.expr_ty.get(&**lhs))
+                    }
+                    (_, Expr::Value(Spanned { val: Val::Int(..) | Val::Char(..), .. }))
+                        if matches!(lhsty, Some(Ty::UInt)) =>
+                    {
+                        self.tcxt.expr_ty.insert(&*rhs, Ty::UInt);
+                        (self.tcxt.expr_ty.get(&**rhs), self.tcxt.expr_ty.get(&**lhs))
+                    }
+                    _ => (self.tcxt.expr_ty.get(&**rhs), self.tcxt.expr_ty.get(&**lhs)),
+                };
+
                 if let Some(unified) = fold_ty(self.tcxt, lhsty, rhsty, op, expr.span) {
                     self.tcxt.expr_ty.insert(expr, unified);
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        expr.span,
+                        &format!(
+                            "[E0i] no valid operation for `{}` and `{}`",
+                            lhsty.map_or("<unkown>".to_string(), |t| t.to_string()),
+                            rhsty.map_or("<unkown>".to_string(), |t| t.to_string()),
+                        ),
+                    ));
+                    self.tcxt.errors.poisoned(true);
                 }
             }
             Expr::Parens(ex) => {
@@ -478,8 +559,36 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 }
             }
             Expr::Call { path, args, type_args } => {
-                for arg in args.iter() {
+                for (i, arg) in args.iter().enumerate() {
                     self.visit_expr(arg);
+
+                    match &arg.val {
+                        Expr::Value(Spanned { val: Val::Int(..) | Val::Char(..), .. })
+                            if matches!(
+                                self.tcxt
+                                    .var_func
+                                    .name_func
+                                    .get(&path.segs[0])
+                                    .map(|f| { &f.params[i].ty.get().val }),
+                                Some(&Ty::UInt)
+                            ) =>
+                        {
+                            self.tcxt.expr_ty.insert(&*arg, Ty::UInt);
+                        }
+                        Expr::Value(Spanned { val: Val::Int(..) | Val::Char(..), .. })
+                            if matches!(
+                                self.tcxt
+                                    .var_func
+                                    .name_func
+                                    .get(&path.segs[0])
+                                    .map(|f| { &f.params[i].ty.get().val }),
+                                Some(Ty::UInt)
+                            ) =>
+                        {
+                            self.tcxt.expr_ty.insert(&*arg, Ty::UInt);
+                        }
+                        _ => {}
+                    }
                 }
 
                 // If the function is from an arguemnt we added the parameter name and fn header as
@@ -720,10 +829,19 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                     self.visit_expr(ex);
                     ty = self.unify(ty.as_ref(), self.tcxt.expr_ty.get(ex));
                 }
-                self.tcxt.expr_ty.insert(
-                    expr,
-                    Ty::Array { size, ty: box ty.unwrap_or(Ty::Void).into_spanned(DUMMY) },
-                );
+
+                if let Some(arr_ty) = ty {
+                    self.tcxt
+                        .expr_ty
+                        .insert(expr, Ty::Array { size, ty: box arr_ty.into_spanned(DUMMY) });
+                } else {
+                    self.tcxt.errors.push_error(Error::error_with_span(
+                        self.tcxt,
+                        expr.span,
+                        "[E0i] no type infered for array elements",
+                    ));
+                    self.tcxt.errors.poisoned(true);
+                }
             }
             Expr::Value(val) => {
                 self.tcxt.expr_ty.insert(expr, val.val.to_type());
@@ -732,6 +850,44 @@ impl<'ast> Visit<'ast> for TypeInfer<'_, 'ast, '_> {
                 self.tcxt.expr_ty.insert(expr, b.type_of());
             }
         }
+    }
+}
+
+fn update_inner_type<'ast>(it: &'ast Expr, expr_ty: &mut TyCheckRes<'ast, '_>, ty: Ty) {
+    match it {
+        Expr::Ident(_) => todo!(),
+        Expr::Deref { expr, .. }
+        | Expr::AddrOf(expr)
+        | Expr::Urnary { expr, .. }
+        | Expr::Parens(expr) => {
+            expr_ty.expr_ty.insert(expr, ty.clone());
+            update_inner_type(&expr.val, expr_ty, ty);
+        }
+        Expr::Binary { lhs, rhs, .. } => {
+            expr_ty.expr_ty.insert(lhs, ty.clone());
+            expr_ty.expr_ty.insert(rhs, ty.clone());
+
+            update_inner_type(&lhs.val, expr_ty, ty.clone());
+            update_inner_type(&rhs.val, expr_ty, ty);
+        }
+        Expr::StructInit { path, fields } => {
+            for it in fields {
+                expr_ty.expr_ty.insert(&it.init, ty.clone());
+                update_inner_type(&it.init.val, expr_ty, ty.clone());
+            }
+        }
+        Expr::EnumInit { items, .. } | Expr::ArrayInit { items } => {
+            for it in items {
+                expr_ty.expr_ty.insert(it, ty.clone());
+                update_inner_type(&it.val, expr_ty, ty.clone());
+            }
+        }
+        Expr::Array { ident, exprs } => todo!(),
+        Expr::Call { path, args, type_args } => todo!(),
+        Expr::TraitMeth { trait_, args, type_args } => todo!(),
+        Expr::FieldAccess { lhs, rhs } => todo!(),
+        Expr::Value(v) => {}
+        Expr::Builtin(_) => {}
     }
 }
 

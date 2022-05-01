@@ -15,6 +15,7 @@ use crate::{
 pub enum Val {
     Float(f64),
     Int(isize),
+    UInt(u32),
     Char(char),
     Bool(bool),
     Str(usize, Ident),
@@ -25,6 +26,7 @@ impl Val {
         match val {
             ty::Val::Float(v) => Val::Float(v),
             ty::Val::Int(v) => Val::Int(v),
+            ty::Val::UInt(v) => Val::UInt(v),
             ty::Val::Char(v) => Val::Char(v),
             ty::Val::Bool(v) => Val::Bool(v),
             ty::Val::Str(size, v) => Val::Str(size, v),
@@ -35,6 +37,7 @@ impl Val {
         match self {
             Val::Float(_) => Ty::Float,
             Val::Int(_) => Ty::Int,
+            Val::UInt(_) => Ty::UInt,
             Val::Char(_) => Ty::Char,
             Val::Bool(_) => Ty::Bool,
             Val::Str(size, s) => Ty::ConstStr(*size),
@@ -46,6 +49,7 @@ impl Val {
         match self {
             Val::Float(_) => 8,
             Val::Int(_) => 8,
+            Val::UInt(_) => 4,
             Val::Char(_) => 4,
             Val::Bool(_) => 1,
             Val::Str(_, _) => 8,
@@ -58,6 +62,7 @@ impl fmt::Display for Val {
         match self {
             Val::Float(v) => v.fmt(f),
             Val::Int(v) => v.fmt(f),
+            Val::UInt(v) => v.fmt(f),
             Val::Char(v) => v.fmt(f),
             Val::Bool(v) => v.fmt(f),
             Val::Str(size, v) => v.fmt(f),
@@ -72,6 +77,8 @@ impl PartialEq for Val {
             (Val::Float(_), _) => false,
             (Val::Int(a), Val::Int(b)) => a.eq(b),
             (Val::Int(_), _) => false,
+            (Val::UInt(a), Val::UInt(b)) => a.eq(b),
+            (Val::UInt(_), _) => false,
             (Val::Char(a), Val::Char(b)) => a.eq(b),
             (Val::Char(_), _) => false,
             (Val::Str(_, a), Val::Str(_, b)) => a.eq(b),
@@ -87,6 +94,7 @@ impl hash::Hash for Val {
         discriminant(self).hash(state);
         match self {
             Self::Int(int) => int.hash(state),
+            Self::UInt(int) => int.hash(state),
             Self::Float(float) => float.to_bits().hash(state),
             Self::Char(s) => s.hash(state),
             Self::Str(_, s) => s.hash(state),
@@ -754,9 +762,13 @@ pub enum Ty {
     ConstStr(usize),
     /// A positive or negative number.
     Int,
+    /// A positive number.
+    ///
+    /// The `U` stands for unsigned.
+    UInt,
     /// An ascii character.
     ///
-    /// todo: Could be bound to between 0-255
+    /// TODO: Could be bound to between 0-255
     Char,
     /// A positive or negative number with a fractional component.
     Float,
@@ -792,6 +804,7 @@ impl Ty {
             ty::Ty::Ref(t) => Ty::Ref(box Ty::lower(tyctx, &t.val)),
             ty::Ty::ConstStr(size) => Ty::ConstStr(*size),
             ty::Ty::Int => Ty::Int,
+            ty::Ty::UInt => Ty::UInt,
             ty::Ty::Char => Ty::Char,
             ty::Ty::Float => Ty::Float,
             ty::Ty::Bool => Ty::Bool,
@@ -807,6 +820,21 @@ impl Ty {
                 ret: box Ty::lower(tyctx, ret),
             },
             ty::Ty::Bottom => Ty::Bottom,
+        }
+    }
+
+    crate fn contains(&self, ele: &Self) -> bool {
+        match self {
+            Ty::Generic { .. } | Ty::Struct { .. } | Ty::Enum { .. } | Ty::Func { .. } => false,
+            Ty::Array { ty, .. } | Ty::Ptr(ty) | Ty::Ref(ty) => ty.contains(ele),
+            Ty::ConstStr(..)
+            | Ty::Int
+            | Ty::UInt
+            | Ty::Char
+            | Ty::Float
+            | Ty::Bool
+            | Ty::Void
+            | Ty::Bottom => self == ele
         }
     }
 
@@ -902,6 +930,7 @@ impl fmt::Display for Ty {
             Ty::Ref(t) => write!(f, "*{}", t),
             Ty::ConstStr(..) => write!(f, "string"),
             Ty::Int => write!(f, "int"),
+            Ty::UInt => write!(f, "uint"),
             Ty::Char => write!(f, "char"),
             Ty::Float => write!(f, "float"),
             Ty::Bool => write!(f, "bool"),

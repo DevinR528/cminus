@@ -429,7 +429,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
             }
             impl<'ast, 'b> VisitMut<'ast> for NameResUserTypes<'ast, 'b> {
                 fn visit_expr(&mut self, expr: &'ast mut Expression) {
-                    if let Expr::Call { path, args, type_args } = &expr.val {
+                    if let Expr::Call { path, args, type_args } = &mut expr.val {
                         let fixed_ty = self.res.type_from_path(path, self.tcxt);
                         if let Some(Ty::Enum { ident, .. }) = fixed_ty {
                             let mut path = path.clone();
@@ -439,8 +439,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                     }
                     // if it's still a call resolve any dependent generic type args from `Ty::Path
                     // -> Ty::Generic`
-                    if let Expr::Call { path, type_args, .. } = &expr.val {
-                        for ty_arg in unsafe { type_args.iter_mut_shared() } {
+                    if let Expr::Call { path, type_args, .. } = &mut expr.val {
+                        for ty_arg in type_args.iter_mut() {
                             if !ty_arg.val.has_path() {
                                 continue;
                             }
@@ -459,20 +459,21 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                                 *ty_arg = res;
                             }
                         }
-                    } else if let Expr::Builtin(Builtin::SizeOf(ty)) = &expr.val {
+                    } else if let Expr::Builtin(Builtin::SizeOf(ty)) = &mut expr.val {
                         if !matches!(ty.get().val, Ty::Path(..)) {
                             return;
                         }
                         let resolved =
                             self.tcxt.patch_generic_from_path(ty.get(), &self.func.generics);
                         if let Some(res) = resolved {
-                            ty.set(res);
+                            *ty.get_mut() = res;
                         }
                     }
                 }
             }
 
             // Fix enum inits parsed as call expressions
+            // Fix struct and enums being thought of as `Path`s
             for stmt in unsafe { func.stmts.stmts.iter_mut_shared() } {
                 NameResUserTypes { res: &self.name_res, tcxt: self, func }.visit_stmt(stmt);
             }
@@ -1048,7 +1049,7 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
 
                 for e in exprs {
                     let ty = self.expr_ty.get(e);
-                    if !matches!(ty, Some(Ty::Int)) {
+                    if !matches!(ty, Some(Ty::Int) | Some(Ty::UInt)) {
                         self.errors.push_error(Error::error_with_span(
                             self,
                             expr.span,
@@ -1060,11 +1061,8 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                         self.errors.poisoned(true);
                     }
                 }
-                if let Some(ty) = self.type_of_ident(*ident, expr.span) {
-                    // if self.expr_ty.insert(expr, ty).is_some() {
-                    // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
-                    // }
-                } else {
+                // Ok because of `x[0] += 1;` turns into `x[0] = x[0] + 1;`
+                if self.type_of_ident(*ident, expr.span).is_none() {
                     self.errors.push_error(Error::error_with_span(
                         self,
                         expr.span,
@@ -1102,6 +1100,42 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                             self.errors.poisoned(true);
                         }
                     }
+                }
+            }
+            Expr::Binary { op, lhs, rhs } => {
+                self.visit_expr(lhs);
+                self.visit_expr(rhs);
+
+                let lhs_ty = self.expr_ty.get(&**lhs);
+                let rhs_ty = self.expr_ty.get(&**rhs);
+
+                if let Some(ty) = fold_ty(
+                    self,
+                    resolve_ty(self, lhs, lhs_ty).as_ref(),
+                    resolve_ty(self, rhs, rhs_ty).as_ref(),
+                    op,
+                    expr.span,
+                ) {
+                    // TODO: is this needed?? we are just overwriting the result of inference and
+                    // checking that it was equal
+                    if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
+                        if !ty.is_ty_eq(&t2) {
+                            println!("{:?} {:?}", ty, t2);
+                            self.errors.push_error(Error::error_with_span(
+                                self,
+                                expr.span,
+                                "ICE: something went wrong in the compiler",
+                            ));
+                            self.errors.poisoned(true);
+                        }
+                    }
+                } else {
+                    self.errors.push_error(Error::error_with_span(
+                        self,
+                        expr.span,
+                        &format!("[E0ty] no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
+                    ));
+                    self.errors.poisoned(true);
                 }
             }
             Expr::Deref { indir, expr: inner_expr } => {
@@ -1146,41 +1180,6 @@ impl<'ast, 'input> Visit<'ast> for TyCheckRes<'ast, 'input> {
                 };
                 if let Some(ty) = t {
                     self.expr_ty.insert(expr, Ty::Ptr(box ty.into_spanned(DUMMY)));
-                }
-            }
-            Expr::Binary { op, lhs, rhs } => {
-                self.visit_expr(lhs);
-                self.visit_expr(rhs);
-
-                let lhs_ty = self.expr_ty.get(&**lhs);
-                let rhs_ty = self.expr_ty.get(&**rhs);
-
-                if let Some(ty) = fold_ty(
-                    self,
-                    resolve_ty(self, lhs, lhs_ty).as_ref(),
-                    resolve_ty(self, rhs, rhs_ty).as_ref(),
-                    op,
-                    expr.span,
-                ) {
-                    // TODO: is this needed?? we are just overwriting the result of inference and
-                    // checking that it was equal
-                    if let Some(t2) = self.expr_ty.insert(expr, ty.clone()) {
-                        if !ty.is_ty_eq(&t2) {
-                            self.errors.push_error(Error::error_with_span(
-                                self,
-                                expr.span,
-                                "ICE: something went wrong in the compiler",
-                            ));
-                            self.errors.poisoned(true);
-                        }
-                    }
-                } else {
-                    self.errors.push_error(Error::error_with_span(
-                        self,
-                        expr.span,
-                        &format!("[E0ty] no type found for bin expr {:?} != {:?}", lhs_ty, rhs_ty),
-                    ));
-                    self.errors.poisoned(true);
                 }
             }
             Expr::Parens(inner_expr) => {

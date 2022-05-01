@@ -1025,10 +1025,6 @@ impl<'a> AstBuilder<'a> {
             if self.curr.kind == TokenMatch::Star {
                 let indir = self.count_eaten_seq(&TokenMatch::Star);
 
-                if self.curr.kind != TokenMatch::Ident {
-                    todo!("error?")
-                }
-
                 ast::Expr::Deref { indir, expr: box self.make_lh_expr()? }
                     .into_spanned(ast::to_rng(start..self.input_idx, self.file_id))
             } else if self.check_next(&TokenMatch::Dot) {
@@ -2049,6 +2045,7 @@ impl<'a> AstBuilder<'a> {
                         "bool" => ast::Ty::Bool.into_spanned(span),
                         "char" => ast::Ty::Char.into_spanned(span),
                         "int" => ast::Ty::Int.into_spanned(span),
+                        "uint" => ast::Ty::UInt.into_spanned(span),
                         "float" => ast::Ty::Float.into_spanned(span),
                         "cstr" => ast::Ty::ConstStr(0).into_spanned(span),
                         _ => {
@@ -2868,7 +2865,5 @@ fn add() {
 "#;
     let mut parser = AstBuilder::new(input, "test.file", std::sync::mpsc::channel().0);
     parser.parse().unwrap();
-    println!("{:#?}", parser.items);
-
     assert_eq!(parser.items().len(), 1);
 }

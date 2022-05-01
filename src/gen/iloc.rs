@@ -208,7 +208,75 @@ impl<'ctx> IlocGen<'ctx> {
             (name, Reg::Var(num))
         }
     }
+    fn uint_binop(&mut self, op: BinOp, lhs_reg: Reg, rhs_reg: Reg) -> Reg {
+        match op {
+            BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::Add
+            | BinOp::Sub
+            | BinOp::LeftShift
+            // This, and the next few, are bitwise operations, in Iloc there is no
+            // difference between logical and bitwise operations
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            // No xor in Iloc yet..
+            | BinOp::BitXor
+            // Logical and/or operations, treated the same as bitwise in Iloc
+            | BinOp::And
+            | BinOp::Or
+            // These comparison operators are the same for int and uint
+            | BinOp::Ne
+            | BinOp::Eq => self.int_binop(op, lhs_reg, rhs_reg),
+            BinOp::RightShift => {
+                let dst = self.expr_to_reg(Operation::BinOp(op, lhs_reg, rhs_reg));
+                self.iloc_buf.push(Instruction::RShiftu { src_a: lhs_reg, src_b: rhs_reg, dst });
+                dst
+            }
 
+            // Comparison operations
+            BinOp::Lt => {
+                let dst = self.expr_to_reg(Operation::BinOp(op, lhs_reg, rhs_reg));
+                let test_dst = self.expr_to_reg(Operation::Test(op, dst));
+                self.iloc_buf.extend([
+                    Instruction::Compu { a: lhs_reg, b: rhs_reg, dst },
+                    Instruction::TestuGE { test: dst, dst: test_dst },
+                ]);
+                test_dst
+            }
+            BinOp::Le => {
+                let dst = self.expr_to_reg(Operation::BinOp(op, lhs_reg, rhs_reg));
+                let test_dst = self.expr_to_reg(Operation::Test(op, dst));
+                self.iloc_buf.extend([
+                    Instruction::Compu { a: lhs_reg, b: rhs_reg, dst },
+                    Instruction::TestuGT { test: dst, dst: test_dst },
+                ]);
+                test_dst
+            }
+            BinOp::Ge => {
+                let dst = self.expr_to_reg(Operation::BinOp(op, lhs_reg, rhs_reg));
+                let test_dst = self.expr_to_reg(Operation::Test(op, dst));
+                self.iloc_buf.extend([
+                    Instruction::Compu { a: lhs_reg, b: rhs_reg, dst },
+                    Instruction::TestuLT { test: dst, dst: test_dst },
+                ]);
+                test_dst
+            }
+            BinOp::Gt => {
+                let dst = self.expr_to_reg(Operation::BinOp(op, lhs_reg, rhs_reg));
+                let test_dst = self.expr_to_reg(Operation::Test(op, dst));
+                self.iloc_buf.extend([
+                    Instruction::Compu { a: lhs_reg, b: rhs_reg, dst },
+                    Instruction::TestuLE { test: dst, dst: test_dst },
+                ]);
+                test_dst
+            }
+            // `lir::lower` converts all `op=` into the full expression
+            BinOp::AddAssign | BinOp::SubAssign => {
+                unreachable!("this is converted to a full add/sub expression")
+            }
+        }
+    }
     fn int_binop(&mut self, op: BinOp, lhs_reg: Reg, rhs_reg: Reg) -> Reg {
         match op {
             BinOp::Mul => {
@@ -444,7 +512,19 @@ impl<'ctx> IlocGen<'ctx> {
                             self.ident_to_reg(*ident)
                         }
                     }
-                    Ty::Int => self.ident_to_reg(*ident),
+                    Ty::Int | Ty::UInt => {
+                        if let Some(Global::Int { name, .. }) = self.globals.get(ident).cloned() {
+                            let tmp = self.expr_to_reg(Operation::ImmLoad(*ident));
+                            let dst = self.expr_to_reg(Operation::Load(tmp));
+                            self.iloc_buf.extend([
+                                Instruction::ImmLoad { src: inst::Val::Location(name), dst: tmp },
+                                Instruction::Load { src: tmp, dst },
+                            ]);
+                            dst
+                        } else {
+                            self.ident_to_reg(*ident)
+                        }
+                    }
                     Ty::Char => self.ident_to_reg(*ident),
                     Ty::Float => self.ident_to_reg(*ident),
                     Ty::Bool => self.ident_to_reg(*ident),
@@ -534,8 +614,16 @@ impl<'ctx> IlocGen<'ctx> {
                 }
                 if let Ty::Float = ty {
                     self.float_binop(*op, lhs_reg, rhs_reg)
-                } else {
+                } else if ty.contains(&Ty::Int) {
                     self.int_binop(*op, lhs_reg, rhs_reg)
+                } else if ty.contains(&Ty::UInt) {
+                    self.uint_binop(*op, lhs_reg, rhs_reg)
+                } else if lhs.type_of().contains(&Ty::Int) || rhs.type_of().contains(&Ty::Int) {
+                    self.int_binop(*op, lhs_reg, rhs_reg)
+                } else if lhs.type_of().contains(&Ty::UInt) || rhs.type_of().contains(&Ty::UInt) {
+                    self.uint_binop(*op, lhs_reg, rhs_reg)
+                } else {
+                    unreachable!("{:?}", ty)
                 }
             }
             Expr::Parens(expr) => self.gen_expression(expr),
@@ -606,7 +694,13 @@ impl<'ctx> IlocGen<'ctx> {
                         self.iloc_buf.push(Instruction::Load { src: access, dst: load_reg });
                         load_reg
                     }
-                    Ty::ConstStr(_) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool | Ty::Void => {
+                    Ty::ConstStr(_)
+                    | Ty::Int
+                    | Ty::UInt
+                    | Ty::Char
+                    | Ty::Float
+                    | Ty::Bool
+                    | Ty::Void => {
                         let load_reg = self.expr_to_reg(Operation::Load(access));
                         self.iloc_buf.push(Instruction::Load { src: access, dst: load_reg });
                         load_reg
@@ -776,6 +870,12 @@ impl<'ctx> IlocGen<'ctx> {
                         .push(Instruction::ImmLoad { src: inst::Val::Integer(*i), dst: tmp });
                     tmp
                 }
+                Val::UInt(i) => {
+                    let tmp = self.value_to_reg(val.clone());
+                    self.iloc_buf
+                        .push(Instruction::ImmLoad { src: inst::Val::UInteger(*i), dst: tmp });
+                    tmp
+                }
                 Val::Char(ch) => {
                     let tmp = self.value_to_reg(val.clone());
                     self.iloc_buf.push(Instruction::ImmLoad {
@@ -815,7 +915,18 @@ impl<'ctx> IlocGen<'ctx> {
 
     fn get_pointer(&mut self, lval: &LValue) -> Reg {
         match lval {
-            LValue::Ident { ident, ty } => self.ident_to_reg(*ident),
+            LValue::Ident { ident, ty } => {
+                if let Some(global) = self.globals.get(ident).cloned() {
+                    let tmp = self.expr_to_reg(Operation::ImmLoad(*ident));
+                    self.iloc_buf.push(Instruction::ImmLoad {
+                        src: inst::Val::Location(global.name().to_string()),
+                        dst: tmp,
+                    });
+                    tmp
+                } else {
+                    self.ident_to_reg(*ident)
+                }
+            }
             LValue::Deref { indir, expr, ty } => {
                 let mut loc = self.get_pointer(expr);
 
@@ -862,7 +973,7 @@ impl<'ctx> IlocGen<'ctx> {
                         // TODO: since each type is the same size...
                         self.stack_size += (4 * def.fields.len() as isize);
                     }
-                    Ty::Int | Ty::Float if *is_let => {
+                    Ty::Int | Ty::UInt | Ty::Float if *is_let => {
                         self.ident_address.insert(lval.as_ident().unwrap(), self.stack_size);
                         self.stack_size += 4;
                     }
@@ -883,8 +994,13 @@ impl<'ctx> IlocGen<'ctx> {
                 }
                 let dst = self.get_pointer(lval);
                 match lval {
-                    LValue::Ident { ident, .. } => match lval.type_of() {
-                        Ty::Int | Ty::Char | Ty::Array { .. } | Ty::Ptr(..) => {
+                    LValue::Ident { ident, .. } if !self.globals.contains_key(ident) => match lval
+                        .type_of()
+                    {
+                        Ty::Int | Ty::UInt | Ty::Char | Ty::Bool => {
+                            self.iloc_buf.push(Instruction::I2I { src: val, dst })
+                        }
+                        Ty::Array { .. } | Ty::Ptr(..) => {
                             self.iloc_buf.push(Instruction::I2I { src: val, dst })
                         }
                         Ty::Float => {
@@ -902,6 +1018,9 @@ impl<'ctx> IlocGen<'ctx> {
                         }
                         t => todo!("{:?}", lval),
                     },
+                    LValue::Ident { ident, .. } => {
+                        self.iloc_buf.push(Instruction::Store { src: val, dst })
+                    }
                     LValue::Deref { indir, expr, ty } => {
                         self.iloc_buf.push(Instruction::Store { src: val, dst });
                     }
@@ -926,7 +1045,7 @@ impl<'ctx> IlocGen<'ctx> {
                     assert!(expr.args.len() == 1);
                     let arg = self.gen_expression(&expr.args[0]);
                     match expr.args[0].type_of() {
-                        Ty::Int => self.iloc_buf.push(Instruction::IWrite(arg)),
+                        Ty::Int | Ty::UInt => self.iloc_buf.push(Instruction::IWrite(arg)),
                         Ty::Ptr(..) | Ty::Ref(..) => self.iloc_buf.push(Instruction::IWrite(arg)),
                         Ty::Float => self.iloc_buf.push(Instruction::FWrite(arg)),
                         Ty::ConstStr(..) => self.iloc_buf.push(Instruction::SWrite(arg)),
@@ -944,10 +1063,12 @@ impl<'ctx> IlocGen<'ctx> {
                     assert!(expr.args.len() == 1);
                     let arg = self.gen_expression(&expr.args[0]);
                     match expr.args[0].type_of() {
-                        Ty::Int => self.iloc_buf.push(Instruction::PutChar(arg)),
+                        Ty::Int | Ty::UInt => self.iloc_buf.push(Instruction::PutChar(arg)),
                         Ty::Char => self.iloc_buf.push(Instruction::PutChar(arg)),
                         Ty::Ref(_) => self.iloc_buf.push(Instruction::PutChar(arg)),
-                        Ty::Array { ty, .. } if *ty == Ty::Int => self.iloc_buf.push(Instruction::PutChar(arg)),
+                        Ty::Array { ty, .. } if *ty == Ty::Int => {
+                            self.iloc_buf.push(Instruction::PutChar(arg))
+                        }
                         t => unreachable!("not writeable {:?} {:?}", t, expr.args[0]),
                     }
                 }
@@ -956,13 +1077,13 @@ impl<'ctx> IlocGen<'ctx> {
                     let arg = self.gen_expression(&expr.args[0]);
 
                     match expr.args[0].type_of() {
-                        Ty::Ptr(ty) if matches!(&*ty, Ty::Int) => {
+                        Ty::Ptr(ty) if matches!(&*ty, Ty::Int | Ty::UInt) => {
                             self.iloc_buf.push(Instruction::IRead(arg))
                         }
                         Ty::Ptr(ty) if matches!(&*ty, Ty::Float) => {
                             self.iloc_buf.push(Instruction::FRead(arg))
                         }
-                        Ty::Array { ty, .. } if matches!(&*ty, Ty::Int) => {
+                        Ty::Array { ty, .. } if matches!(&*ty, Ty::Int | Ty::UInt) => {
                             self.iloc_buf.push(Instruction::IRead(arg));
                         }
                         t => unreachable!("not readable {:?}", t),
@@ -1155,6 +1276,21 @@ impl<'ast> Visit<'ast> for IlocGen<'ast> {
                             i as i64
                         } else {
                             unreachable!("non char value used in constant")
+                        },
+                    },
+                );
+            }
+            Ty::UInt => {
+                self.globals.insert(
+                    var.ident,
+                    Global::Int {
+                        name: name.clone(),
+                        content: if let Expr::Value(Val::UInt(i)) = var.init {
+                            i as i64
+                        } else if let Expr::Value(Val::Int(i)) = var.init {
+                            i as i64
+                        } else {
+                            unreachable!("non char value used in constant {:?}", var)
                         },
                     },
                 );

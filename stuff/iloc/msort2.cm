@@ -1,6 +1,12 @@
 linked fn write<T>(_: T);
 
-fn msort(array: *int, scratch: *int, n: int): *int {
+fn msort(
+    array: [3; int],
+    _array_idx: int,
+    scratch: [3; int],
+    _scratch_idx: int,
+    n: int,
+): [3; int] {
     if (n < 2) {
         return array;
     } else {
@@ -9,26 +15,22 @@ fn msort(array: *int, scratch: *int, n: int): *int {
         let k = 0;
         let m = n / 2;
         let l = n - m;
-        let arr = msort(array,     scratch,     m);
-        let b_arr = msort(array + m, scratch + m, l);
+        let arr = msort(array, 0,     scratch, 0,     m);
+        let b_arr = msort(array, m, scratch, m, l);
 
         // because `if` is not an expression and no ternary operator :(
         let d = array;
-        if (*arr == *array) { d = scratch } else { d = array }
+        if (arr[0] == array[0]) { d = scratch } else { d = array }
 
         while (k < n) {
-            let ele_check = j < l && *arr < *b_arr;
+            let ele_check = j < l && arr[i] < b_arr[j];
             // if (i < m ? j < l ? a[i] < b[j] : 1 : 0)
             if (i < m && j > l || ele_check) {
-                let d_ptr = (d - (k * 4));
-                let arr_ptr = (arr - (i * 4));
-                *d_ptr = *arr_ptr;
+                d[k] = arr[i];
                 i += 1;
                 k += 1;
             } else {
-                let d_ptr2 = (d - (k * 4));
-                let b_arr_ptr = (b_arr - (j * 4));
-                *d_ptr2 = *b_arr_ptr;
+                d[k] = b_arr[j];
                 j += 1;
                 k += 1;
             }
@@ -48,15 +50,12 @@ fn main() {
         i += 1;
     }
 
-    let aa = &a[0]; let bb = &b[0];
-    let c = msort(aa, bb, 3);
+    let c = msort(a, 0, b, 0, 3);
 
     i = 0;
     while (i < 3) {
-        let ele = c - (i * 4);
-        write(*ele);
+        write(c[i]);
         i += 1;
     }
 }
-
 

@@ -1,18 +1,18 @@
-linked fn print<T>(_: T);
-linked fn putchar(_: int);
+linked fn write<T>(_: T);
+linked fn putchar<T>(_: T);
 
-const h0:int = 0x67452301;
-const h1:int = 0xefcdab89;
-const h2:int = 0x98badcfe;
-const h3:int = 0x10325476;
+const h0: uint = 0;
+const h1: uint = 0;
+const h2: uint = 0;
+const h3: uint = 0;
 
-const s: [64; int] =
+const s: [64; uint] =
     [7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,
      5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,
      4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,  4, 11, 16, 23,
      6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21,  6, 10, 15, 21];
 
-const K: [64; int] =
+const K: [64; uint] =
     [0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
      0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
      0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
@@ -30,14 +30,14 @@ const K: [64; int] =
      0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
      0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391];
 
-struct digest { A: int, B: int, C: int, D: int }
+struct digest { A: uint, B: uint, C: uint, D: uint }
 
-fn leftrotate(x: int, shift: int): int {
+fn leftrotate(x: uint, shift: uint): uint {
     return (x << shift) + (x >> (32 - shift));
 }
 
-fn bnot(x: int, n : int): int {
-    let m = n / 2;
+fn bnot(x: uint, n : uint): uint {
+    let m: uint = n / 2;
     if (n == 1) {
         return 1 - x % 2;
     } else {
@@ -45,8 +45,8 @@ fn bnot(x: int, n : int): int {
     }
 }
 
-fn bxor(x: int, y: int, n : int): int {
-    let m = n / 2;
+fn bxor(x: uint, y: uint, n : uint): uint {
+    let m: uint = n / 2;
     if (n == 1) {
         return (x + y) % 2;
     } else {
@@ -54,19 +54,19 @@ fn bxor(x: int, y: int, n : int): int {
     }
 }
 
-fn bor(x: int, y: int, n : int): int {
+fn bor(x: uint, y: uint, n : uint): uint {
     if (n > 1) {
-        let m = n / 2;
+        let m: uint = n / 2;
         return bor(x >> m, y >> m, m) << m + bor(x, y, m);
-    } else if (x % 2 || y % 2) {
+    } else if (x % 2 | y % 2) {
         return 1;
     } else {
         return 0;
     }
 }
 
-fn band(x: int, y: int, n : int): int {
-    let m = n / 2;
+fn band(x: uint, y: uint, n : uint): uint {
+    let m: uint = n / 2;
     if (n == 1) {
         return (x * y) % 2;
     } else {
@@ -76,15 +76,15 @@ fn band(x: int, y: int, n : int): int {
 
 // https://en.wikipedia.org/wiki/MD5#Pseudocode
 
-fn md5(d: *digest, M: [16; int]) {
+fn md5(d: digest, M: [16; uint]) {
     let A = h0;
     let B = h1;
     let C = h2;
     let D = h3;
 
-    let i = 0;
-    let F = 0;
-    let g = 0;
+    let i: uint = 0;
+    let F: uint = 0;
+    let g: uint = 0;
     while (i < 64) {
         if (i < 16) {
             F = bor(band(B, C, 32), band(bnot(B, 32), D, 32), 32);
@@ -114,9 +114,9 @@ fn md5(d: *digest, M: [16; int]) {
     d.D = d.D + D;
 }
 
-fn phex(x: int, b: int) {
-    let ld = x % 16; x = x >> 4;
-    let hd = x % 16; x = x >> 4;
+fn phex(x: uint, b: uint) {
+    let ld: uint = x % 16; x = x >> 4;
+    let hd: uint = x % 16; x = x >> 4;
 
     if (hd < 10) { putchar(b'0' + hd); } else { putchar(b'a' + (hd - 10)); }
     if (ld < 10) { putchar(b'0' + ld); } else { putchar(b'a' + (ld - 10)); }
@@ -128,7 +128,12 @@ fn phex(x: int, b: int) {
 
 fn main()
 {
-    let msg :[16;int] =
+    h0 = 0x67452301;
+    h1 = 0xefcdab89;
+    h2 = 0x98badcfe;
+    h3 = 0x10325476;
+
+    let msg :[16;uint] =
         [b'T' + ((b'h' + ((b'e' + (b' ' << 8)) << 8)) << 8),
          b'q' + ((b'u' + ((b'i' + (b'c' << 8)) << 8)) << 8),
          b'k' + ((b' ' + ((b'b' + (b'r' << 8)) << 8)) << 8),
@@ -148,8 +153,17 @@ fn main()
 
     let d = digest {A: h0, B: h1, C: h2, D: h3};
 
-    md5(&d, msg);
+    write(d.A);
+    write(d.B);
+    write(d.C);
+    write(d.D);
 
+    md5(d, msg);
+
+    write(d.A);
+    write(d.B);
+    write(d.C);
+    write(d.D);
     // "9e107d9d-372bb682-6bd81d35-42a419d6"
 
     phex(d.A, 4); putchar(b'-');

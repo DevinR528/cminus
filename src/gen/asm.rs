@@ -235,6 +235,7 @@ impl<'ctx> CodeGen<'ctx> {
                     match item {
                         Val::Float(v) => writeln!(buf, "    .quad {}", v.to_bits()),
                         Val::Int(v) => writeln!(buf, "    .quad {}", v),
+                        Val::UInt(v) => writeln!(buf, "    .quad {}", v),
                         Val::Char(v) => writeln!(buf, "    .quad {}", (*v) as u8),
                         Val::Bool(v) => writeln!(buf, "    .quad {}", if *v { 1 } else { 0 }),
                         Val::Str(_, v) => writeln!(buf, "    .string {:?}", v),
@@ -1501,7 +1502,7 @@ impl<'ctx> CodeGen<'ctx> {
                 }
             }
             Expr::Value(val) => match val {
-                Val::Float(_) | Val::Int(_) | Val::Bool(_) => Location::Const { val: val.clone() },
+                Val::Float(_) | Val::Int(_) | Val::UInt(_) | Val::Bool(_) => Location::Const { val: val.clone() },
                 Val::Char(c) => Location::Const { val: Val::Int(*c as isize) },
                 Val::Str(_, s) => {
                     let string = s.name();
@@ -2119,6 +2120,20 @@ impl<'ast> Visit<'ast> for CodeGen<'ast> {
                     Global::Int {
                         name: name.clone(),
                         content: if let Expr::Value(Val::Int(i)) = var.init {
+                            i as i64
+                        } else {
+                            unreachable!("non char value used in constant")
+                        },
+                        mutable: var.mutable,
+                    },
+                );
+            }
+            Ty::UInt => {
+                self.globals.insert(
+                    var.ident,
+                    Global::Int {
+                        name: name.clone(),
+                        content: if let Expr::Value(Val::UInt(i)) = var.init {
                             i as i64
                         } else {
                             unreachable!("non char value used in constant")

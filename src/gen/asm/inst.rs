@@ -140,6 +140,7 @@ impl fmt::Display for Location {
                     write!(f, "{:>width$}", format!("${}", (*v as f32).to_bits()), width = width)
                 }
                 Val::Int(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
+                Val::UInt(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
                 Val::Char(v) => write!(f, "{:>width$}", format!("${}", v), width = width),
                 Val::Bool(v) => {
                     write!(f, "{:>width$}", format!("${}", if *v { 1 } else { 0 }), width = width)

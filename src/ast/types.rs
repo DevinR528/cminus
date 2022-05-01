@@ -28,6 +28,7 @@ crate trait Spany: Sized {
 pub enum Val {
     Float(f64),
     Int(isize),
+    UInt(u32),
     Char(char),
     Bool(bool),
     Str(usize, Ident),
@@ -38,6 +39,7 @@ impl Val {
         match self {
             Val::Float(_) => Ty::Float,
             Val::Int(_) => Ty::Int,
+            Val::UInt(_) => Ty::UInt,
             Val::Char(_) => Ty::Char,
             Val::Bool(_) => Ty::Bool,
             Val::Str(size, _) => Ty::ConstStr(*size),
@@ -51,6 +53,7 @@ impl hash::Hash for Val {
         match self {
             Val::Float(f) => (f.to_bits(), disc).hash(state),
             Val::Int(i) => (i, disc).hash(state),
+            Val::UInt(i) => (i, disc).hash(state),
             Val::Char(c) => (c, disc).hash(state),
             Val::Bool(b) => (b, disc).hash(state),
             Val::Str(_, s) => (s, disc).hash(state),
@@ -65,6 +68,8 @@ impl PartialEq for Val {
             (Val::Float(_), _) => false,
             (Val::Int(a), Val::Int(b)) => a.eq(b),
             (Val::Int(_), _) => false,
+            (Val::UInt(a), Val::UInt(b)) => a.eq(b),
+            (Val::UInt(_), _) => false,
             (Val::Char(a), Val::Char(b)) => a.eq(b),
             (Val::Char(_), _) => false,
             (Val::Str(_, a), Val::Str(_, b)) => a.eq(b),
@@ -82,6 +87,7 @@ impl fmt::Display for Value {
         match &self.val {
             Val::Float(v) => write!(f, "float {}", v),
             Val::Int(v) => write!(f, "int {}", v),
+            Val::UInt(v) => write!(f, "uint {}", v),
             Val::Char(v) => write!(f, "char {}", v),
             Val::Bool(v) => write!(f, "bool {}", v),
             Val::Str(_, v) => write!(f, "str '{}'", v),
@@ -304,6 +310,24 @@ impl Expr {
             Expr::Value(..) | Expr::Ident(..) | Expr::Builtin(..) => false,
         }
     }
+
+    crate fn is_const_with_ty<F: Fn(&Ty) -> bool>(&self, with: &F) -> bool {
+        match self {
+            Expr::Deref { expr, .. } => expr.val.is_const_with_ty(with),
+            Expr::AddrOf(expr) => expr.val.is_const_with_ty(with),
+            Expr::Array { exprs, .. } => exprs.first().map_or(false, |e| e.val.is_const_with_ty(with)),
+            Expr::Urnary { expr, .. } => expr.val.is_const_with_ty(with),
+            Expr::Binary { op, lhs, rhs } => lhs.val.is_const_with_ty(with) || rhs.val.is_const_with_ty(with),
+            Expr::Parens(ex) => ex.val.is_const_with_ty(with),
+            Expr::Value(val) => with(&val.val.to_type()),
+            Expr::StructInit { fields, .. } => fields.first().map_or(false, |e| e.init.val.is_const_with_ty(with)),
+            Expr::EnumInit { items, .. } => items.first().map_or(false, |e| e.val.is_const_with_ty(with)),
+            Expr::ArrayInit { items } => items.first().map_or(false, |e| e.val.is_const_with_ty(with)),
+
+            Expr::Ident(_) => false,
+            Expr::Call { .. } | Expr::TraitMeth { .. } | Expr::FieldAccess { .. } | Expr::Builtin(_) => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -380,6 +404,10 @@ pub enum Ty {
     ConstStr(usize),
     /// A positive or negative number.
     Int,
+    /// A positive number.
+    ///
+    /// The `U` stands for unsigned.
+    UInt,
     /// An ascii character.
     ///
     /// todo: Could be bound to between 0-255
@@ -424,6 +452,7 @@ impl Ty {
             Ty::Path(p) => todo!("{}", p),
             Ty::ConstStr(..)
             | Ty::Int
+            | Ty::UInt
             | Ty::Char
             | Ty::Float
             | Ty::Bool
@@ -449,6 +478,7 @@ impl Ty {
             Ty::Path(_) => false,
             Ty::ConstStr(..)
             | Ty::Int
+            | Ty::UInt
             | Ty::Char
             | Ty::Float
             | Ty::Bool
@@ -472,6 +502,7 @@ impl Ty {
             Ty::Path(_) => true,
             Ty::ConstStr(..)
             | Ty::Int
+            | Ty::UInt
             | Ty::Char
             | Ty::Float
             | Ty::Bool
@@ -527,7 +558,7 @@ impl Ty {
             new = match new {
                 // peel off indirection
                 Ty::Ptr(ty) => ty.val,
-                Ty::Array { size: _, ty: _ } => todo!("first element of array"),
+                Ty::Array { size: _, ty: _ } => todo!("first element of array {:?}", self),
                 Ty::ConstStr(..) => todo!("char??"),
                 _ty => return None,
             };
@@ -632,6 +663,7 @@ impl fmt::Display for Ty {
             }
             Ty::ConstStr(..) => write!(f, "string"),
             Ty::Int => write!(f, "int"),
+            Ty::UInt => write!(f, "uint"),
             Ty::Char => write!(f, "char"),
             Ty::Float => write!(f, "float"),
             Ty::Bool => write!(f, "bool"),
@@ -671,6 +703,7 @@ impl TypeEquality for Ty {
             // TODO: we don't want/need the size to be ==
             (Ty::ConstStr(..), Ty::ConstStr(..))
             | (Ty::Int, Ty::Int)
+            | (Ty::UInt, Ty::UInt)
             | (Ty::Char, Ty::Char)
             | (Ty::Float, Ty::Float)
             | (Ty::Bool, Ty::Bool)

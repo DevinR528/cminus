@@ -22,7 +22,7 @@ fn print_list<T>(dyn_list: *list<T>) {
     let i = 0;
     let ptr = dyn_list.buff;
     while (i < dyn_list.len) {
-        write::<T>(*ptr);
+        write(*ptr);
         ptr = ptr - 4;
         i += 1;
     }

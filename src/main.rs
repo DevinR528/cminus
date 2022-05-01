@@ -15,10 +15,11 @@
     allocator_api,
     result_flattening,
     slice_ptr_get,
-    slice_ptr_len
+    slice_ptr_len,
+    let_chains,
+    let_else
 )]
 // TODO: remove
-// tell rust not to complain about unused anything
 #![allow(unused)]
 
 use std::{alloc::System, env, fs, path::Path, time::Instant};

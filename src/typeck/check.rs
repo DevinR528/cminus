@@ -76,10 +76,7 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
             return;
         }
 
-
         if !lval_ty.as_ref().is_ty_eq(&rval_ty.as_ref()) {
-            println!("{:?}", (&lval_ty, &rval_ty));
-
             self.tcxt.errors.push_error(Error::error_with_span(
                 self.tcxt,
                 span,
@@ -92,8 +89,8 @@ impl<'ast> StmtCheck<'_, 'ast, '_> {
             self.tcxt.errors.poisoned(true);
         } else if let Expr::Ident(id) = &lval.val {
             if let Expr::Value(val) = &rval.val {
-                // TODO: const folding could fold un-mutated idents but it gets tricky llvm will do
-                // this for us
+                // TODO: const folding could fold un-mutated idents but it gets tricky
+                // the optimizing back-end does this for us better...
                 //self.tcxt.consts.insert(*id, &val.val);
             }
         }
@@ -228,7 +225,7 @@ impl<'ast> Visit<'ast> for StmtCheck<'_, 'ast, '_> {
                             // }
                         }
                     }
-                    Ty::Int => {
+                    Ty::Int | Ty::UInt => {
                         let mut bound_vars = HashMap::default();
                         for arm in arms {
                             check_pattern_type(
@@ -367,7 +364,7 @@ crate fn is_truthy(ty: Option<&Ty>) -> bool {
     matches!(
         ty,
         Some(
-            Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::Char | Ty::Float | Ty::Bool
+            Ty::Ptr(_) | Ty::Ref(_) | Ty::ConstStr(..) | Ty::Int | Ty::UInt | Ty::Char | Ty::Float | Ty::Bool
         )
     )
 }
@@ -587,6 +584,7 @@ fn check_pattern_type(
         Ty::ConstStr(..) => check_val_pat(tcxt, pat, ty, "string", span, bound_vars),
         Ty::Float => check_val_pat(tcxt, pat, ty, "float", span, bound_vars),
         Ty::Int => check_val_pat(tcxt, pat, ty, "int", span, bound_vars),
+        Ty::UInt => check_val_pat(tcxt, pat, ty, "uint", span, bound_vars),
         Ty::Char => check_val_pat(tcxt, pat, ty, "char", span, bound_vars),
         Ty::Bool => check_val_pat(tcxt, pat, ty, "bool", span, bound_vars),
         _ => {
@@ -634,7 +632,7 @@ fn check_val_pat(
                 bound_vars.insert(*id, ty.cloned().unwrap());
             }
             Binding::Value(val) => {
-                if Some(&lit_to_type(&val.val)) != ty {
+                if Some(&val.val.to_type()) != ty {
                     tcxt.errors.push_error(Error::error_with_span(
                         tcxt,
                         span,
@@ -842,10 +840,8 @@ crate fn fold_ty(
 ) -> Option<Ty> {
     let res = match (lhs?, rhs?) {
         (Ty::Int, Ty::Int) => math_ops(tcxt, op, Ty::Int, span),
+        (Ty::UInt, Ty::UInt) => math_ops(tcxt, op, Ty::UInt, span),
         (Ty::Float, Ty::Float) => math_ops(tcxt, op, Ty::Float, span),
-        // TODO: remove Carr's rules
-        (Ty::Int, Ty::Float) => math_ops(tcxt, op, Ty::Float, span),
-        (Ty::Float, Ty::Int) => math_ops(tcxt, op, Ty::Float, span),
         (Ty::Char, Ty::Char) => match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
             BinOp::AddAssign | BinOp::SubAssign => {
@@ -870,7 +866,7 @@ crate fn fold_ty(
             }
         },
         (Ty::ConstStr(..), Ty::ConstStr(..)) => todo!(),
-        (Ty::Ptr(t), Ty::Int) => match op {
+        (Ty::Ptr(t), Ty::Int | Ty::UInt) => match op {
             BinOp::Add
             | BinOp::Sub
             | BinOp::Mul
@@ -892,7 +888,7 @@ crate fn fold_ty(
             }
         },
         // swap left and write so the above arm catches
-        (l @ Ty::Int, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
+        (l @ Ty::Int | l @ Ty::UInt, r @ Ty::Ptr(_)) => fold_ty(tcxt, Some(r), Some(l), op, span),
         (Ty::Array { size, ty: t1 }, Ty::Array { size: s, ty: t2 }) if size == s => {
             Some(Ty::Array {
                 size: *size,
@@ -915,7 +911,11 @@ crate fn fold_ty(
         // TODO: deal with structs/enums
         (Ty::Struct { .. }, _) => todo!(""),
         (Ty::Enum { .. }, _) => todo!(""),
-        (Ty::Ptr(_), _) => todo!("{:?} {:?}", lhs?, rhs?),
+        (Ty::Ptr(_), _) => todo!("{:?} {:?} {}", lhs?, rhs?, Error::error_with_span(
+            tcxt,
+            span,
+            "yahooo",
+        )),
         (r @ Ty::Ref(_), t @ Ty::Ref(_)) => {
             fold_ty(tcxt, r.resolve().as_ref(), t.resolve().as_ref(), op, span)
         }
@@ -943,9 +943,16 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
         | BinOp::BitAnd
         | BinOp::BitXor
         | BinOp::BitOr => Some(ret_ty),
+        BinOp::And | BinOp::Or => {
+            tcxt.errors.push_error(Error::error_with_span(
+                tcxt,
+                span,
+                "[E0tc] cannot take the logical `&&` or `||` of anything but a `bool`",
+            ));
+            tcxt.errors.poisoned(true);
+            None
+        }
         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => Some(Ty::Bool),
-        // TODO: Carr's rules remove
-        BinOp::And | BinOp::Or => Some(Ty::Bool),
         BinOp::AddAssign | BinOp::SubAssign => {
             tcxt.errors.push_error(Error::error_with_span(
                 tcxt,
@@ -955,15 +962,5 @@ fn math_ops(tcxt: &TyCheckRes<'_, '_>, op: &BinOp, ret_ty: Ty, span: Range) -> O
             tcxt.errors.poisoned(true);
             None
         }
-    }
-}
-
-fn lit_to_type(lit: &Val) -> Ty {
-    match lit {
-        Val::Float(_) => Ty::Float,
-        Val::Int(_) => Ty::Int,
-        Val::Char(_) => Ty::Char,
-        Val::Bool(_) => Ty::Bool,
-        Val::Str(size, s) => Ty::ConstStr(*size),
     }
 }
