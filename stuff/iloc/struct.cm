@@ -1,0 +1,20 @@
+linked fn write<T>(_val: T);
+
+struct bar {
+    a: cstr,
+    arr: [2; int],
+}
+
+struct foo {
+    x: int, y: int
+}
+
+fn main() {
+    let a = foo { x: 1, y: 1 };
+    let ba = bar { a: "hey", arr: [3, 4] };
+    a.x += 10;
+    write(a.x); write(a.y);
+
+    let c = ba.arr[0];
+    write(ba.a); write(c);
+}

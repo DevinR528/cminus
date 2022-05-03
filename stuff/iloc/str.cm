@@ -1,0 +1,9 @@
+linked fn write<T>(_: T);
+
+const x : cstr = "hello\n";
+
+fn main() {
+    let y = "nope\n";
+	write(x);
+    write(y);
+}

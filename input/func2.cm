@@ -2,22 +2,22 @@ linked fn printf<T>(_fmt: cstr, _val: T);
 
 // This is a truncating conversion.
 fn cvtf2i(_from: float): int {
-    asm {
-        movsd (_from), %xmm7;
-        cvttsd2siq %xmm7, %rax;
-        leave;
-        ret;
-    }
-    return @bottom;
+	asm {
+		movsd (_from), %xmm7;
+		cvttsd2siq %xmm7, %rax;
+		leave;
+		ret;
+	}
+	return @bottom;
 }
 
 const mut c: int = 0;
 
 fn b(x: int, y: int, z: float): int {
-    return cvtf2i(z) + x + y;
+	return cvtf2i(z) + x + y;
 }
 
 fn main() {
-    c = b(1, 1, 2.0);
-    printf("%d\n", c);
+	c = b(1, 1, 2.0);
+	printf("%d\n", c);
 }

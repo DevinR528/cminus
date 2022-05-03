@@ -1,0 +1,62 @@
+linked fn write<T>(_: T);
+
+fn msort(array: *int, scratch: *int, n: int): *int {
+    if (n < 2) {
+        return array;
+    } else {
+        let i = 0;
+        let j = 0;
+        let k = 0;
+        let m = n / 2;
+        let l = n - m;
+        let arr = msort(array,     scratch,     m);
+        let b_arr = msort(array + m, scratch + m, l);
+
+        // because `if` is not an expression and no ternary operator :(
+        let d = array;
+        if (*arr == *array) { d = scratch } else { d = array }
+
+        while (k < n) {
+            let ele_check = j < l && *arr < *b_arr;
+            // if (i < m ? j < l ? a[i] < b[j] : 1 : 0)
+            if (i < m && j > l || ele_check) {
+                let d_ptr = (d - (k * 4));
+                let arr_ptr = (arr - (i * 4));
+                *d_ptr = *arr_ptr;
+                i += 1;
+                k += 1;
+            } else {
+                let d_ptr2 = (d - (k * 4));
+                let b_arr_ptr = (b_arr - (j * 4));
+                *d_ptr2 = *b_arr_ptr;
+                j += 1;
+                k += 1;
+            }
+        }
+
+        return d;
+    }
+}
+
+fn main() {
+    let a: [3; int] = [0; 3];
+    let b: [3; int] = [0; 3];
+
+    let i = 0;
+    while (i < 3) {
+        a[i] = (159 * i) % 309 + 1;
+        i += 1;
+    }
+
+    let aa = &a[0]; let bb = &b[0];
+    let c = msort(aa, bb, 3);
+
+    i = 0;
+    while (i < 3) {
+        let ele = c - (i * 4);
+        write(*ele);
+        i += 1;
+    }
+}
+
+

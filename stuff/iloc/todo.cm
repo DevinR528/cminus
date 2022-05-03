@@ -1,0 +1,12 @@
+linked fn print<T>(_: T);
+
+fn main() {
+    let x = 0; let y = 3; let z = 0;
+    scan(&x);
+    while (x < 5) {
+        z = y + 4;
+        // x is now never stored back to the heap
+        x += 1;
+    }
+    print(z);
+}

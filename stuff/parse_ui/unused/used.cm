@@ -2,20 +2,20 @@
 linked fn write(_: bool);
 
 fn scope() {
-    let inner = 0; // Make sure our scope doesn't bleed
-    inner += 1;
-    let y = 0; // Also make sure our scopes work to check different unused with same name
+	let inner = 0; // Make sure our scope doesn't bleed
+	inner += 1;
+	let y = 0; // Also make sure our scopes work to check different unused with same name
 }
 
 fn main() {
-    let _x = [0; 10]; // Ok
-    let y = 5;
-    let size = 2;
-    let j = 3;
-    if (false) {
-        y = 10;
-    } else {
-        j += 1;
-        let inner = "";
-    }
+	let _x = [0; 10]; // Ok
+	let y = 5;
+	let size = 2;
+	let j = 3;
+	if (false) {
+		y = 10;
+	} else {
+		j += 1;
+		let inner = "";
+	}
 }

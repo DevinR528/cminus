@@ -1,0 +1,14 @@
+linked fn write<T>(_: T);
+
+fn main() {
+	let num: uint = 32;
+	let x: uint = 5;
+	// let bad_num = -32;
+
+	write(num >> x);
+
+	if (x > num + x) {
+		write("hey");
+	}
+	// write(num + bad_num);
+}

@@ -1,0 +1,61 @@
+linked fn write<T>(_: T);
+
+fn msort(
+    array: [3; int],
+    _array_idx: int,
+    scratch: [3; int],
+    _scratch_idx: int,
+    n: int,
+): [3; int] {
+    if (n < 2) {
+        return array;
+    } else {
+        let i = 0;
+        let j = 0;
+        let k = 0;
+        let m = n / 2;
+        let l = n - m;
+        let arr = msort(array, 0,     scratch, 0,     m);
+        let b_arr = msort(array, m, scratch, m, l);
+
+        // because `if` is not an expression and no ternary operator :(
+        let d = array;
+        if (arr[0] == array[0]) { d = scratch } else { d = array }
+
+        while (k < n) {
+            let ele_check = j < l && arr[i] < b_arr[j];
+            // if (i < m ? j < l ? a[i] < b[j] : 1 : 0)
+            if (i < m && j > l || ele_check) {
+                d[k] = arr[i];
+                i += 1;
+                k += 1;
+            } else {
+                d[k] = b_arr[j];
+                j += 1;
+                k += 1;
+            }
+        }
+
+        return d;
+    }
+}
+
+fn main() {
+    let a: [3; int] = [0; 3];
+    let b: [3; int] = [0; 3];
+
+    let i = 0;
+    while (i < 3) {
+        a[i] = (159 * i) % 309 + 1;
+        i += 1;
+    }
+
+    let c = msort(a, 0, b, 0, 3);
+
+    i = 0;
+    while (i < 3) {
+        write(c[i]);
+        i += 1;
+    }
+}
+

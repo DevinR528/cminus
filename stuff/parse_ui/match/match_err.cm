@@ -1,17 +1,17 @@
 linked fn write<T>(_: T);
 
 fn main() {
-    let x = 10;
-    let y = ' ';
-    match x - 5 {
-        2 -> {}
-        a -> {
-            y = a; // error: assign pattern to wrong type
-        }
-    }
+	let x = 10;
+	let y = ' ';
+	match x - 5 {
+		2 -> {}
+		a -> {
+			y = a; // error: assign pattern to wrong type
+		}
+	}
 
-    if (y == 'c') {
-        write("== c");
-    }
+	if (y == 'c') {
+		write("== c");
+	}
 }
 

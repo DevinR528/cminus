@@ -1,0 +1,16 @@
+linked fn write<T>(_val: T);
+
+struct thing<T> {
+	it: T,
+}
+
+fn new_thing<T>(item: T): thing<T> {
+	return thing { it: item };
+}
+
+fn main() {
+	let stuff = new_thing::<int>(5);
+
+	let six = stuff.it + 1;
+	write(six);
+}

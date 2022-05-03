@@ -1,12 +1,12 @@
 enum two<X, Y> {
-    one(X),
-    more(Y),
+	one(X),
+	more(Y),
 }
 
 fn test<A, B>(hmm: B): two<A, B> {
-    return two::more(hmm);
+	return two::more(hmm);
 }
 
 void main() {
-    let x = test::<int, char>('c');
+	let x = test::<int, char>('c');
 }

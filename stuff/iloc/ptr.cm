@@ -1,0 +1,13 @@
+linked fn print<T>(_val: T);
+
+fn add(x: *int) {
+    *x += 1;
+    print(*x); // correctly prints 11
+}
+
+fn main() {
+    let a = 10;
+    print(a); // prints 10
+    add(&a);
+    print(a); // since this is just a register it's 10
+}

@@ -4,23 +4,23 @@ linked fn printf<T>(_fmt: cstr, _: T);
 fn nline() { printf("\n", 0); }
 
 fn main() {
-    let a = [0,0,0,0,0];
-    a[1] = 0;
-    a[2] = 9;
-    a[3] = 11;
-    a[4] = 15;
-    printf("%d ", a[1]);
-    printf("%d ", a[2]);
-    printf("%d ", a[3]);
-    printf("%d ", a[4]);
-    nline();
+	let a = [0,0,0,0,0];
+	a[1] = 0;
+	a[2] = 9;
+	a[3] = 11;
+	a[4] = 15;
+	printf("%d ", a[1]);
+	printf("%d ", a[2]);
+	printf("%d ", a[3]);
+	printf("%d ", a[4]);
+	nline();
 
-    let b = [0,16,12,10,8];
+	let b = [0,16,12,10,8];
 
-    printf("%d ", b[1]);
-    printf("%d ", b[2]);
-    printf("%d ", b[3]);
-    printf("%d ", b[4]);
-    nline();
+	printf("%d ", b[1]);
+	printf("%d ", b[2]);
+	printf("%d ", b[3]);
+	printf("%d ", b[4]);
+	nline();
 
 }

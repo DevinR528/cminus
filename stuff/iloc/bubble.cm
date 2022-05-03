@@ -1,0 +1,27 @@
+linked fn print<T>(_: T);
+
+fn main() {
+    let a = [32, 11, 111, 88, 11, 44, 33, 22, 77, 45, 65, 76, 87, 34];
+
+    let i = 0;
+    while (i <= 13) {
+        let least = i;
+        let j = i + 1;
+        while (j <= 14) {
+            if (a[j] < a[least]) {
+                least = j;
+            }
+            j += 1;
+        }
+        let t = a[i];
+        a[i] = a[least];
+        a[least] = t;
+        i += 1;
+    }
+
+    i = 0;
+    while (i <= 14) {
+        print(a[i]);
+        i += 1;
+    }
+}

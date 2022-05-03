@@ -2,25 +2,25 @@ linked fn printf<T>(_fmt: cstr, _: T);
 
 // This is like an interface or Haskell's type class
 trait add<T> {
-    fn add(a: T, b: T): T;
+	fn add(a: T, b: T): T;
 }
 
 // implementing that "interface"
 impl add<int> {
-    fn add(a: int, b: int): int {
-        return a + b;
-    }
+	fn add(a: int, b: int): int {
+		return a + b;
+	}
 }
 
 // This function has a bound on the generic `T` that says
 // `T` must implement the `add` "interface"
 fn foo<T: add>(a: T, b: T,): T {
-    return <<T>::add>(a, b);
+	return <<T>::add>(a, b);
 }
 
 fn main() {
-    let x = 10; let y = 111;
-    // Call `foo` with all the types specified
-    let a = foo(x, y);
-    printf("fn call with trait bound %d\n", a);
+	let x = 10; let y = 111;
+	// Call `foo` with all the types specified
+	let a = foo(x, y);
+	printf("fn call with trait bound %d\n", a);
 }

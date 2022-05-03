@@ -10,66 +10,66 @@
 
 
 enum Shape {
-    pub color: string,
+	pub color: string,
 
-    Circle { rad: int },
-    Rectangle { height: int, width: int },
+	Circle { rad: int },
+	Rectangle { height: int, width: int },
 }
 
 // So here is inheritance
 fn area(x: Shape): int {
-    match x {
-        Shape::Circle { rad } -> {
-            return (rad * rad) * 3.141;
-        }
-        Shape::Rectangle { height, width } -> {
-            return height * width;
-        }
-    }
+	match x {
+		Shape::Circle { rad } -> {
+			return (rad * rad) * 3.141;
+		}
+		Shape::Rectangle { height, width } -> {
+			return height * width;
+		}
+	}
 }
 
 // This would be made really nice with variants as types
 fn circumference(x: Shape::Circle): int {
-    return x.rad * 2 * 3.141;
+	return x.rad * 2 * 3.141;
 }
 
 enum Result<T, E> {
-    Ok(E), Err(E)
+	Ok(E), Err(E)
 }
 
 fn maybe_call_circumference(Shape x): Result<int, NotInstanceError?> {
-    match x {
-        circle @ Shape::Circle { .. } -> {
-            // The type of circle is `Shape::Circle`
-            return Result::Ok(circumference(circle));
-        }
-        _ -> {
-            return Result::Err(NotInstanceError);
-        }
-    }
+	match x {
+		circle @ Shape::Circle { .. } -> {
+			// The type of circle is `Shape::Circle`
+			return Result::Ok(circumference(circle));
+		}
+		_ -> {
+			return Result::Err(NotInstanceError);
+		}
+	}
 }
 
 // Default struct/enum fields
 struct Foo {
-    size: int,
-    color: string,
+	size: int,
+	color: string,
 
-    meta: string = "hello",
-    // Or           maybe no type?
-    meta = "hello": string,
+	meta: string = "hello",
+	// Or           maybe no type?
+	meta = "hello": string,
 }
 
 // I really like the idea of "compile time" first class types
 fn passed_in_type<T: ptr_fam>(it: Type): T {
-    printf("%s", it.name); // use just as any other type
+	printf("%s", it.name); // use just as any other type
 
-    if (it.is_sized()) {
-        // Higher Kinded Types ish?? maybe??
-        // Since the check on Type would be different I wonder if this would work easily
-        return <<T<it>>::ptr_fam>();
-    } else {
+	if (it.is_sized()) {
+		// Higher Kinded Types ish?? maybe??
+		// Since the check on Type would be different I wonder if this would work easily
+		return <<T<it>>::ptr_fam>();
+	} else {
 
-    }
+	}
 }
 
 // old parser

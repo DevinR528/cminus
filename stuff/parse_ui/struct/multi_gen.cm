@@ -1,12 +1,12 @@
 struct foo<T, U> {
-    field: T,
-    field_two: U,
-    y: [10; int],
+	field: T,
+	field_two: U,
+	y: [10; int],
 }
 
 fn main() {
-    // struct foo<int, char> x;
-    let x = foo { field: 0, field_two: 'a', y: {0, 1, 2, 3, 4, 5, 6, 7, 8, 9} };
-    // struct foo<string, char> y;
-    let y = foo { field: "beep", field_two: 'a' };
+	// struct foo<int, char> x;
+	let x = foo { field: 0, field_two: 'a', y: {0, 1, 2, 3, 4, 5, 6, 7, 8, 9} };
+	// struct foo<string, char> y;
+	let y = foo { field: "beep", field_two: 'a' };
 }

@@ -1,8 +1,8 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
-    let x = false;
-    // TODO: this is dumb make a better printf or something..
-    printf("%d\n", x); // prints `false`
-    printf("%d\n", true); // prints `true`
+	let x = false;
+	// TODO: this is dumb make a better printf or something..
+	printf("%d\n", x); // prints `false`
+	printf("%d\n", true); // prints `true`
 }

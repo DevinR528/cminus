@@ -1,0 +1,10 @@
+linked fn print<T>(_val: T);
+
+fn add(x: int, y: int): int {
+    return x + y;
+}
+
+fn main() {
+    let a = add(1, 1);
+    print(a);
+}

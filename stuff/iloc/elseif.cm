@@ -1,0 +1,19 @@
+linked fn write<T>(_: T);
+
+fn printhex(x: int) {
+    if (x < 10) {
+        write("less than 10");
+    } else if (x == 10) {
+        write("equal 10");
+    } else if (x == 11) {
+        write("11");
+    } else if (x < 50) {
+        write("larger than 10");
+    } else {
+        write("hello");
+    }
+}
+
+fn main() {
+    printhex(10);
+}

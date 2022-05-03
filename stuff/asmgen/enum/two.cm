@@ -1,28 +1,28 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn print_str(s: cstr) {
-    printf("%s", s);
+	printf("%s", s);
 }
 
 enum option {
-    foo(char, int),
-    some,
-    none,
+	foo(char, int),
+	some,
+	none,
 }
 
 fn main() {
-    let x = option::foo('c', 11);
-    match x {
-        // TODO: if `ch` or `num` is bound to a var named `x` weird stuff happens...
-        option::foo(ch, num) -> {
-            printf("found %c", ch);
-            printf(" and %d\n", num);
-        },
-        option::some -> {
-            print_str("some variant");
-        },
-        option::none -> {
-            exit;
-        }
-    }
+	let x = option::foo('c', 11);
+	match x {
+		// TODO: if `ch` or `num` is bound to a var named `x` weird stuff happens...
+		option::foo(ch, num) -> {
+			printf("found %c", ch);
+			printf(" and %d\n", num);
+		},
+		option::some -> {
+			print_str("some variant");
+		},
+		option::none -> {
+			exit;
+		}
+	}
 }

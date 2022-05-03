@@ -1,13 +1,13 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn pass<T>(fmts: cstr, a: T) {
-    printf::<T>(fmts, a);
+	printf::<T>(fmts, a);
 }
 
 fn main() {
-    let x = 10;
-    pass("%d\n", x);
+	let x = 10;
+	pass("%d\n", x);
 
-    pass::<cstr>("%s\n", "stringy");
-    // pass("%s\n", "stringy");
+	pass::<cstr>("%s\n", "stringy");
+	// pass("%s\n", "stringy");
 }

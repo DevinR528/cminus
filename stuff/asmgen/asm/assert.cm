@@ -2,29 +2,29 @@ linked fn printf<T>(_fmt: cstr, _: T);
 linked fn signal(_sig: int, _handler: fn(int));
 
 fn sig_handle(sig: int) {
-    if (sig == 4) {
-        asm {
-            mov 60, %rax; // move syscall number 60 (exit) to rax
-            mov 0, %rdi;  // move exit code (should be non zero for failure)
-            syscall;     // call it
-        };
-    }
+	if (sig == 4) {
+		asm {
+			mov 60, %rax; // move syscall number 60 (exit) to rax
+			mov 0, %rdi;  // move exit code (should be non zero for failure)
+			syscall;     // call it
+		};
+	}
 }
 
 fn assert(val: bool) {
-    if (!val) {
-        printf("assert failed oops: file [todo] line [todo]\n", 0);
-        asm { ud2; }
-    }
+	if (!val) {
+		printf("assert failed oops: file [todo] line [todo]\n", 0);
+		asm { ud2; }
+	}
 }
 
 fn main(argc: int) {
-    // Capture the crash signal from `ud2` and exit gracefully
-    signal(4, sig_handle);
+	// Capture the crash signal from `ud2` and exit gracefully
+	signal(4, sig_handle);
 
-    printf("number of args == %d, the second assert should fail\n", argc);
-    assert(argc == 1); // assert passes
-    assert(argc == 2); // assert fails but we capture it an exit with 0
+	printf("number of args == %d, the second assert should fail\n", argc);
+	assert(argc == 1); // assert passes
+	assert(argc == 2); // assert fails but we capture it an exit with 0
 }
 
 /* all the signal defs

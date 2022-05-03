@@ -1,0 +1,50 @@
+linked fn write<T>(_val: T);
+
+linked fn malloc<T>(_size: int): *T;
+linked fn free<T>(_ptr: *T);
+linked fn realloc<T>(_ptr: *T, _size: int): *T;
+
+struct list<T> {
+	len: int,
+	cap: int,
+	buff: *T,
+}
+
+fn new_list<T>(size: int): *list<T> {
+	// Allocate `list` buffer
+	let dyn_list = malloc::<list<T>>((size * 4) + 8);
+	dyn_list.cap = size;
+	dyn_list.len = 0;
+	return dyn_list;
+}
+
+fn print_list<T>(dyn_list: *list<T>) {
+	let i = 0;
+	let ptr = dyn_list.buff;
+	while (i < dyn_list.len) {
+		write(*ptr);
+		ptr = ptr - 4;
+		i += 1;
+	}
+	write("\n");
+}
+
+fn free_list<T>(dyn_list: *list<T>) {
+	free(dyn_list);
+}
+
+fn main() {
+	let stuff = new_list::<int>(5);
+
+	let i = 0;
+	let ptr = stuff.buff;
+	while (i < stuff.len) {
+		*ptr = i;
+		ptr = ptr - 4;
+		i += 1;
+	}
+
+	print_list(stuff);
+
+	free_list(stuff);
+}

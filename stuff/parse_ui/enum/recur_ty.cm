@@ -1,13 +1,13 @@
 enum option<T> {
-    some(T),
-    none,
+	some(T),
+	none,
 }
 fn foo<T>(T it): option<T> {
-    let opt = option::some(it);
-    return opt;
+	let opt = option::some(it);
+	return opt;
 }
 
 void main() {
-    let num = foo::<option<int>>(foo::<int>(10));
-    num = foo::<option<char>>(foo::<int>(10)); // error: follow generic type mismatch
+	let num = foo::<option<int>>(foo::<int>(10));
+	num = foo::<option<char>>(foo::<int>(10)); // error: follow generic type mismatch
 }

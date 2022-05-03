@@ -1,36 +1,30 @@
 // fun rust features I'm turning on
 #![feature(
-    box_syntax,
-    box_patterns,
-    try_blocks,
-    crate_visibility_modifier,
-    stmt_expr_attributes,
-    btree_drain_filter,
-    panic_info_message,
-    path_file_prefix,
-    io_error_more,
-    const_fn_trait_bound,
-    hash_drain_filter,
-    ptr_internals,
-    vec_into_raw_parts,
-    allocator_api,
-    result_flattening,
-    slice_ptr_get,
-    slice_ptr_len
+	box_syntax,
+	box_patterns,
+	try_blocks,
+	crate_visibility_modifier,
+	stmt_expr_attributes,
+	btree_drain_filter,
+	panic_info_message,
+	path_file_prefix,
+	io_error_more,
+	hash_drain_filter,
+	ptr_internals,
+	vec_into_raw_parts,
+	allocator_api,
+	result_flattening,
+	slice_ptr_get,
+	slice_ptr_len,
+	let_chains,
+	let_else
 )]
 // TODO: remove
-// tell rust not to complain about unused anything
 #![allow(unused)]
 
-use std::{
-    alloc::System,
-    env,
-    fs::{self},
-    path::Path,
-    time::Instant,
-};
+use std::{alloc::System, env, fs, path::Path, time::Instant};
 
-use clap::{App, Arg, ArgMatches};
+use clap::{Arg, ArgMatches, Command as App};
 
 mod alloc;
 mod ast;
@@ -42,207 +36,216 @@ mod typeck;
 mod visit;
 
 use crate::{
-    alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM},
-    ast::parse::{error::PrettyError, AstBuilder},
-    lir::visit::Visit as IrVisit,
-    visit::Visit,
+	alloc::{Region, StatsAlloc, INSTRUMENTED_SYSTEM},
+	ast::parse::{error::PrettyError, AstBuilder},
+	lir::visit::Visit as IrVisit,
+	visit::Visit,
 };
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 /// Driver function responsible for lexing and parsing input.
-fn process_file<'a>(
-    path: &str,
-    args: &ArgMatches<'a>,
-) -> Result<(), Box<dyn std::error::Error + 'a>> {
-    let mut need_stats = args.is_present("stats");
-    let verbose = if args.is_present("verbose") {
-        need_stats = true;
-        true
-    } else {
-        false
-    };
-    let backend = args.value_of("backend");
-    let assemble = args.is_present("assemble");
-    let output = args.value_of("output");
+fn process_file<'a>(path: &str, args: &ArgMatches) -> Result<(), Box<dyn std::error::Error + 'a>> {
+	let mut need_stats = args.is_present("stats");
+	let verbose = if args.is_present("verbose") {
+		need_stats = true;
+		true
+	} else {
+		false
+	};
+	let backend = args.value_of("backend");
+	let assemble = args.is_present("assemble");
+	let output = args.value_of("output");
 
-    // Tabs mess up our error messages
-    let input = std::fs::read_to_string(path)?.replace('\t', "");
+	// Tabs mess up our error messages
+	let input = std::fs::read_to_string(path)?.replace('\t', "");
 
-    let mut parse_mem = Region::new(GLOBAL);
-    let parse_time = Instant::now();
+	let mut parse_mem = Region::new(GLOBAL);
+	let parse_time = Instant::now();
 
-    let (snd, rcv) = std::sync::mpsc::channel();
-    let mut parser = AstBuilder::new(&input, path, snd);
-    parser.parse().map_err(|e| PrettyError::from_parse(path, &input, e))?;
-    let mut items = parser.into_items();
+	let (snd, rcv) = std::sync::mpsc::channel();
+	let mut parser = AstBuilder::new(&input, path, snd);
+	parser.parse().map_err(|e| PrettyError::from_parse(path, &input, e))?;
+	let mut items = parser.into_items();
 
-    if need_stats {
-        println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
-        println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
-        if verbose {
-            println!("items: {:?}", items);
-        }
-    }
+	if need_stats {
+		println!("    lexing & parsing:  {}s", parse_time.elapsed().as_secs_f64());
+		println!("    lexing & parsing:  {}", parse_mem.change_and_reset());
+		if verbose {
+			println!("items: {:?}", items);
+		}
+	}
 
-    let mut tyck_mem = Region::new(GLOBAL);
-    let tyck_time = Instant::now();
-    let mut tyck = typeck::TyCheckRes::new(&input, path, rcv);
-    tyck.visit_prog(&items);
-    let _res = tyck.report_errors().map_err(|e| e.to_string())?;
+	let mut tyck_mem = Region::new(GLOBAL);
+	let tyck_time = Instant::now();
+	let mut tyck = typeck::TyCheckRes::new(&input, path, rcv);
+	tyck.visit_prog(&items);
+	let _res = tyck.report_errors().map_err(|e| e.to_string())?;
 
-    if need_stats {
-        println!("    type checking:     {}s", tyck_time.elapsed().as_secs_f64());
-        println!("    type checking:     {}", tyck_mem.change_and_reset());
+	if need_stats {
+		println!("    type checking:     {}s", tyck_time.elapsed().as_secs_f64());
+		println!("    type checking:     {}", tyck_mem.change_and_reset());
 
-        if verbose {
-            println!("{:?}", tyck);
-        }
-    }
+		if verbose {
+			println!("{:?}", tyck);
+		}
+	}
 
-    let mut lower_mem = Region::new(GLOBAL);
-    let lower_time = Instant::now();
-    let lowered = lir::lower::lower_items(&items, tyck);
+	let mut lower_mem = Region::new(GLOBAL);
+	let lower_time = Instant::now();
+	let lowered = lir::lower::lower_items(&items, tyck);
 
-    if need_stats {
-        println!("    lowering:          {}s", lower_time.elapsed().as_secs_f64());
-        println!("    lowering:          {}", lower_mem.change_and_reset());
+	if need_stats {
+		println!("    lowering:          {}s", lower_time.elapsed().as_secs_f64());
+		println!("    lowering:          {}", lower_mem.change_and_reset());
 
-        if verbose {
-            println!("{:?}", lowered);
-        }
-    }
+		if verbose {
+			println!("{:?}", lowered);
+		}
+	}
 
-    if !assemble {
-        return Ok(());
-    }
+	if !assemble {
+		return Ok(());
+	}
 
-    if backend == Some("llvm") {
-        // let ctxt = inkwell::context::Context::create();
-        // let mut gen = gen::llvm::LLVMGen::new(&ctxt, Path::new(path));
-    }
+	let out = if let Some(out) = output { Path::new(out) } else { Path::new(path) };
 
-    let out = if let Some(out) = output { Path::new(out) } else { Path::new(path) };
+	let mut gen_mem = Region::new(GLOBAL);
+	let gen_time = Instant::now();
 
-    let mut gen_mem = Region::new(GLOBAL);
-    let gen_time = Instant::now();
-    let mut gen = gen::asm::CodeGen::new(out);
-    gen.visit_prog(&lowered);
-    gen.dump_asm()?;
+	match backend {
+		Some("llvm") => {
+			// let ctxt = inkwell::context::Context::create();
+			// gen::llvm::LLVMGen::new(&ctxt, out)
+			// gen.visit_prog(&lowered);
+			// gen.dump_asm()?;
+		}
+		Some("iloc") => {
+			let mut gen = gen::iloc::IlocGen::new(out);
+			gen.visit_prog(&lowered);
+			gen.dump_asm()?;
+		}
+		_ => {
+			let mut gen = gen::asm::CodeGen::new(out);
+			gen.visit_prog(&lowered);
+			gen.dump_asm()?;
+		}
+	};
 
-    if need_stats {
-        println!("    code generation:   {}s", gen_time.elapsed().as_secs_f64());
-        println!("    code generation:   {}", gen_mem.change_and_reset());
-    }
-    Ok(())
+	if need_stats {
+		println!("    code generation:   {}s", gen_time.elapsed().as_secs_f64());
+		println!("    code generation:   {}", gen_mem.change_and_reset());
+	}
+	Ok(())
 }
 
 /// Run it!
 fn main() {
-    // std::panic::set_hook(Box::new(|panic_info| {
-    //     let _: Option<()> = try {
-    //         let msg = format!("{}", panic_info.message()?);
+	// std::panic::set_hook(Box::new(|panic_info| {
+	//     let _: Option<()> = try {
+	//         let msg = format!("{}", panic_info.message()?);
 
-    //         if msg.contains("ICE") {
-    //             eprintln!("{}", msg);
-    //             let loc = panic_info.location()?;
-    //             eprintln!("ICE location: {}", loc);
-    //         } else if msg.contains("not yet implemented") {
-    //             eprintln!("ICE needs implementation (undone TODO item)");
+	//         if msg.contains("ICE") {
+	//             eprintln!("{}", msg);
+	//             let loc = panic_info.location()?;
+	//             eprintln!("ICE location: {}", loc);
+	//         } else if msg.contains("not yet implemented") {
+	//             eprintln!("ICE needs implementation (undone TODO item)");
 
-    //             eprintln!("{}", msg);
+	//             eprintln!("{}", msg);
 
-    //             let loc = panic_info.location()?;
-    //             eprintln!("ICE location: {}", loc);
-    //         } else {
-    //             eprintln!("{}", msg);
-    //         }
-    //     };
-    //     let _: Option<()> = try {
-    //         let payload = panic_info.payload().downcast_ref::<&str>()?;
-    //         eprintln!("`{}`", payload);
-    //     };
-    // }));
-    // let _ = std::panic::take_hook();
+	//             let loc = panic_info.location()?;
+	//             eprintln!("ICE location: {}", loc);
+	//         } else {
+	//             eprintln!("{}", msg);
+	//         }
+	//     };
+	//     let _: Option<()> = try {
+	//         let payload = panic_info.payload().downcast_ref::<&str>()?;
+	//         eprintln!("`{}`", payload);
+	//     };
+	// }));
+	// let _ = std::panic::take_hook();
 
-    let app = App::new("My Program")
-        .author(clap::crate_authors!("\n"))
-        .version(clap::crate_version!())
-        .arg(
-            Arg::with_name("input")
-                .value_name("INPUT")
-                .long("input")
-                .short("i")
-                .multiple(true)
-                .help("sets the files that should be compiled"),
-        )
-        .arg(Arg::with_name("stats").long("stats").short("s").help("compile with stats"))
-        .arg(
-            Arg::with_name("verbose")
-                .long("verbose")
-                .short("v")
-                .help("compile with verbose printing of IR"),
-        )
-        .arg(
-            Arg::with_name("backend")
-                .long("backend")
-                .short("b")
-                .possible_values(&["llvm", "hasm"])
-                .default_value("hasm")
-                .help("specify the backend (llvm or hand-rolled asm)"),
-        )
-        .arg(
-            Arg::with_name("assemble")
-                .long("assemble")
-                .short("a")
-                .help("enumc will produce assembly output"),
-        )
-        .arg(
-            Arg::with_name("output")
-                .long("output")
-                .short("o")
-                .help("specify the assembly file name"),
-        );
+	let app = App::new("My Program")
+		.author(clap::crate_authors!("\n"))
+		.version(clap::crate_version!())
+		.arg(
+			Arg::new("input")
+				.value_name("INPUT")
+				.long("input")
+				.short('i')
+				.multiple_occurrences(true)
+				.help("sets the files that should be compiled"),
+		)
+		.arg(Arg::new("stats").long("stats").short('s').help("compile with stats"))
+		.arg(
+			Arg::new("verbose")
+				.long("verbose")
+				.short('v')
+				.help("compile with verbose printing of IR"),
+		)
+		.arg(
+			Arg::new("backend")
+				.long("backend")
+				.short('b')
+				.possible_values(&["llvm", "iloc", "hasm"])
+				.default_value("hasm")
+				.help("specify the backend (llvm or hand-rolled asm)"),
+		)
+		.arg(
+			Arg::new("assemble")
+				.long("assemble")
+				.short('a')
+				.help("enumc will produce assembly output"),
+		)
+		.arg(
+			Arg::new("output")
+				.long("output")
+				.short('o')
+				.takes_value(true)
+				.help("specify the assembly file name"),
+		);
 
-    let matches = app.get_matches();
+	let matches = app.get_matches();
 
-    let file_names: Vec<_> = matches.values_of("input").unwrap().into_iter().collect();
-    let mut errors = 0;
-    for f in file_names {
-        // match std::panic::catch_unwind(|| process_file(f)) {
-        //     Ok(Ok(_)) => {}
-        //     Ok(Err(e)) => {
-        //         errors += 1;
-        //         // eprintln!("{}", e)
-        //     }
-        //     Err(e) => {
-        //         errors += 1;
-        //         if let Some(e) = e.downcast_ref::<&str>() {
-        //             eprintln!("{}", e);
-        //         }
-        //     }
-        // }
-        match process_file(f, &matches) {
-            Ok(_) => {}
-            Err(e) => {
-                // TODO: this isn't great... find a better way to pass this along
-                errors = if let Ok(e_count) = e.to_string().parse() {
-                    e_count
-                } else {
-                    eprintln!("{}", e);
-                    1
-                };
-            }
-        }
-    }
+	let file_names: Vec<_> = matches.values_of("input").unwrap().into_iter().collect();
+	let mut errors = 0;
+	for f in file_names {
+		// match std::panic::catch_unwind(|| process_file(f)) {
+		//     Ok(Ok(_)) => {}
+		//     Ok(Err(e)) => {
+		//         errors += 1;
+		//         // eprintln!("{}", e)
+		//     }
+		//     Err(e) => {
+		//         errors += 1;
+		//         if let Some(e) = e.downcast_ref::<&str>() {
+		//             eprintln!("{}", e);
+		//         }
+		//     }
+		// }
+		match process_file(f, &matches) {
+			Ok(_) => {}
+			Err(e) => {
+				// TODO: this isn't great... find a better way to pass this along
+				errors = if let Ok(e_count) = e.to_string().parse() {
+					e_count
+				} else {
+					eprintln!("{}", e);
+					1
+				};
+			}
+		}
+	}
 
-    if errors != 0 {
-        eprintln!(
-            "compilation stopped found {} error{}",
-            errors,
-            if errors > 1 { "s" } else { "" }
-        );
-        std::process::exit(1)
-    }
+	if errors != 0 {
+		eprintln!(
+			"compilation stopped found {} error{}",
+			errors,
+			if errors > 1 { "s" } else { "" }
+		);
+		std::process::exit(1)
+	}
 }

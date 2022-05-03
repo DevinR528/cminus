@@ -1,14 +1,14 @@
 enum option<T> {
-    some(T),
-    none,
+	some(T),
+	none,
 }
 
 fn foo<T>(it: T): option<T> {
-    let opt = option::some(it);
-    return opt;
+	let opt = option::some(it);
+	return opt;
 }
 
 fn main() {
-    let num = foo::<option<int>>(foo::<int>(10));
-    let ch = foo::<option<char>>(foo::<char>('c'));
+	let num = foo::<option<int>>(foo::<int>(10));
+	let ch = foo::<option<char>>(foo::<char>('c'));
 }

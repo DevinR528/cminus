@@ -1,30 +1,30 @@
 linked fn putchar(_: char);
 
 struct str {
-    buf: *char,
-    len: int,
+	buf: *char,
+	len: int,
 }
 
 fn debug(fmt: str, vals: [5; int], len: int): int {
-    let val_idx = 0;
-    let x = fmt.buf;
-    while (val_idx > fmt.len) {
-        let ch = *x;
-        if (ch == '%') {
-            let val = vals[val_idx];
-            putchar('v');
-        } else {
-            putchar(ch);
-        }
-        x += 8;
-    }
+	let val_idx = 0;
+	let x = fmt.buf;
+	while (val_idx > fmt.len) {
+		let ch = *x;
+		if (ch == '%') {
+			let val = vals[val_idx];
+			putchar('v');
+		} else {
+			putchar(ch);
+		}
+		x += 8;
+	}
 }
 
 fn main() {
-    let fmt = "hello %, %, %\n";
-    if (debug(fmt, [1, 2, 3, 0,0], 3) != 0) {
-        exit;
-    } else {
-        putchar('!');
-    }
+	let fmt = "hello %, %, %\n";
+	if (debug(fmt, [1, 2, 3, 0,0], 3) != 0) {
+		exit;
+	} else {
+		putchar('!');
+	}
 }

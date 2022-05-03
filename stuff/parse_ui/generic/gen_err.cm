@@ -1,6 +1,6 @@
 // Fail
 fn bar<T>(it: T) {
-    it = 1; // error catches generic used as concrete type
+	it = 1; // error catches generic used as concrete type
 }
 
 fn foo<T>(): T {} // error return nothing when generic type specified

@@ -1,0 +1,82 @@
+linked fn putchar(_val: int);
+linked fn write<T>(_val: T);
+
+linked fn malloc<T>(_size: int): *T;
+linked fn free<T>(_ptr: *T);
+linked fn realloc<T>(_ptr: *T, _size: int): *T;
+
+struct string {
+	len: int,
+	cap: int,
+	buff: *int,
+}
+
+fn new_string_from(str: cstr): *string {
+	// Allocate `string` buffer
+	let cap = str.len * 4;
+	let dyn_str = malloc::<string>(cap + 8);
+
+	dyn_str.cap = cap / 4;
+	dyn_str.len = str.len;
+
+	let ptr = dyn_str.buff;
+	let i = 0;
+	// Copy chars from const string
+	while (i < str.len) {
+		let ch = str[i];
+		*ptr = ch;
+		// TODO: this breaks
+		// ptr += (i * 4);
+		ptr = ptr - 4;
+		i += 1;
+	}
+	return dyn_str;
+}
+
+fn push_char(str: *string, ch: int) {
+	if (str.cap > (str.len + 1)) {
+		let ptr1 = str.buff - str.len * 4;
+		*ptr1 = ch;
+
+		str.len += 1;
+	} else {
+		// Allocate `string` buffer
+		let cap = str.len * 4 * 2;
+		str = realloc::<string>(str, cap + 8);
+		str.cap = cap / 4;
+
+		let ptr2 = str.buff - str.len * 4;
+		*ptr2 = ch;
+
+		str.len += 1;
+	}
+}
+
+fn print_string(str: *string) {
+	let i = 0;
+	let ptr = str.buff;
+	while (i < str.len) {
+		putchar(*ptr);
+		ptr = ptr - 4;
+		i += 1;
+	}
+
+	write("\n");
+}
+
+fn free_string(str: *string) {
+	free(str);
+}
+
+fn main() {
+	let s = new_string_from("abcde");
+
+	print_string(s);
+
+	push_char(s, b'z');
+	push_char(s, b'x');
+
+	print_string(s);
+
+	free_string(s);
+}

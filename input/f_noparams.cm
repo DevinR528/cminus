@@ -21,6 +21,6 @@ fn b4(): int {
 }
 
 fn main() {
-    let all = b1()+b2()+b3()+b4();
+	let all = b1()+b2()+b3()+b4();
 	printf("%d\n", all);
 }

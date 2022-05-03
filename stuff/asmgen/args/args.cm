@@ -1,6 +1,6 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn main(argc: int, argv: **cstr) {
-    printf("%d\n", argc);
-    printf("%s\n", *argv);
+	printf("%d\n", argc);
+	printf("%s\n", *argv);
 }

@@ -1,0 +1,18 @@
+linked fn write<T>(_: T);
+
+// const mut A: [21; int] = [0; 21];
+
+fn main() {
+    let z = 0;
+    let x = 5;
+    let y = 3;
+    if (x > 3) {
+        z = x + y;
+    } else {
+        z = x + y;
+    }
+    z = x + y;
+    write(z);
+
+    write("don't me");
+}

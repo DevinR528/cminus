@@ -1,11 +1,11 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
-    let x = 25;
-    let y = 5;
-    while (x > y) {
-        printf("%f\n", 1.135);
-        x -= y;
-    }
-    printf("%f\n", 6.66);
+	let x = 25;
+	let y = 5;
+	while (x > y) {
+		printf("%f\n", 1.135);
+		x -= y;
+	}
+	printf("%f\n", 6.66);
 }

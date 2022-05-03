@@ -6,28 +6,28 @@ linked fn printf<T>(_fmt: cstr, _val: T);
 // const mut D: int = 0;
 
 fn a1() {
-    printf("%d\n", 1);
+	printf("%d\n", 1);
 }
 
 fn a2() {
-    a1();
-    printf("%d\n", 2);
+	a1();
+	printf("%d\n", 2);
 }
 
 fn a3() {
-    a1();
-    a2();
-    printf("%d\n", 3);
+	a1();
+	a2();
+	printf("%d\n", 3);
 }
 
 fn a4() {
-    a1();
-    a2();
-    a3();
-    printf("%d\n", 4);
+	a1();
+	a2();
+	a3();
+	printf("%d\n", 4);
 }
 
 
 fn main() {
-    a1(); a2(); a3(); a4();
+	a1(); a2(); a3(); a4();
 }

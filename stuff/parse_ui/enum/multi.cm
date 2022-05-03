@@ -1,10 +1,10 @@
 enum result<T, E> {
-    ok(T),
-    error(E),
+	ok(T),
+	error(E),
 }
 
 fn main() {
-    let res: result<int, char> = result::ok(10);
+	let res: result<int, char> = result::ok(10);
 
-    let fib: result<char, int> = result::error(10);
+	let fib: result<char, int> = result::error(10);
 }

@@ -1,6 +1,6 @@
 linked fn printf<T>(fmt: cstr, val: T) {}
 
 fn main() {
-    let fmt = "hello %d";
-    printf(fmt, 10);
+	let fmt = "hello %d";
+	printf(fmt, 10);
 }

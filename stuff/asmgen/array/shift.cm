@@ -1,25 +1,25 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn main() {
-    let i = 0;
+	let i = 0;
 
-    let a = [32, 11, 111, 88, 11, 44, 33, 33, 22, 77, 45, 65, 76, 87, 34];
-    while (i < 15) {
-        let next = i + 1;
-        if (a[i] > a[next]) {
-            printf("%s\n", "swap");
-            let tmp = a[i];
-            a[i] = a[next];
-            a[next] = tmp;
-        }
-        i += 1;
-    }
+	let a = [32, 11, 111, 88, 11, 44, 33, 33, 22, 77, 45, 65, 76, 87, 34];
+	while (i < 15) {
+		let next = i + 1;
+		if (a[i] > a[next]) {
+			printf("%s\n", "swap");
+			let tmp = a[i];
+			a[i] = a[next];
+			a[next] = tmp;
+		}
+		i += 1;
+	}
 
-    i = 0;
-    printf("%s", "[");
-    while (i < 15) {
-        printf("%d,", a[i]);
-        i = i + 1;
-    }
-    printf("%s", "]\n");
+	i = 0;
+	printf("%s", "[");
+	while (i < 15) {
+		printf("%d,", a[i]);
+		i = i + 1;
+	}
+	printf("%s", "]\n");
 }

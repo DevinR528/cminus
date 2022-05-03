@@ -1,0 +1,6 @@
+linked fn write<T>(_val: T);
+
+fn main() {
+	let s = "hello";
+	write(s.len);
+}

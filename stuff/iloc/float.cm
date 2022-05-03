@@ -1,0 +1,16 @@
+linked fn print<T>(_val: T);
+linked fn int_flt(_val: int): float;
+linked fn flt_int(_val: float): int;
+
+fn add(x: int, y: float): int {
+    return x + flt_int(y);
+}
+
+fn main() {
+    let a = add(1, 11.9);
+    print(a);
+
+    print(int_flt(2));
+
+    print(flt_int(2.5876));
+}

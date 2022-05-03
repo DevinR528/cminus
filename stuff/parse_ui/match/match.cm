@@ -1,20 +1,20 @@
 linked fn write<T>(_: T);
 
 fn main() {
-    let x = 10;
-    let y = 0;
+	let x = 10;
+	let y = 0;
 
-    match x {
-        0 -> {}
-        1 -> {}
-        2 -> {}
-        a -> {
-            y = a;
-        }
-    }
+	match x {
+		0 -> {}
+		1 -> {}
+		2 -> {}
+		a -> {
+			y = a;
+		}
+	}
 
-    if (y > 3) {
-        write::<string>("> 3");
-    }
+	if (y > 3) {
+		write::<string>("> 3");
+	}
 }
 

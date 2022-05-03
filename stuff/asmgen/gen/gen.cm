@@ -1,26 +1,26 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn out<T>(a: T): T {
-    return a;
+	return a;
 }
 
 // TODO: `fn test<A, B>(_: A, _: B) { }` does NOT work because of two `_` param names, fix this
 fn test<A, B>(afmt: cstr, a: A, bfmt: cstr, b: B) {
-    printf::<A>(afmt, a);
-    printf::<B>(bfmt, b);
+	printf::<A>(afmt, a);
+	printf::<B>(bfmt, b);
 }
 
 fn main() {
-    let x = 10;
+	let x = 10;
 
-    let a = out(x);
-    printf("%d\n", a);
+	let a = out(x);
+	printf("%d\n", a);
 
-    test("%d\n", 10, "%c\n", 'c'); // TODO this makes monomorphization freak out
-    // it still produces testint0char and teststring0int but they have the same body??
+	test("%d\n", 10, "%c\n", 'c'); // TODO this makes monomorphization freak out
+	// it still produces testint0char and teststring0int but they have the same body??
 
-    let b = out("stringy");
-    printf("%s\n", b);
+	let b = out("stringy");
+	printf("%s\n", b);
 
-    test( "%s\n","string", "%d\n", x);
+	test( "%s\n","string", "%d\n", x);
 }

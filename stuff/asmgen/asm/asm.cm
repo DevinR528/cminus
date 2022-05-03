@@ -2,9 +2,9 @@ linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main(argc: int) {
 
-    asm {
-        addq 10, (argc);
-    }
+	asm {
+		addq 10, (argc);
+	}
 
-    printf("should be 11 = %d\n", argc);
+	printf("should be 11 = %d\n", argc);
 }

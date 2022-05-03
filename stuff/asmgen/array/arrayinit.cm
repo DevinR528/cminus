@@ -1,17 +1,17 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
-    let x = 5;
-    let a = [1, 0, 9, 11, 15];
+	let x = 5;
+	let a = [1, 0, 9, 11, 15];
 
-    printf("%d\n", a[1]);
-    printf("%d\n", a[2]);
-    printf("%d\n", a[3]);
-    printf("%d\n", a[4]);
+	printf("%d\n", a[1]);
+	printf("%d\n", a[2]);
+	printf("%d\n", a[3]);
+	printf("%d\n", a[4]);
 
-    printf("%d\n", x);
+	printf("%d\n", x);
 
-    let y = 10;
-    a[0] = y;
-    printf("%d\n", a[0]);
+	let y = 10;
+	a[0] = y;
+	printf("%d\n", a[0]);
 }

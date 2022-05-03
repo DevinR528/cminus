@@ -1,31 +1,31 @@
 trait display<T> {
-    void display(T item);
+	void display(T item);
 }
 
 impl display<int> {
-    void display(int item) {
-        write(item);
-        // print int
-    }
+	void display(int item) {
+		write(item);
+		// print int
+	}
 }
 
 impl display<bool> {
-    void display(bool item) {
-        write(item);
-        // print bool
-    }
+	void display(bool item) {
+		write(item);
+		// print bool
+	}
 }
 
 void show<T: display>(T item) { // TODO: The bound is not actually need
-    // I'm not sure when it would be
-    <<T>::display>(item);
+	// I'm not sure when it would be
+	<<T>::display>(item);
 }
 
 void main() {
-    int x, y;
-    x = 0; y = 1;
-    show::<int>(y);
-    show::<bool>(x > y);
-    <<char>::display>('c'); // error: `display` is not implemented for `<char>`
-    // show::<char>('c');
+	int x, y;
+	x = 0; y = 1;
+	show::<int>(y);
+	show::<bool>(x > y);
+	<<char>::display>('c'); // error: `display` is not implemented for `<char>`
+	// show::<char>('c');
 }

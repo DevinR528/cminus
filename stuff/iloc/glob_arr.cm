@@ -1,0 +1,10 @@
+linked fn write<T>(_: T);
+
+const global: int = 0x67452301;
+
+const global_arr: [3; int] = [3, 2, 1];
+
+fn main(): void {
+	write(global);
+	write(global_arr[2]);
+}

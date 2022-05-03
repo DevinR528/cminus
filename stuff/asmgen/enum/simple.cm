@@ -1,23 +1,23 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
 enum option {
-    foo(char),
-    some,
-    none,
+	foo(char),
+	some,
+	none,
 }
 
 fn main() {
-    let x = option::foo('c');
-    match x {
-        // TODO: if this is `x` weird stuff happens...
-        option::foo(ch) -> {
-            printf("%c\n", ch);
-        },
-        option::some -> {
-            printf("%c\n", 'x');
-        },
-        option::none -> {
-            exit;
-        }
-    }
+	let x = option::foo('c');
+	match x {
+		// TODO: if this is `x` weird stuff happens...
+		option::foo(ch) -> {
+			printf("%c\n", ch);
+		},
+		option::some -> {
+			printf("%c\n", 'x');
+		},
+		option::none -> {
+			exit;
+		}
+	}
 }
