@@ -1,20 +1,20 @@
 struct name {
-    int field;
-    char field_two;
-    int y[10];
-    int* a;
+	int field;
+	char field_two;
+	int y[10];
+	int* a;
 }
 
 struct foo {
-    int x;
+	int x;
 }
 struct recur {
-    struct recur* a;
-    struct foo b;
+	struct recur* a;
+	struct foo b;
 }
 
 fn main() {
-    int a; // unused
-    let one = recur { a: &one, b: foo { x: 1 } };
-    let x = name { field: 0, field_two: 'a', y: {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10} }; // error: 11 ele array y[10]
+	int a; // unused
+	let one = recur { a: &one, b: foo { x: 1 } };
+	let x = name { field: 0, field_two: 'a', y: {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10} }; // error: 11 ele array y[10]
 }

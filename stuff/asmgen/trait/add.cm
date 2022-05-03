@@ -1,17 +1,17 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 trait add<T> {
-    fn add(a: T, b: T): T;
+	fn add(a: T, b: T): T;
 }
 
 impl add<int> {
-    fn add(a: int, b: int): int {
-        return a + b;
-    }
+	fn add(a: int, b: int): int {
+		return a + b;
+	}
 }
 
 fn main() {
-    let x = 10; let y = 1;
-    let a = <<int>::add>(x, y);
-    printf("add trait %d\n", a);
+	let x = 10; let y = 1;
+	let a = <<int>::add>(x, y);
+	printf("add trait %d\n", a);
 }

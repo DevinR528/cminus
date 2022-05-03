@@ -3,10 +3,10 @@ linked fn printf<T>(_fmt: cstr, _val: T);
 const mut c: int = 0;
 
 fn b(): int {
-    return 4;
+	return 4;
 }
 
 fn main() {
-    c = b();
-    printf("%d\n", c);
+	c = b();
+	printf("%d\n", c);
 }

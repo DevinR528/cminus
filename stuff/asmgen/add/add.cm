@@ -1,7 +1,7 @@
 linked fn printf<T>(_fmt: cstr, _: T);
 
 fn main() {
-    let x = 10.1;
-    let y = x + 1.0;
-    printf("%f\n", y);
+	let x = 10.1;
+	let y = x + 1.0;
+	printf("%f\n", y);
 }

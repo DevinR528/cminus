@@ -1,9 +1,9 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn b() {
-    printf("%d\n", 4);
+	printf("%d\n", 4);
 }
 
 fn main() {
-  b();
+	b();
 }

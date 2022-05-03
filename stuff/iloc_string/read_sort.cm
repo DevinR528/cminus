@@ -6,93 +6,93 @@ linked fn free<T>(_ptr: *T);
 linked fn realloc<T>(_ptr: *T, _size: int): *T;
 
 struct list<T> {
-    len: int,
-    cap: int,
-    buff: *T,
+	len: int,
+	cap: int,
+	buff: *T,
 }
 
 struct string {
-    len: int,
-    cap: int,
-    buff: *int,
+	len: int,
+	cap: int,
+	buff: *int,
 }
 
 fn new_list<T>(size: int): *list<T> {
-    // Allocate `list` buffer
-    let dyn_list = malloc::<list<T>>((size * 4) + 8);
-    dyn_list.cap = size;
-    dyn_list.len = 0;
-    return dyn_list;
+	// Allocate `list` buffer
+	let dyn_list = malloc::<list<T>>((size * 4) + 8);
+	dyn_list.cap = size;
+	dyn_list.len = 0;
+	return dyn_list;
 }
 
 fn new_string_from(str: cstr): *string {
-    // Allocate `string` buffer
-    let cap = str.len * 4;
-    let dyn_str = malloc::<string>(cap + 8);
+	// Allocate `string` buffer
+	let cap = str.len * 4;
+	let dyn_str = malloc::<string>(cap + 8);
 
-    dyn_str.cap = cap / 4;
-    dyn_str.len = str.len;
+	dyn_str.cap = cap / 4;
+	dyn_str.len = str.len;
 
-    let ptr = dyn_str.buff;
-    let i = 0;
-    // Copy chars from const string
-    while (i < str.len) {
-        let ch = str[i];
-        *ptr = ch;
-        // TODO: this breaks
-        // ptr += (i * 4);
-        ptr = ptr - 4;
-        i += 1;
-    }
-    return dyn_str;
+	let ptr = dyn_str.buff;
+	let i = 0;
+	// Copy chars from const string
+	while (i < str.len) {
+		let ch = str[i];
+		*ptr = ch;
+		// TODO: this breaks
+		// ptr += (i * 4);
+		ptr = ptr - 4;
+		i += 1;
+	}
+	return dyn_str;
 }
 
 fn push_char(str: *string, ch: int) {
-    if (str.cap > (str.len + 1)) {
-        let ptr1 = str.buff - str.len * 4;
-        *ptr1 = ch;
+	if (str.cap > (str.len + 1)) {
+		let ptr1 = str.buff - str.len * 4;
+		*ptr1 = ch;
 
-        str.len += 1;
-    } else {
-        // Allocate `string` buffer
-        let cap = str.len * 4 * 2;
-        str = realloc::<string>(str, cap + 8);
-        str.cap = cap / 4;
+		str.len += 1;
+	} else {
+		// Allocate `string` buffer
+		let cap = str.len * 4 * 2;
+		str = realloc::<string>(str, cap + 8);
+		str.cap = cap / 4;
 
-        let ptr2 = str.buff - str.len * 4;
-        *ptr2 = ch;
+		let ptr2 = str.buff - str.len * 4;
+		*ptr2 = ch;
 
-        str.len += 1;
-    }
+		str.len += 1;
+	}
 }
 
 fn print_string(str: *string) {
-    let i = 0;
-    let ptr = str.buff;
-    while (i < str.len) {
-        putchar(*ptr);
-        ptr = ptr - 4;
-        i += 1;
-    }
+	let i = 0;
+	let ptr = str.buff;
+	while (i < str.len) {
+		putchar(*ptr);
+		ptr = ptr - 4;
+		i += 1;
+	}
 
-    write("\n");
+	write("\n");
 }
 
 fn free_string(str: *string) {
-    free(str);
+	free(str);
 }
 
 fn main() {
-    let to_sort = new_list(5);
-    let s = new_string_from("");
-    while (true) {
-        let ch = 0;
-        read(ch);
+	let to_sort = new_list(5);
+	let s = new_string_from("");
+	while (true) {
+		let ch = 0;
+		read(ch);
 
-        if (ch == b'\n') {
+		if (ch == b'\n') {
 
-        }
-    }
+		}
+	}
 
-    free_string(s);
+	free_string(s);
 }

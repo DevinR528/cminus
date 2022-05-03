@@ -1,30 +1,30 @@
 linked fn write<T>(_: T);
 
 trait display<T> {
-    fn display(item: T);
+	fn display(item: T);
 }
 
 impl display<int> {
-    fn display(item: int) {
-        write(item);
-        // print int
-    }
+	fn display(item: int) {
+		write(item);
+		// print int
+	}
 }
 
 impl display<bool> {
-    fn display(item: bool) {
-        write(item);
-        // print bool
-    }
+	fn display(item: bool) {
+		write(item);
+		// print bool
+	}
 }
 
 fn show<T: display>(item: T) {
-    <<T>::display>(item);
+	<<T>::display>(item);
 }
 
 fn main() {
-    int x, y;
-    x = 0; y = 1;
-    show::<int>(y);
-    show::<bool>(x > y);
+	int x, y;
+	x = 0; y = 1;
+	show::<int>(y);
+	show::<bool>(x > y);
 }

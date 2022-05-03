@@ -1,7 +1,7 @@
 import ::lib::print_fmt;
 
 fn main() {
-    let x = 10;
-    let y = "hello";
-    print_fmt(y, x);
+	let x = 10;
+	let y = "hello";
+	print_fmt(y, x);
 }

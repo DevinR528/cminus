@@ -1,21 +1,21 @@
 linked fn printf<T>(_fmt: cstr, _val: T);
 
 fn write(s: cstr) {
-    printf("%s\n", s);
+	printf("%s\n", s);
 }
 
 fn main() {
-    let x = 10;
-    let y = 5;
-    if (x > y) {
-        write("bigger");
-    } else {
-        write("smaller");
-    }
+	let x = 10;
+	let y = 5;
+	if (x > y) {
+		write("bigger");
+	} else {
+		write("smaller");
+	}
 
-    if (x < y) {
-        write("bigger");
-    } else {
-        write("smaller");
-    }
+	if (x < y) {
+		write("bigger");
+	} else {
+		write("smaller");
+	}
 }

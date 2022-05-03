@@ -11,55 +11,55 @@ linked fn scanf<T>(_fmt: cstr, _val: *T);
 const NULL: int = 0;
 
 fn writearray(b: [21; int]) {
-    printf("A:", NULL);
-    let i = 0;
-    while (i <= 20) {
-        printf("%d\n", b[i]);
-        i += 1;
-    }
+	printf("A:", NULL);
+	let i = 0;
+	while (i <= 20) {
+		printf("%d\n", b[i]);
+		i += 1;
+	}
 }
 
 fn partition(b: [21; int], p: int, r: int): int {
-    let x = b[p];
-    let i = p - 1;
-    let j = r + 1;
-    let t = 0;
-    while true {
-        j -= 1;
+	let x = b[p];
+	let i = p - 1;
+	let j = r + 1;
+	let t = 0;
+	while true {
+		j -= 1;
 
-        while (b[j] > x) {
-            j -= 1;
-        }
+		while (b[j] > x) {
+			j -= 1;
+		}
 
-        i += 1;
-        while (b[i] < x) {
-            i += 1;
-        }
+		i += 1;
+		while (b[i] < x) {
+			i += 1;
+		}
 
-        if (i < j) {
-            t = b[i];
-            b[i] = b[j];
-            b[j] = t;
-        } else {
-            return j;
-        }
-    }
+		if (i < j) {
+			t = b[i];
+			b[i] = b[j];
+			b[j] = t;
+		} else {
+			return j;
+		}
+	}
 }
 
 fn quicksort(z: [21; int], p: int, r: int): int {
-    if (p < r) {
-        let q = partition(z, p, r);
-        r = quicksort(z, p, q);
-        r = quicksort(z, q + 1, r);
-    }
+	if (p < r) {
+		let q = partition(z, p, r);
+		r = quicksort(z, p, q);
+		r = quicksort(z, q + 1, r);
+	}
 
-    return 0;
+	return 0;
 }
 
 fn main(): int {
-    let a = [0, 5, 6, 3, 1, 4, 7, 8, 10, 20, 11, 13, 12, 15, 14, 16, 17, 18, 19, 0, 100];
-    printf("After read %d\n", a[0]);
-    quicksort(a, 1, 19);
-    writearray(a);
-    return 0;
+	let a = [0, 5, 6, 3, 1, 4, 7, 8, 10, 20, 11, 13, 12, 15, 14, 16, 17, 18, 19, 0, 100];
+	printf("After read %d\n", a[0]);
+	quicksort(a, 1, 19);
+	writearray(a);
+	return 0;
 }

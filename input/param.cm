@@ -7,20 +7,20 @@ const mut D: int = 0;
 
 
 fn b4(a: int): int {
-    printf("%d\n", 4);
-    printf("%d\n", a+1);
-    return a+1;
+	printf("%d\n", 4);
+	printf("%d\n", a+1);
+	return a+1;
 }
 
 fn d2(b: int): float {
-    let tmp = 0;
-    printf("%d\n", b);
-    printf("%d\n", A);
-    tmp=A;
-    A=b;
-    b=tmp;
+	let tmp = 0;
+	printf("%d\n", b);
+	printf("%d\n", A);
+	tmp=A;
+	A=b;
+	b=tmp;
 
-    return 1.0;
+	return 1.0;
 }
 
 fn d3(a: int, b: int, c: int): int {
@@ -33,15 +33,15 @@ fn d3(a: int, b: int, c: int): int {
 }
 
 fn d1(): int {
-    let b = 0;
+	let b = 0;
 
 	// b = A * 200;
 	printf("%d\n", A);
-    printf("%d\n", b);
-    printf("%d\n", C);
-    printf("D = %d\n", D);
+	printf("%d\n", b);
+	printf("%d\n", C);
+	printf("D = %d\n", D);
 
-    let f = d2(b);
+	let f = d2(b);
 	printf("float val = %f\n", f);
 
 	printf("%d\n", A); printf("%d\n", b); printf("%d\n", C); printf("%d\n", D);

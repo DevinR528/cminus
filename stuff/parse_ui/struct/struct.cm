@@ -1,17 +1,17 @@
 struct foo {
-    x: int,
+	x: int,
 }
 
 struct name {
-    field: int,
-    field_two: char,
-    y: [10; int],
-    inner: foo,
+	field: int,
+	field_two: char,
+	y: [10; int],
+	inner: foo,
 }
 
 fn main() {
-    let x = name { field: 0, field_two: 'a', y: [0; 10], inner: foo { x: 1} };
-    let a = x.y[1];
-    a = x.field + 1;
-    x.field = 10;
+	let x = name { field: 0, field_two: 'a', y: [0; 10], inner: foo { x: 1} };
+	let a = x.y[1];
+	a = x.field + 1;
+	x.field = 10;
 }

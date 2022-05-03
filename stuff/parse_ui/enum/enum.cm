@@ -1,33 +1,33 @@
 enum option<T> {
-    some(T),
-    none,
+	some(T),
+	none,
 }
 
 enum thing {
-    a, b, c, d, e, f, g
+	a, b, c, d, e, f, g
 }
 
 fn foo<T>(it: T): option<T> {
-    let opt = option::some(it);
-    return opt;
+	let opt = option::some(it);
+	return opt;
 }
 
 fn main() {
-    let x = thing::a;
+	let x = thing::a;
 
-    let y = option::some(x);
+	let y = option::some(x);
 
-    let opt = &y;
+	let opt = &y;
 
-    foo::<int>(10);
-    let num = foo::<int>(10);
+	foo::<int>(10);
+	let num = foo::<int>(10);
 
-    match num {
-        option::some(a) -> {
-            a += 1;
-        },
-        option::none -> {
-            exit;
-        }
-    }
+	match num {
+		option::some(a) -> {
+			a += 1;
+		},
+		option::none -> {
+			exit;
+		}
+	}
 }

@@ -1,11 +1,11 @@
 linked fn putchar(_val: int);
 
 fn main() {
-    let s = "hello\n";
-    let i = 0;
-    while (i < s.len) {
-        let c = s[i];
-        putchar(c);
-        i += 1;
-    }
+	let s = "hello\n";
+	let i = 0;
+	while (i < s.len) {
+		let c = s[i];
+		putchar(c);
+		i += 1;
+	}
 }
